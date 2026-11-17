@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
@@ -192,7 +193,7 @@ func BenchmarkNFSProxy_SmallFiles(b *testing.B) {
 					// Split b.N across the connections so ns/op stays per file.
 					for i := c; i < b.N; i += connections {
 						if err := w.writeFile(i); err != nil {
-							b.Error(err)
+							assert.NoError(b, err)
 
 							return
 						}

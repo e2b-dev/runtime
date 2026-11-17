@@ -117,11 +117,11 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			select {
 			case <-backend.Ready():
 			case <-ctx.Done():
-				t.Fatal("actual backend did not publish Ready")
+				require.Fail(t, "actual backend did not publish Ready")
 			}
 			select {
 			case <-backend.Exit().Done():
-				t.Fatalf("Ready was an error exit, not successful admission: %v", backend.Exit().Error())
+				require.Failf(t, "Ready was an error exit, not successful admission", "exit error: %v", backend.Exit().Error())
 			default:
 			}
 			settings := ldtestdata.DataSource()
@@ -144,7 +144,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 				select {
 				case <-source.entered:
 				case <-ctx.Done():
-					t.Fatal("actual cache read was not admitted")
+					require.Fail(t, "actual cache read was not admitted")
 				}
 				cancelRun()
 			}
@@ -152,7 +152,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			case err := <-done:
 				require.NoError(t, err, "Start preserves nil-on-cancellation")
 			case <-ctx.Done():
-				t.Fatal("Start failed to join before backend/source teardown")
+				require.Fail(t, "Start failed to join before backend/source teardown")
 			}
 			require.Zero(t, source.active.Load(), "source callbacks outlived Start")
 			require.False(t, source.badRead.Load())
@@ -169,7 +169,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			case <-backend.Exit().Done():
 				require.NoError(t, backend.Exit().Error())
 			case <-ctx.Done():
-				t.Fatal("Stop failed to settle the actual serve loop/Close")
+				require.Fail(t, "Stop failed to settle the actual serve loop/Close")
 			}
 			installed, err = backend.Prefault(ctx, 0, want[:4096])
 			require.False(t, installed)

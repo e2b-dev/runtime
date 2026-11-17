@@ -91,9 +91,7 @@ func newSSETestStorage(t *testing.T, spec Spec, rec *sseRecorder) *awsStorage {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`<InitiateMultipartUploadResult><UploadId>sse-upload-id</UploadId></InitiateMultipartUploadResult>`))
 		case r.Method == http.MethodPut && strings.Contains(r.URL.RawQuery, "partNumber="):
-			if _, err := io.Copy(io.Discard, r.Body); err != nil {
-				t.Errorf("read multipart body: %v", err)
-
+			if _, err := io.Copy(io.Discard, r.Body); !assert.NoError(t, err, "read multipart body") {
 				return
 			}
 			w.Header().Set("ETag", `"etag1"`)
@@ -106,7 +104,7 @@ func newSSETestStorage(t *testing.T, spec Spec, rec *sseRecorder) *awsStorage {
 			w.Header().Set("ETag", `"put-etag"`)
 			w.WriteHeader(http.StatusOK)
 		default:
-			t.Fatalf("unexpected AWS request: %s %s", r.Method, r.URL.String())
+			assert.Failf(t, "unexpected AWS request", "%s %s", r.Method, r.URL.String())
 		}
 	})
 

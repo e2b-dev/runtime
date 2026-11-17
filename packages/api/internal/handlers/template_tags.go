@@ -11,8 +11,11 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
+	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -21,19 +24,20 @@ import (
 
 // PostTemplatesTags assigns tags to a template build
 // The target template is specified in the request body via the "target" field
-func (a *APIStore) PostTemplatesTags(c *gin.Context) {
+func (a *APIStore) PostTemplatesTags(c *gin.Context, _ api.PostTemplatesTagsParams) {
 	ctx := c.Request.Context()
 
-	body, err := ginutils.ParseBody[api.AssignTemplateTagsRequest](ctx, c)
-	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %s", err))
+	var body api.AssignTemplateTagsRequest
+	if err := c.ShouldBind(&body); err != nil {
+		telemetry.ReportError(ctx, "error when parsing request", err)
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid request body: error when parsing request: %s", err), Retryable: apierrors.NoRetry})
 
 		return
 	}
 
 	// Validate tags early
 	if len(body.Tags) == 0 {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "At least one tag is required")
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: "At least one tag is required", Retryable: apierrors.NoRetry})
 		telemetry.ReportError(ctx, "at least one tag is required", nil)
 
 		return
@@ -41,24 +45,39 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 
 	team, apiErr := a.GetTeam(ctx, c, nil)
 	if apiErr != nil {
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
+		apiErr.Retryable = apierrors.NoRetry
+		if apiErr.Code == http.StatusInternalServerError {
+			apiErr.Retryable = apierrors.CanRetry
+		}
+		apierrors.SendAPIError(c, apiErr)
 		telemetry.ReportCriticalError(ctx, "error when getting team", apiErr.Err)
 
 		return
 	}
 
+	idempotency.Execute(c, body, func() *apierrors.APIError {
+		assigned, apiErr := a.assignTemplateTags(c, team, body)
+		if apiErr != nil {
+			return apiErr
+		}
+		c.JSON(http.StatusCreated, assigned)
+
+		return nil
+	})
+}
+
+func (a *APIStore) assignTemplateTags(c *gin.Context, team *types.Team, body api.AssignTemplateTagsRequest) (*api.AssignedTemplateTags, *apierrors.APIError) {
+	ctx := c.Request.Context()
+
 	identifier, tag, err := id.ParseName(body.Target)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid target template format: %s", err))
 		telemetry.ReportError(ctx, "invalid target template format", err)
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid target template format: %s", err), Retryable: apierrors.NoRetry}
 	}
 
 	if err := id.ValidateNamespaceMatchesTeam(identifier, team.Slug); err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, err.Error())
-
-		return
+		return nil, &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: err.Error(), Retryable: apierrors.NoRetry}
 	}
 
 	targetTagValue := id.DefaultTag
@@ -69,25 +88,22 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 	aliasInfo, err := a.templateCache.ResolveAlias(ctx, identifier, team.Slug)
 	if err != nil {
 		apiErr := templatecache.ErrorToAPIError(err, identifier)
-		a.sendAPIStoreError(c, apiErr.Code, apiErr.ClientMsg)
 		telemetry.ReportError(ctx, "template not found", apiErr.Err, telemetry.WithTemplateID(identifier))
 
-		return
+		return nil, apiErr
 	}
 
 	if aliasInfo.TeamID != team.ID {
-		a.sendAPIStoreError(c, http.StatusForbidden, fmt.Sprintf("You don't have access to sandbox template '%s'", identifier))
 		telemetry.ReportError(ctx, "no access to the template", nil, telemetry.WithTemplateID(aliasInfo.TemplateID))
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusForbidden, ClientMsg: fmt.Sprintf("You don't have access to sandbox template '%s'", identifier), Retryable: apierrors.NoRetry}
 	}
 
 	client, tx, err := a.sqlcDB.WithTx(ctx)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error when beginning transaction", err)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error beginning transaction")
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error beginning transaction", Retryable: apierrors.CanRetry}
 	}
 	defer tx.Rollback(ctx)
 
@@ -98,16 +114,14 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 	})
 	if err != nil {
 		if dberrors.IsNotFoundError(err) {
-			a.sendAPIStoreError(c, http.StatusNotFound, fmt.Sprintf("Template '%s' with tag '%s' not found", body.Target, targetTagValue))
 			telemetry.ReportError(ctx, "template tag not found", err, telemetry.WithTemplateID(aliasInfo.TemplateID))
 
-			return
+			return nil, &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: fmt.Sprintf("Template '%s' with tag '%s' not found", body.Target, targetTagValue), Retryable: apierrors.NoRetry}
 		}
 
 		telemetry.ReportError(ctx, "error when getting template with build", err)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error getting template")
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error getting template", Retryable: apierrors.CanRetry}
 	}
 
 	template := result.ActiveEnv
@@ -121,10 +135,9 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 
 	tags, err := id.ValidateAndDeduplicateTags(body.Tags)
 	if err != nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid tag: %s", err))
 		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "invalid tag", err)
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: fmt.Sprintf("Invalid tag: %s", err), Retryable: apierrors.NoRetry}
 	}
 
 	// Create the tag assignments
@@ -136,23 +149,19 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 		})
 		if err != nil {
 			telemetry.ReportCriticalError(ctx, "error when creating tag assignment", err)
-			a.sendAPIStoreError(c, http.StatusInternalServerError, "Error creating tag assignment")
 
-			return
+			return nil, &apierrors.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error creating tag assignment", Retryable: apierrors.CanRetry}
 		}
 		if rows == 0 {
-			a.sendAPIStoreError(c, http.StatusNotFound, fmt.Sprintf("Template '%s' not found", template.ID))
-
-			return
+			return nil, &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: fmt.Sprintf("Template '%s' not found", template.ID), Retryable: apierrors.NoRetry}
 		}
 	}
 
 	err = tx.Commit(ctx)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error when committing transaction", err)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error committing transaction")
 
-		return
+		return nil, &apierrors.APIError{Code: http.StatusInternalServerError, ClientMsg: "Error committing transaction", Retryable: apierrors.UndefinedRetry}
 	}
 
 	for _, tag := range tags {
@@ -174,10 +183,10 @@ func (a *APIStore) PostTemplatesTags(c *gin.Context) {
 		logger.WithTeamID(team.ID.String()),
 	)
 
-	c.JSON(http.StatusCreated, api.AssignedTemplateTags{
+	return &api.AssignedTemplateTags{
 		Tags:    tags,
 		BuildID: buildID,
-	})
+	}, nil
 }
 
 // DeleteTemplatesTags deletes multiple tags from a template

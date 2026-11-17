@@ -71,7 +71,7 @@ func BenchmarkReadSourceInto(b *testing.B) {
 		var sink SourceSink
 		ReportSource(ReadSourceInto(ctx, &sink), SourceMmap)
 		if sink.Source() != SourceMmap {
-			b.Fatal("missing source")
+			require.Equal(b, SourceMmap, sink.Source(), "missing source")
 		}
 	}
 }

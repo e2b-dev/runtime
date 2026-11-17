@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -16,19 +17,13 @@ func TestGracefulStopWithTimeout_Clean(t *testing.T) {
 	srv := grpc.NewServer()
 	listenCfg := &net.ListenConfig{}
 	ln, err := listenCfg.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	go func() { _ = srv.Serve(ln) }()
 
 	start := time.Now()
 	ok := GracefulStopWithTimeout(srv, time.Second)
-	if !ok {
-		t.Fatal("expected clean stop")
-	}
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("stop took too long: %s", elapsed)
-	}
+	require.True(t, ok, "expected clean stop")
+	require.LessOrEqual(t, time.Since(start), 500*time.Millisecond, "stop took too long")
 }
 
 // TestGracefulStopWithTimeout_AlreadyStopped is a sanity check that calling
@@ -39,16 +34,10 @@ func TestGracefulStopWithTimeout_AlreadyStopped(t *testing.T) {
 	srv := grpc.NewServer()
 	listenCfg := &net.ListenConfig{}
 	ln, err := listenCfg.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	go func() { _ = srv.Serve(ln) }()
 
-	if !GracefulStopWithTimeout(srv, time.Second) {
-		t.Fatal("first stop should be clean")
-	}
+	require.True(t, GracefulStopWithTimeout(srv, time.Second), "first stop should be clean")
 	// Second invocation: GracefulStop on a stopped server is a no-op.
-	if !GracefulStopWithTimeout(srv, time.Second) {
-		t.Fatal("second stop should also report clean")
-	}
+	require.True(t, GracefulStopWithTimeout(srv, time.Second), "second stop should also report clean")
 }

@@ -79,7 +79,7 @@ func TestCloseJoinsPopulateBeforeSlotSnapshot(t *testing.T) {
 		synctest.Wait()
 		select {
 		case err := <-closeDone:
-			t.Fatalf("Close returned before Populate completed: %v", err)
+			require.Failf(t, "Close returned before Populate completed", "error: %v", err)
 		default:
 		}
 
@@ -192,6 +192,6 @@ func TestPopulateRegistersAndPublishesOwnerCompletion(t *testing.T) {
 	select {
 	case <-populateDone:
 	default:
-		t.Fatal("Populate returned without publishing owner completion")
+		require.Fail(t, "Populate returned without publishing owner completion")
 	}
 }

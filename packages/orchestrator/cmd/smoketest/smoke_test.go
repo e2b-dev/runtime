@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
@@ -583,21 +584,20 @@ func assertFsFreezeQuiescesRootfsAt(t *testing.T, ctx context.Context, envdURL, 
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), envdRequestTimeout)
 			defer cancel()
 
-			if _, err := postEnvd(cleanupCtx, client, envdURL, accessToken, "/fsthaw"); err != nil {
-				t.Errorf("thawing the guest rootfs during cleanup failed: %v", err)
-			}
+			_, err := postEnvd(cleanupCtx, client, envdURL, accessToken, "/fsthaw")
+			assert.NoError(t, err, "thawing the guest rootfs during cleanup") //nolint:testifylint // keep waiting for the blocked write below even if the thaw failed
 		}
 
 		select {
 		case <-blocked:
 		case <-time.After(thawedWriteTimeout):
-			t.Error("the write blocked by the freeze never completed after the thaw")
+			assert.Fail(t, "the write blocked by the freeze never completed after the thaw")
 		}
 	}()
 
 	select {
 	case blockedStatus := <-blocked:
-		t.Fatalf("a write to the frozen rootfs completed with HTTP %d; the freeze did not take", blockedStatus)
+		require.Failf(t, "a write to the frozen rootfs completed; the freeze did not take", "HTTP %d", blockedStatus)
 	case <-time.After(frozenWriteWindow):
 	}
 
@@ -626,7 +626,7 @@ func assertFsFreezeQuiescesRootfsAt(t *testing.T, ctx context.Context, envdURL, 
 	case blockedStatus := <-blocked:
 		require.Equal(t, http.StatusOK, blockedStatus, "the write blocked by the freeze should succeed once thawed")
 	case <-time.After(thawedWriteTimeout):
-		t.Fatal("the write blocked by the freeze did not complete after the thaw")
+		require.Fail(t, "the write blocked by the freeze did not complete after the thaw")
 	}
 }
 

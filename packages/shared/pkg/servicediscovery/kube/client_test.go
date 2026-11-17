@@ -67,13 +67,12 @@ func applicationDefaultCredentials(t *testing.T) *mintedToken {
 	tokens := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		minted.record(t, r)
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		err := json.NewEncoder(w).Encode(map[string]any{
 			"access_token": adcAccessToken,
 			"token_type":   "Bearer",
 			"expires_in":   3600,
-		}); err != nil {
-			t.Errorf("encoding token response: %v", err)
-		}
+		})
+		assert.NoError(t, err, "encoding token response")
 	}))
 	t.Cleanup(tokens.Close)
 
@@ -114,9 +113,7 @@ type mintedToken struct {
 func (m *mintedToken) record(t *testing.T, r *http.Request) {
 	t.Helper()
 
-	if err := r.ParseForm(); err != nil {
-		t.Errorf("parsing token request: %v", err)
-
+	if !assert.NoError(t, r.ParseForm(), "parsing token request") { //nolint:testifylint // called from the HTTP handler goroutine
 		return
 	}
 
@@ -126,18 +123,14 @@ func (m *mintedToken) record(t *testing.T, r *http.Request) {
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Errorf("decoding assertion payload: %v", err)
-
+	if !assert.NoError(t, err, "decoding assertion payload") {
 		return
 	}
 
 	var claims struct {
 		Scope string `json:"scope"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Errorf("decoding assertion claims: %v", err)
-
+	if !assert.NoError(t, json.Unmarshal(payload, &claims), "decoding assertion claims") {
 		return
 	}
 
@@ -440,6 +433,6 @@ func TestNewRESTConfig_BoundsTheCredentialExchange(t *testing.T) {
 	case roundTripErr := <-done:
 		require.Error(t, roundTripErr, "a silent token endpoint must fail the request, not satisfy it")
 	case <-time.After(tokenMintTimeout + 20*time.Second):
-		t.Fatal("the credential exchange is unbounded: RoundTrip never returned")
+		require.Fail(t, "the credential exchange is unbounded: RoundTrip never returned")
 	}
 }

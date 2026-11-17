@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/tests/integration/internal/api"
@@ -87,7 +88,7 @@ func WaitForStatus(tb testing.TB, client *http.Client, sbx *api.Sandbox, url *ur
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	tb.Fail()
+	assert.Fail(tb, "the sandbox did not return the expected status within 60s", "expected status %d", expectedStatus)
 
 	return nil
 }

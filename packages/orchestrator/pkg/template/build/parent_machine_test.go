@@ -93,7 +93,7 @@ func (f flagsOn) BoolFlag(context.Context, featureflags.BoolFlag, ...ldcontext.C
 type failingFlags struct{ t *testing.T }
 
 func (f failingFlags) BoolFlag(_ context.Context, flag featureflags.BoolFlag, _ ...ldcontext.Context) bool {
-	f.t.Fatalf("the flag %s was read", flag.Key())
+	require.Fail(f.t, "the flag "+flag.Key()+" was read")
 
 	return false
 }
@@ -189,7 +189,7 @@ func TestAdoptParentMachineLeavesABootingParentAlone(t *testing.T) {
 		"booting-parent": {Version: metadata.CurrentVersion, GuestOS: "booting", Template: metadata.TemplateMetadata{BuildID: "booting-parent", KernelVersion: "k", FirecrackerVersion: "f"}},
 	}}
 	sized := func(context.Context, string) (int64, error) {
-		t.Fatal("a booting parent's memory is never sized")
+		require.Fail(t, "a booting parent's memory is never sized")
 
 		return 0, nil
 	}
@@ -411,7 +411,7 @@ func TestAdoptParentMachineRefusesANonDefaultGuestWithTheFlagOff(t *testing.T) {
 		"booted":  {Version: metadata.CurrentVersion, GuestOS: "booting"},
 	}}
 	sized := func(context.Context, string) (int64, error) {
-		t.Fatal("a refused parent's memory is never sized")
+		require.Fail(t, "a refused parent's memory is never sized")
 
 		return 0, nil
 	}

@@ -139,7 +139,7 @@ func TestAddSnapshot_RecordsDedupDurationAtSwap(t *testing.T) {
 	select {
 	case <-swapDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("swap goroutine did not complete")
+		require.Fail(t, "swap goroutine did not complete")
 	}
 
 	assert.Same(t, dedupedHdr, memfile.Header(), "swap must install the deduped header")

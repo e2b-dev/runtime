@@ -105,7 +105,7 @@ func TestOAuthClient(t *testing.T) {
 					w.WriteHeader(http.StatusAccepted)
 					diagnostics <- auth
 				default:
-					t.Errorf("unexpected SDK request: %s", r.URL.Path)
+					assert.Failf(t, "unexpected SDK request", "path: %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
@@ -122,7 +122,7 @@ func TestOAuthClient(t *testing.T) {
 				select {
 				case <-ch:
 				case <-time.After(5 * time.Second):
-					t.Fatal("SDK did not send an authenticated event request")
+					require.Fail(t, "SDK did not send an authenticated event request")
 				}
 			}
 			assert.EqualValues(t, 3, tokens.Load())
@@ -137,7 +137,7 @@ func TestOAuthClient(t *testing.T) {
 			case auth := <-events:
 				assert.Equal(t, "Bearer token-3", auth)
 			case <-time.After(5 * time.Second):
-				t.Fatal("SDK did not send events after token refresh")
+				require.Fail(t, "SDK did not send events after token refresh")
 			}
 			assert.EqualValues(t, 3, tokens.Load())
 		})
@@ -305,7 +305,7 @@ func TestOAuthGatewayRejectionAfterStart(t *testing.T) {
 		case "/diagnostic":
 			w.WriteHeader(http.StatusAccepted)
 		default:
-			t.Errorf("unexpected SDK request: %s", r.URL.Path)
+			assert.Failf(t, "unexpected SDK request", "path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -170,14 +169,12 @@ func Test_server_List(t *testing.T) {
 				}
 			}
 			got, err := s.List(t.Context(), tt.args.in1)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("server.List() error = %v, wantErr %v", err, tt.wantErr)
-
-				return
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("server.List() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -657,7 +654,7 @@ func TestHoldPoweredOffWithTheFlagOffStopsTheSandbox(t *testing.T) {
 	case got := <-line:
 		assert.Equal(t, crashedSandboxLine(fc.GuestEventPowerOff, 0), got)
 	case <-time.After(5 * time.Second):
-		t.Fatal("a power-off with the flag off was held")
+		require.Fail(t, "a power-off with the flag off was held")
 	}
 	assert.False(t, sbx.GuestPoweredOff())
 }

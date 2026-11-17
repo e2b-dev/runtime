@@ -416,7 +416,7 @@ func doBuild(
 		uploads,
 	)
 
-	l = l.With(zap.String("envID", templateID)).With(zap.String("buildID", buildID))
+	l = l.With(logger.WithTemplateID(templateID), logger.WithBuildID(buildID))
 
 	force := true
 

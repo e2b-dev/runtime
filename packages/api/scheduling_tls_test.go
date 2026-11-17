@@ -9,22 +9,36 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/mtlstest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/servicetest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-type schedulingTLSService struct {
-	scheduling.UnimplementedSchedulingServiceServer
-}
+const schedulingTLSMethod = "/test.Service/Call"
 
-func (schedulingTLSService) Get(context.Context, *scheduling.GetRequest) (*scheduling.GetResponse, error) {
-	return scheduling.GetResponse_builder{}.Build(), nil
+var schedulingTLSServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Service",
+	HandlerType: (*any)(nil),
+	Methods: []grpc.MethodDesc{{
+		MethodName: "Call",
+		Handler: func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+			in := new(emptypb.Empty)
+			if err := dec(in); err != nil {
+				return nil, err
+			}
+			handler := func(context.Context, any) (any, error) { return &emptypb.Empty{}, nil }
+			if interceptor == nil {
+				return handler(ctx, in)
+			}
+
+			return interceptor(ctx, in, &grpc.UnaryServerInfo{FullMethod: schedulingTLSMethod}, handler)
+		},
+	}},
 }
 
 func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
@@ -48,7 +62,7 @@ func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
 	serverConfig, err := procFor(t, schedulingID, true).Listener("grpc", "", mtls.ListenerSettings{Mode: "required", Allow: []string{apiID}}, mtls.WithoutWildcards())
 	require.NoError(t, err)
 	srv := e2bgrpc.NewGRPCServer(telemetry.NewNoopClient(), grpcTLSOptions(serverConfig)...)
-	scheduling.RegisterSchedulingServiceServer(srv, schedulingTLSService{})
+	srv.RegisterService(&schedulingTLSServiceDesc, struct{}{})
 	lis, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { _ = srv.Serve(lis) }()
@@ -72,7 +86,7 @@ func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 			callCtx, stop := context.WithTimeout(t.Context(), 3*time.Second)
 			defer stop()
-			_, err = scheduling.NewSchedulingServiceClient(conn).Get(callCtx, scheduling.GetRequest_builder{}.Build())
+			err = conn.Invoke(callCtx, schedulingTLSMethod, &emptypb.Empty{}, &emptypb.Empty{})
 			if tc.allowed {
 				require.NoError(t, err, "authenticated RPC reached the service")
 			} else {
@@ -87,7 +101,7 @@ func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 		defer cancel()
-		_, err = scheduling.NewSchedulingServiceClient(conn).Get(ctx, scheduling.GetRequest_builder{}.Build())
+		err = conn.Invoke(ctx, schedulingTLSMethod, &emptypb.Empty{}, &emptypb.Empty{})
 		require.Error(t, err)
 	})
 }

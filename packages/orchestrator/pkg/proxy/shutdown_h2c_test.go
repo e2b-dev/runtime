@@ -90,7 +90,7 @@ func TestSandboxProxyCloseInterruptsStalledH2CUpload(t *testing.T) {
 				select {
 				case <-clientDone:
 				case <-time.After(5 * time.Second):
-					t.Error("upload client did not exit")
+					assert.Fail(t, "upload client did not exit")
 				}
 			})
 			_, err = io.WriteString(writer, strings.Repeat("x", 8192))
@@ -99,7 +99,7 @@ func TestSandboxProxyCloseInterruptsStalledH2CUpload(t *testing.T) {
 			case err := <-backendStarted:
 				require.NoError(t, err)
 			case <-time.After(5 * time.Second):
-				t.Fatal("backend did not receive the upload")
+				require.Fail(t, "backend did not receive the upload")
 			}
 			backend.CloseClientConnections()
 
@@ -112,7 +112,7 @@ func TestSandboxProxyCloseInterruptsStalledH2CUpload(t *testing.T) {
 			select {
 			case <-handlerDone:
 			case <-time.After(5 * time.Second):
-				t.Fatal("shutdown left the upload handler blocked")
+				require.Fail(t, "shutdown left the upload handler blocked")
 			}
 			assert.Zero(t, proxy.proxy.CurrentServerConnections())
 		})

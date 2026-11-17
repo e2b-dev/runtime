@@ -10,6 +10,8 @@ const (
 	AccessTokensMessage = "E2B_ACCESS_TOKEN is deprecated and no longer supported. Use an API key (E2B_API_KEY) instead. See https://e2b.dev/docs/migration/access-token-deprecation"
 	// TemplateBuildV1Message answers the removed v1 template build routes.
 	TemplateBuildV1Message = "The v1 template build API is no longer supported. Upgrade the CLI and migrate to v2 templates. See https://e2b.dev/docs/template/migration-v2"
+	// TeamsLoginMessage answers the removed team listing, which CLI login used.
+	TeamsLoginMessage = "This version of the E2B CLI can no longer log in. Upgrade it (npm install -g @e2b/cli@latest) and run `e2b auth login` again."
 )
 
 // Route is one removed route. Path uses {name} placeholders, as in the spec
@@ -28,6 +30,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/templates/{templateID}", Message: TemplateBuildV1Message},
 	{Method: "POST", Path: "/templates/{templateID}/builds/{buildID}", Message: TemplateBuildV1Message},
 	{Method: "POST", Path: "/v2/templates", Message: TemplateBuildV1Message},
+	{Method: "GET", Path: "/teams", Message: TeamsLoginMessage},
 }
 
 // GinPath is the route's path in gin syntax, with :name placeholders.

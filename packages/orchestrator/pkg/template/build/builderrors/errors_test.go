@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/phases"
 )
 
@@ -15,9 +17,7 @@ func TestWrapContextAsUserError_NilError(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	if got := WrapContextAsUserError(ctx, nil); got != nil {
-		t.Errorf("expected nil, got %v", got)
-	}
+	assert.NoError(t, WrapContextAsUserError(ctx, nil))
 }
 
 func TestWrapContextAsUserError_AlreadyUserError(t *testing.T) {
@@ -26,9 +26,7 @@ func TestWrapContextAsUserError_AlreadyUserError(t *testing.T) {
 	ctx := t.Context()
 	userErr := phases.NewPhaseBuildError(phases.PhaseMeta{}, errors.New("user mistake"))
 	got := WrapContextAsUserError(ctx, userErr)
-	if !errors.Is(got, userErr) {
-		t.Errorf("expected original user error returned as-is, got %v", got)
-	}
+	assert.ErrorIs(t, got, userErr)
 }
 
 func TestWrapContextAsUserError_InternalTimeout_NotMisclassified(t *testing.T) {
@@ -44,13 +42,9 @@ func TestWrapContextAsUserError_InternalTimeout_NotMisclassified(t *testing.T) {
 	got := WrapContextAsUserError(buildCtx, internalErr)
 
 	// Should NOT be classified as user error — the build context is still alive
-	if IsUserError(got) {
-		t.Errorf("internal timeout should not be classified as user error, got: %v", got)
-	}
+	assert.False(t, IsUserError(got), "internal timeout should not be classified as user error, got: %v", got)
 	// Should preserve the original error
-	if !errors.Is(got, internalErr) {
-		t.Errorf("expected original error preserved, got: %v", got)
-	}
+	assert.ErrorIs(t, got, internalErr)
 }
 
 func TestWrapContextAsUserError_UserCancellation(t *testing.T) {
@@ -64,12 +58,8 @@ func TestWrapContextAsUserError_UserCancellation(t *testing.T) {
 	someErr := fmt.Errorf("some operation failed: %w", buildCtx.Err())
 	got := WrapContextAsUserError(buildCtx, someErr)
 
-	if !IsUserError(got) {
-		t.Errorf("expected user error when build context is canceled, got: %v", got)
-	}
-	if !errors.Is(got, ErrCanceled) {
-		t.Errorf("expected ErrCanceled, got: %v", got)
-	}
+	assert.True(t, IsUserError(got), "expected user error when build context is canceled, got: %v", got)
+	assert.ErrorIs(t, got, ErrCanceled)
 }
 
 func TestWrapContextAsUserError_BuildContextCanceled_ErrorUnrelated(t *testing.T) {
@@ -83,12 +73,8 @@ func TestWrapContextAsUserError_BuildContextCanceled_ErrorUnrelated(t *testing.T
 	diskErr := errors.New("disk I/O error")
 	got := WrapContextAsUserError(buildCtx, diskErr)
 
-	if IsUserError(got) {
-		t.Errorf("unrelated error should not be classified as user error when build context is canceled, got: %v", got)
-	}
-	if !errors.Is(got, diskErr) {
-		t.Errorf("expected original error preserved, got: %v", got)
-	}
+	assert.False(t, IsUserError(got), "unrelated error should not be classified as user error when build context is canceled, got: %v", got)
+	assert.ErrorIs(t, got, diskErr)
 }
 
 func TestWrapContextAsUserError_BuildDeadlineExceeded(t *testing.T) {
@@ -103,12 +89,8 @@ func TestWrapContextAsUserError_BuildDeadlineExceeded(t *testing.T) {
 	someErr := fmt.Errorf("some operation failed: %w", buildCtx.Err())
 	got := WrapContextAsUserError(buildCtx, someErr)
 
-	if !IsUserError(got) {
-		t.Errorf("expected user error when build context timed out, got: %v", got)
-	}
-	if !errors.Is(got, ErrTimeout) {
-		t.Errorf("expected ErrTimeout, got: %v", got)
-	}
+	assert.True(t, IsUserError(got), "expected user error when build context timed out, got: %v", got)
+	assert.ErrorIs(t, got, ErrTimeout)
 }
 
 func TestWrapContextAsUserError_InternalCanceledError_BuildContextAlive(t *testing.T) {
@@ -128,11 +110,7 @@ func TestWrapContextAsUserError_InternalCanceledError_BuildContextAlive(t *testi
 
 	got := WrapContextAsUserError(buildCtx, err)
 
-	if IsUserError(got) {
-		t.Errorf("internal child-context cancellation must not be classified as user error, got: %v", got)
-	}
+	assert.False(t, IsUserError(got), "internal child-context cancellation must not be classified as user error, got: %v", got)
 	// The original error should be preserved
-	if !errors.Is(got, context.Canceled) {
-		t.Errorf("original error chain should be preserved, got: %v", got)
-	}
+	assert.ErrorIs(t, got, context.Canceled)
 }

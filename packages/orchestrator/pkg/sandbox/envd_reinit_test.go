@@ -135,7 +135,7 @@ func pauseFreezesAfterTheCut(t *testing.T, s *Sandbox, e *heldEnvd) {
 	select {
 	case <-s.envdReinit.Load().done:
 	default:
-		t.Fatal("the cut returned before the re-init did")
+		require.Fail(t, "the cut returned before the re-init did")
 	}
 	s.bestEffortReclaim(t.Context(), true)
 	assert.Contains(t, e.paths(), "/freeze", "the freeze is requested once the re-init has returned")
@@ -166,7 +166,7 @@ func TestReinitCut(t *testing.T) { //nolint:paralleltest // reads deltas of a co
 		assert.Zero(t, reinitFailureLogs(version), "a cut is no failure")
 		select {
 		case <-abandoned:
-			t.Fatal("the handler finished before the cut released it: the cut waited on envd")
+			require.Fail(t, "the handler finished before the cut released it: the cut waited on envd")
 		default:
 		}
 	})
@@ -285,7 +285,7 @@ func TestReinitCut(t *testing.T) { //nolint:paralleltest // reads deltas of a co
 		select {
 		case <-r.done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("the replaced re-init kept its /init in flight")
+			require.Fail(t, "the replaced re-init kept its /init in flight")
 		}
 		// The fresh re-init's /init must have been read before the test's cleanup cancels
 		// it, or the double's read fails after the test is over.
@@ -364,7 +364,7 @@ func TestReinitCut(t *testing.T) { //nolint:paralleltest // reads deltas of a co
 			select {
 			case <-arrived:
 			default:
-				t.Fatal("the setup outran the budget: the re-init ended before its /init arrived")
+				require.Fail(t, "the setup outran the budget: the re-init ended before its /init arrived")
 			}
 		}
 		<-done

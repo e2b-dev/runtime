@@ -56,7 +56,7 @@ func TestDrainSandboxesBlocksWhileLiveAndReturnsOnCancel(t *testing.T) {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(time.Second):
-		t.Fatal("DrainSandboxes did not return after context cancellation")
+		require.Fail(t, "DrainSandboxes did not return after context cancellation")
 	}
 }
 
@@ -81,7 +81,7 @@ func TestDrainSandboxesCompletesAfterSandboxLeaves(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("DrainSandboxes did not complete after the node emptied")
+		require.Fail(t, "DrainSandboxes did not complete after the node emptied")
 	}
 }
 

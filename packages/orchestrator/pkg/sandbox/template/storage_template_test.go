@@ -210,7 +210,7 @@ func TestStorageTemplate_HeaderFootprintSkipsUnresolved(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("headerFootprint blocked on an unresolved template")
+		require.Fail(t, "headerFootprint blocked on an unresolved template")
 	}
 }
 
@@ -368,7 +368,7 @@ func TestStorageTemplate_CloseWaitsForMetafile(t *testing.T) {
 		synctest.Wait()
 		select {
 		case err := <-closed:
-			t.Fatalf("Close returned before metadata publication: %v", err)
+			require.Failf(t, "Close returned before metadata publication", "error: %v", err)
 		default:
 		}
 		assert.DirExists(t, filepath.Dir(paths.CacheMetadata()))

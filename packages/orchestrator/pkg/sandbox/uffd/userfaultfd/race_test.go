@@ -43,7 +43,7 @@ func withRaceContext(t *testing.T, body func(ctx context.Context)) {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		t.Fatalf("race test exceeded happy-path budget of %s — handler is wedged", raceHappyPathBudget)
+		require.Failf(t, "race test exceeded happy-path budget — handler is wedged", "budget %s", raceHappyPathBudget)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestStaleSourceRaceMissingAndRemove(t *testing.T) {
 					// readErr is ignored; the page-content assertion
 					// below is the bug-detection path.
 				case <-ctx.Done():
-					t.Fatalf("read of page %d did not unblock after barrier release", pageIdx)
+					require.Failf(t, "read did not unblock after barrier release", "page %d", pageIdx)
 				}
 
 				page := (*h.memoryArea)[pageOffset : pageOffset+int64(tt.pagesize)]
@@ -209,9 +209,9 @@ func TestNoMadviseDeadlockWithInflightCopy(t *testing.T) {
 				case <-time.After(madviseBudget):
 					_ = h.releaseFault(ctx, token)
 					<-writeErrCh
-					t.Fatalf("DEADLOCK: madvise(MADV_DONTNEED) on page %d did not return within %s "+
+					require.Failf(t, "DEADLOCK: madvise(MADV_DONTNEED) did not return in time "+
 						"while a worker was parked holding settleRequests.RLock — readEvents must not require any lock",
-						pageIdx, madviseBudget)
+						"page %d, budget %s", pageIdx, madviseBudget)
 				}
 
 				require.NoError(t, h.releaseFault(ctx, token))
@@ -220,7 +220,7 @@ func TestNoMadviseDeadlockWithInflightCopy(t *testing.T) {
 				case err := <-writeErrCh:
 					require.NoError(t, err)
 				case <-ctx.Done():
-					t.Fatalf("user-side write of page %d did not unblock after barrier release", pageIdx)
+					require.Failf(t, "user-side write did not unblock after barrier release", "page %d", pageIdx)
 				}
 			})
 		})

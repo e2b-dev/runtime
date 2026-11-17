@@ -2,12 +2,12 @@ package clusters
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -20,8 +20,8 @@ const (
 // the startup gate once each target has either applied a discovery snapshot or
 // exhausted its bounded startup attempts.
 type startupCoordinator struct {
-	inventory   func(context.Context) ([]queries.Cluster, error)
-	startTarget func(context.Context, queries.Cluster) error
+	inventory   func(context.Context) ([]Record, error)
+	startTarget func(context.Context, Record) error
 	onReady     func(context.Context)
 
 	inventoryTimeout time.Duration
@@ -30,8 +30,8 @@ type startupCoordinator struct {
 }
 
 func newStartupCoordinator(
-	inventory func(context.Context) ([]queries.Cluster, error),
-	startTarget func(context.Context, queries.Cluster) error,
+	inventory func(context.Context) ([]Record, error),
+	startTarget func(context.Context, Record) error,
 	onReady func(context.Context),
 ) *startupCoordinator {
 	return &startupCoordinator{
@@ -73,7 +73,7 @@ func (s *startupCoordinator) Start(ctx context.Context) {
 	}
 }
 
-func (s *startupCoordinator) firstSuccessfulInventory(ctx context.Context) ([]queries.Cluster, bool) {
+func (s *startupCoordinator) firstSuccessfulInventory(ctx context.Context) ([]Record, bool) {
 	for {
 		if ctx.Err() != nil {
 			return nil, false
@@ -94,7 +94,39 @@ func (s *startupCoordinator) firstSuccessfulInventory(ctx context.Context) ([]qu
 	}
 }
 
-func (s *startupCoordinator) startWithRetries(ctx context.Context, target queries.Cluster) {
+// startupSource lists the clusters for the startup gate. A cluster service that
+// fails startupAttempts lists does not hold startup any longer: the local
+// cluster starts alone, and the background sync adds the remote clusters once
+// the service answers, as it does for a remote cluster that does not answer.
+// Any other failure, such as the database's, keeps startup waiting. Only the
+// startup coordinator calls it, from one goroutine.
+type startupSource struct {
+	list  func(context.Context) ([]Record, error)
+	local *Record
+
+	clusterListFailures int
+}
+
+func (s *startupSource) inventory(ctx context.Context) ([]Record, error) {
+	clusters, err := s.list(ctx)
+	if !errors.Is(err, errClusterList) {
+		return clusters, err
+	}
+
+	s.clusterListFailures++
+	if s.clusterListFailures < startupAttempts {
+		return nil, err
+	}
+
+	logger.L().Error(ctx, "Starting without the remote clusters: the cluster service did not list them", zap.Error(err))
+	if s.local == nil {
+		return nil, nil
+	}
+
+	return []Record{*s.local}, nil
+}
+
+func (s *startupCoordinator) startWithRetries(ctx context.Context, target Record) {
 	var lastErr error
 	for range startupAttempts {
 		if ctx.Err() != nil {

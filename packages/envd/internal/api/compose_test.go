@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/memlimit"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -34,7 +35,7 @@ func newComposeTestAPI(t *testing.T) (*API, *user.User) {
 		User:    currentUser.Username,
 	}
 
-	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager()), currentUser
+	return New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager()), currentUser
 }
 
 func writeSourceFile(t *testing.T, dir string, name string, data []byte) string {

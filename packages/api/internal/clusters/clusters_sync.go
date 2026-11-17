@@ -2,6 +2,8 @@ package clusters
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,9 +14,9 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
 	"github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
@@ -28,12 +30,21 @@ const (
 	clusterSyncTimeout   = 5 * time.Second
 )
 
+// Record is a remote cluster as the cluster service stores it.
+type Record struct {
+	ID                 uuid.UUID
+	Endpoint           string
+	EndpointTls        bool
+	Token              string
+	SandboxProxyDomain *string
+	AuthOrgID          *string
+}
+
 type Pool struct {
-	db  *client.Client
 	tel *telemetry.Client
 
 	clusters        *smap.Map[*Cluster]
-	synchronization *synchronization.Synchronize[queries.Cluster, *Cluster]
+	synchronization *synchronization.Synchronize[Record, *Cluster]
 	store           clustersSyncStore
 
 	cancel           context.CancelFunc
@@ -47,8 +58,8 @@ type Pool struct {
 	localInstances chan struct{}
 }
 
-func localClusterConfig() *queries.Cluster {
-	return &queries.Cluster{
+func localClusterConfig() *Record {
+	return &Record{
 		ID:                 consts.LocalClusterID,
 		EndpointTls:        false,
 		SandboxProxyDomain: nil,
@@ -59,6 +70,7 @@ func NewPool(
 	ctx context.Context,
 	tel *telemetry.Client,
 	db *client.Client,
+	clusterService clustersgrpc.ClusterServiceClient,
 	localDiscovery servicediscovery.Discoverer,
 	queryMetricsProvider clickhouse.Clickhouse,
 	queryLogsProvider *loki.LokiQueryProvider,
@@ -70,7 +82,6 @@ func NewPool(
 	clusters := smap.New[*Cluster]()
 	poolCtx, cancel := context.WithCancel(ctx)
 	p := &Pool{
-		db:             db,
 		tel:            tel,
 		clusters:       clusters,
 		cancel:         cancel,
@@ -82,6 +93,7 @@ func NewPool(
 	p.store = clustersSyncStore{
 		config:               config,
 		db:                   db,
+		clusterService:       clusterService,
 		tel:                  tel,
 		clusters:             clusters,
 		local:                localClusterConfig(),
@@ -98,11 +110,12 @@ func NewPool(
 	}
 	p.synchronization = synchronization.NewSynchronize("clusters-pool", "Clusters pool", p.store)
 
+	source := &startupSource{list: p.store.SourceList, local: p.store.local}
 	coordinator := newStartupCoordinator(
-		func(inventoryCtx context.Context) ([]queries.Cluster, error) {
-			return p.initialInventory(poolCtx, inventoryCtx)
+		func(inventoryCtx context.Context) ([]Record, error) {
+			return p.initialInventory(poolCtx, inventoryCtx, source.inventory)
 		},
-		func(attemptCtx context.Context, cluster queries.Cluster) error {
+		func(attemptCtx context.Context, cluster Record) error {
 			return p.startInitialRemoteCluster(poolCtx, attemptCtx, cluster)
 		},
 		p.finishStartup,
@@ -164,7 +177,7 @@ type clustersSyncStore struct {
 	db                   *client.Client
 	tel                  *telemetry.Client
 	clusters             *smap.Map[*Cluster]
-	local                *queries.Cluster
+	local                *Record
 	localDiscovery       servicediscovery.Discoverer
 	queryMetricsProvider clickhouse.Clickhouse
 	queryLogsProvider    *loki.LokiQueryProvider
@@ -174,17 +187,20 @@ type clustersSyncStore struct {
 	localCreds           credentials.TransportCredentials
 	activateCluster      func(*Cluster, initialSyncMode) error
 	onLocalInstance      func()
+
+	// clusterService is nil when none is configured, which leaves the local
+	// cluster as the only one.
+	clusterService clustersgrpc.ClusterServiceClient
 }
 
-func (d clustersSyncStore) SourceList(ctx context.Context) ([]queries.Cluster, error) {
-	db, err := d.db.GetActiveClusters(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	entries := make([]queries.Cluster, 0)
-	for _, row := range db {
-		entries = append(entries, row.Cluster)
+func (d clustersSyncStore) SourceList(ctx context.Context) ([]Record, error) {
+	entries := make([]Record, 0)
+	if d.clusterService != nil {
+		remote, err := assignedRemoteClusters(ctx, d.db, d.clusterService)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, remote...)
 	}
 
 	// Append local cluster if provided
@@ -195,7 +211,7 @@ func (d clustersSyncStore) SourceList(ctx context.Context) ([]queries.Cluster, e
 	return entries, nil
 }
 
-func (d clustersSyncStore) SourceExists(_ context.Context, s []queries.Cluster, p *Cluster) bool {
+func (d clustersSyncStore) SourceExists(_ context.Context, s []Record, p *Cluster) bool {
 	for _, item := range s {
 		if item.ID == p.ID {
 			// A replacement deployment keeps its cluster ID but rotates the edge
@@ -222,13 +238,13 @@ func (d clustersSyncStore) PoolList(_ context.Context) []*Cluster {
 	return items
 }
 
-func (d clustersSyncStore) PoolExists(_ context.Context, cluster queries.Cluster) bool {
+func (d clustersSyncStore) PoolExists(_ context.Context, cluster Record) bool {
 	_, found := d.clusters.Get(cluster.ID.String())
 
 	return found
 }
 
-func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster queries.Cluster) {
+func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster Record) {
 	logger.L().Info(ctx, "Initializing newly discovered cluster", logger.WithClusterID(cluster.ID))
 
 	c, err := d.newCluster(cluster)
@@ -247,7 +263,7 @@ func (d clustersSyncStore) PoolInsert(ctx context.Context, cluster queries.Clust
 	logger.L().Info(ctx, "Cluster initialized successfully", logger.WithClusterID(cluster.ID))
 }
 
-func (d clustersSyncStore) newCluster(cluster queries.Cluster) (*Cluster, error) {
+func (d clustersSyncStore) newCluster(cluster Record) (*Cluster, error) {
 	if cluster.ID == consts.LocalClusterID {
 		return newLocalCluster(d.tel, d.localDiscovery, d.queryMetricsProvider, d.queryLogsProvider, d.sandboxLogsReader, d.featureFlags, d.config, d.localCreds, d.onLocalInstance), nil
 	}
@@ -255,13 +271,13 @@ func (d clustersSyncStore) newCluster(cluster queries.Cluster) (*Cluster, error)
 	return newRemoteCluster(d.tel, d.featureFlags, cluster)
 }
 
-func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Context) ([]queries.Cluster, error) {
-	clusters, err := p.store.SourceList(ctx)
+func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Context, list func(context.Context) ([]Record, error)) ([]Record, error) {
+	clusters, err := list(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	targets := make([]queries.Cluster, 0, len(clusters))
+	targets := make([]Record, 0, len(clusters))
 	for _, cluster := range clusters {
 		if cluster.ID != consts.LocalClusterID {
 			targets = append(targets, cluster)
@@ -281,7 +297,7 @@ func (p *Pool) initialInventory(lifecycleCtx context.Context, ctx context.Contex
 	return targets, nil
 }
 
-func (p *Pool) startInitialRemoteCluster(lifecycleCtx context.Context, ctx context.Context, cluster queries.Cluster) error {
+func (p *Pool) startInitialRemoteCluster(lifecycleCtx context.Context, ctx context.Context, cluster Record) error {
 	c, err := p.store.newCluster(cluster)
 	if err != nil {
 		return err
@@ -347,7 +363,7 @@ func (d clustersSyncStore) PoolUpdate(_ context.Context, _ *Cluster) {
 // PoolReplace swaps a cluster whose endpoint, TLS setting, sandbox domain or
 // credential changed for one built from its current row, and only then closes
 // the old clients, so GetClusterById finds the cluster throughout the move.
-func (d clustersSyncStore) PoolReplace(ctx context.Context, rows []queries.Cluster, old *Cluster) bool {
+func (d clustersSyncStore) PoolReplace(ctx context.Context, rows []Record, old *Cluster) bool {
 	for _, row := range rows {
 		if row.ID != old.ID {
 			continue
@@ -384,4 +400,59 @@ func (d clustersSyncStore) PoolRemove(ctx context.Context, cluster *Cluster) {
 	}
 
 	d.clusters.Remove(cluster.ID.String())
+}
+
+// errClusterList marks a cluster list the cluster service failed to answer.
+var errClusterList = errors.New("the cluster service did not list the clusters")
+
+// assignedRemoteClusters lists the stored clusters a team references: a
+// cluster no team uses has nothing for the pool to schedule.
+func assignedRemoteClusters(ctx context.Context, db *client.Client, clusterService clustersgrpc.ClusterServiceClient) ([]Record, error) {
+	assigned, err := db.ListAssignedClusterIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list assigned cluster IDs: %w", err)
+	}
+	if len(assigned) == 0 {
+		return nil, nil
+	}
+	isAssigned := make(map[uuid.UUID]struct{}, len(assigned))
+	for _, id := range assigned {
+		isAssigned[id] = struct{}{}
+	}
+
+	resp, err := clusterService.ListClusters(ctx, clustersgrpc.ListClustersRequest_builder{}.Build())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errClusterList, err)
+	}
+
+	records := make([]Record, 0, len(assigned))
+	for _, cluster := range resp.GetClusters() {
+		id, err := uuid.Parse(cluster.GetClusterId())
+		if err != nil {
+			return nil, fmt.Errorf("parse cluster ID %q: %w", cluster.GetClusterId(), err)
+		}
+		if _, ok := isAssigned[id]; !ok {
+			continue
+		}
+		records = append(records, recordFromCluster(id, cluster))
+	}
+
+	return records, nil
+}
+
+func recordFromCluster(id uuid.UUID, cluster *clustersgrpc.Cluster) Record {
+	record := Record{
+		ID:          id,
+		Endpoint:    cluster.GetEndpoint(),
+		EndpointTls: cluster.GetEndpointTls(),
+		Token:       cluster.GetToken(),
+	}
+	if cluster.HasSandboxProxyDomain() {
+		record.SandboxProxyDomain = new(cluster.GetSandboxProxyDomain())
+	}
+	if cluster.HasAuthOrgId() {
+		record.AuthOrgID = new(cluster.GetAuthOrgId())
+	}
+
+	return record
 }

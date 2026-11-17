@@ -86,7 +86,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
       # sha256 of config/clickhouse/config.xml, same purpose as
       # VECTOR_CONFIG_SHA256 on the vector service.
-      CLICKHOUSE_CONFIG_SHA256: 48f50a1778bd986fdfb74c3f1e796816dbaa78d56c26443b604cbba205504f83
+      CLICKHOUSE_CONFIG_SHA256: ff37f2b3dae5173a2488f755656442ed110f95c1e8a7bdbcfbeb8e6928caa2e7
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:8123:8123"
@@ -712,6 +712,11 @@ configs:
           <listen_host>0.0.0.0</listen_host>
 
           <tcp_port>9000</tcp_port>
+
+          <!-- The stock config sends crash reports to ClickHouse's developers. -->
+          <send_crash_reports>
+              <enabled>false</enabled>
+          </send_crash_reports>
       </clickhouse>
   vector-config:
     content: |

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	jose "github.com/go-jose/go-jose/v4"
+	"github.com/stretchr/testify/assert"
 )
 
 // NewTestServer starts a TLS server that exposes both an OIDC discovery
@@ -28,9 +29,7 @@ func NewTestServer(t *testing.T, publicKey any, keyID string, algorithm jose.Sig
 			"issuer":   discoveryIssuer,
 			"jwks_uri": server.URL + "/jwks",
 		})
-		if err != nil {
-			t.Errorf("encode discovery response: %v", err)
-		}
+		assert.NoError(t, err, "encode discovery response")
 	})
 
 	jwksHandler := func(w http.ResponseWriter, _ *http.Request) {
@@ -42,9 +41,7 @@ func NewTestServer(t *testing.T, publicKey any, keyID string, algorithm jose.Sig
 				Use:       "sig",
 			},
 		}})
-		if err != nil {
-			t.Errorf("encode JWKS response: %v", err)
-		}
+		assert.NoError(t, err, "encode JWKS response")
 	}
 	mux.HandleFunc("/jwks", jwksHandler)
 	mux.HandleFunc("/.well-known/jwks.json", jwksHandler)

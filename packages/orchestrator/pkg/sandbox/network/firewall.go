@@ -3,10 +3,12 @@
 package network
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -803,11 +805,11 @@ func (fw *Firewall) bufferUserRules(allowedCIDRs, deniedCIDRs []string) error {
 	}
 
 	// 2. Reset predefined allow set to allowedRanges (buffered, no flush).
-	allowedSetData, err := set.AddressStringsToSetData(fw.allowedRanges)
+	allowedCIDRsIPv4, err := ipv4InternalCIDRs(fw.allowedRanges)
 	if err != nil {
 		return fmt.Errorf("parse initial allowed CIDRs: %w", err)
 	}
-	if err := fw.predefinedAllowSet.ClearAndAddElements(fw.conn, allowedSetData); err != nil {
+	if err := clearAndReplaceCIDRs(fw.conn, fw.predefinedAllowSet, allowedCIDRsIPv4); err != nil {
 		return fmt.Errorf("reset predefined allow set: %w", err)
 	}
 
@@ -990,4 +992,40 @@ func ipv4Range(cidr string) (start, end netip.Addr, ok bool) {
 	}
 
 	return netip.Addr{}, netip.Addr{}, false
+}
+
+func ipv4InternalCIDRs(cidrs []string) ([]string, error) {
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			address, addressErr := netip.ParseAddr(cidr)
+			if addressErr != nil {
+				return nil, err
+			}
+			prefix = netip.PrefixFrom(address, address.BitLen())
+		}
+		// This nftables table filters IPv4; IPv6 exceptions remain available to the proxy.
+		if prefix.Addr().Is4() {
+			prefixes = append(prefixes, prefix.Masked())
+		}
+	}
+	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
+		if order := a.Addr().Compare(b.Addr()); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(a.Bits(), b.Bits())
+	})
+	result := make([]string, 0, len(prefixes))
+	var previous netip.Prefix
+	for _, prefix := range prefixes {
+		if previous.IsValid() && previous.Contains(prefix.Addr()) {
+			continue
+		}
+		result = append(result, prefix.String())
+		previous = prefix
+	}
+
+	return result, nil
 }

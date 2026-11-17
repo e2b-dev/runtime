@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -165,7 +167,7 @@ func TestDispatchWriteZeroesReadLoopStall(t *testing.T) {
 			select {
 			case <-conn.firstWrite:
 			case <-time.After(2 * time.Second):
-				t.Fatal("read reply writer never reached the blocked socket Write")
+				require.Fail(t, "read reply writer never reached the blocked socket Write")
 			}
 
 			// 2) WRITE_ZEROES -> inline blocks the loop on writeLock; async does not.
@@ -173,7 +175,7 @@ func TestDispatchWriteZeroesReadLoopStall(t *testing.T) {
 			select {
 			case <-prov.wz:
 			case <-time.After(2 * time.Second):
-				t.Fatal("WriteZeroesAt was never called")
+				require.Fail(t, "WriteZeroesAt was never called")
 			}
 
 			// 3) Probe with a fresh READ; a live loop serves it (records offProbe).
@@ -182,16 +184,15 @@ func TestDispatchWriteZeroesReadLoopStall(t *testing.T) {
 			served := waitForRead(prov, offProbe, 50) // ~500ms
 			switch {
 			case tc.wantStall && served:
-				t.Fatal("expected the read loop to STALL while a reply write is blocked, but it served a new request")
+				require.Fail(t, "expected the read loop to STALL while a reply write is blocked, but it served a new request")
 			case !tc.wantStall && !served:
-				t.Fatal("expected the read loop to keep serving with async WRITE_ZEROES, but it stalled")
+				require.Fail(t, "expected the read loop to keep serving with async WRITE_ZEROES, but it stalled")
 			}
 
 			// Unblock replies; in both modes the loop must then serve the probe.
 			close(conn.gate)
-			if !waitForRead(prov, offProbe, 300) { // ~3s
-				t.Fatal("read loop did not serve the probe after replies drained")
-			}
+			require.True(t, waitForRead(prov, offProbe, 300), // ~3s
+				"read loop did not serve the probe after replies drained")
 		})
 	}
 }

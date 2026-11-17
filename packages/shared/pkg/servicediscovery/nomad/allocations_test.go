@@ -26,9 +26,7 @@ func newNomadAllocationsMock(t *testing.T, allocations []map[string]any) *nomada
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(body); err != nil {
-			t.Errorf("encoding nomad stub response: %v", err)
-		}
+		assert.NoError(t, json.NewEncoder(w).Encode(body), "encoding nomad stub response")
 	}))
 	t.Cleanup(srv.Close)
 

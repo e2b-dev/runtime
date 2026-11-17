@@ -32,8 +32,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -44,6 +42,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/machineinfo"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -490,7 +490,7 @@ func TestCreateSandbox_FilesystemBootDemandRefusesJoin(t *testing.T) {
 	go func() {
 		_, joinErr := o.CreateSandbox(t.Context(), sandboxID, uuid.New().String(), team,
 			func(_ context.Context) (SandboxMetadata, *api.APIError) {
-				t.Error("joiner must not fetch data")
+				assert.Fail(t, "joiner must not fetch data")
 
 				return SandboxMetadata{}, nil
 			},
@@ -503,7 +503,7 @@ func TestCreateSandbox_FilesystemBootDemandRefusesJoin(t *testing.T) {
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusConflict, apiErr.Code)
 	case <-time.After(20 * time.Second):
-		t.Fatal("joiner did not return: it joined the in-flight start instead of being refused")
+		require.Fail(t, "joiner did not return: it joined the in-flight start instead of being refused")
 	}
 
 	close(winnerRelease)
@@ -1490,7 +1490,7 @@ func TestCreateSandbox_RetainsWinningPlacement(t *testing.T) {
 					select {
 					case <-probe.probed:
 					case <-ctx.Done():
-						t.Fatal("joiner did not wait on the pending start")
+						require.Fail(t, "joiner did not wait on the pending start")
 					}
 
 					data, err := plainSandboxData(ctx)

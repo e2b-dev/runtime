@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 // TemplateWithBuilds is a Template with builds. Every Template field, filled
@@ -40,6 +41,39 @@ func TestTemplateWithBuildsCopiesEveryTemplateField(t *testing.T) {
 		assert.True(t, ok, "TemplateWithBuilds has %s, which Template lacks", name)
 	}
 	assert.Equal(t, builds, got.FieldByName("Builds").Interface())
+}
+
+// The builds list reads a subset of a build's columns. Every field of its
+// response must come out of that row: a field added to the build mapping
+// without its column would otherwise be silently zero on this route.
+func TestTemplateBuildRowFillsEveryAPIField(t *testing.T) {
+	t.Parallel()
+
+	var row queries.ListTemplateBuildsRow
+	fillNonZero(reflect.ValueOf(&row).Elem())
+
+	got := reflect.ValueOf(templateBuildRowToAPI(t.Context(), row))
+	for i := range got.NumField() {
+		assert.False(t, got.Field(i).IsZero(), "%s is not filled from the row", got.Type().Field(i).Name)
+	}
+}
+
+// Every field of the template info, and of its default build, comes out of
+// the info row.
+func TestTemplateInfoRowFillsEveryAPIField(t *testing.T) {
+	t.Parallel()
+
+	var row queries.GetTeamTemplateInfoRow
+	fillNonZero(reflect.ValueOf(&row).Elem())
+
+	got := templateInfoToAPI(t.Context(), row)
+	require.NotNil(t, got.DefaultBuild)
+
+	for _, v := range []reflect.Value{reflect.ValueOf(got), reflect.ValueOf(*got.DefaultBuild)} {
+		for i := range v.NumField() {
+			assert.False(t, v.Field(i).IsZero(), "%s.%s is not filled from the row", v.Type().Name(), v.Type().Field(i).Name)
+		}
+	}
 }
 
 // fillNonZero sets every field reachable from v to a non-zero value.

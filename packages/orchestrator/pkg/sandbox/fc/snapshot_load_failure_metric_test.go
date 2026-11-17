@@ -133,7 +133,7 @@ func counterValue(t *testing.T, reader sdkmetric.Reader, name, attrKey, attrValu
 		}
 	}
 
-	t.Fatalf("%s was never recorded", name)
+	require.Failf(t, "metric was never recorded", "%s", name)
 
 	return 0
 }

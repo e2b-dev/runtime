@@ -2,7 +2,6 @@ package utils
 
 import (
 	"context"
-	"errors"
 	"runtime"
 	"sync"
 	"testing"
@@ -49,9 +48,7 @@ func TestAcquireWithLimitIncrease(t *testing.T) {
 	go func() {
 		defer close(done)
 		err := s.Acquire(t.Context(), 2)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
+		assert.NoError(t, err)
 	}()
 
 	time.Sleep(50 * time.Millisecond) // ensure goroutine is blocked
@@ -62,7 +59,7 @@ func TestAcquireWithLimitIncrease(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(50 * time.Millisecond):
-		t.Fatal("Acquire did not unblock after SetLimit")
+		require.Fail(t, "Acquire did not unblock after SetLimit")
 	}
 }
 
@@ -89,7 +86,7 @@ func TestAcquireWithLimitDecrease(t *testing.T) {
 
 	select {
 	case <-done:
-		t.Fatal("Acquire should not have unblocked after SetLimit decrease")
+		require.Fail(t, "Acquire should not have unblocked after SetLimit decrease")
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -99,7 +96,7 @@ func TestAcquireWithLimitDecrease(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(50 * time.Millisecond):
-		t.Fatal("Acquire did not unblock after Release")
+		require.Fail(t, "Acquire did not unblock after Release")
 	}
 }
 
@@ -112,9 +109,7 @@ func TestAcquireErrorsOnNegativeN(t *testing.T) {
 	require.NoError(t, err)
 
 	err = s.Acquire(t.Context(), -1) // should fail
-	if err == nil {
-		t.Fatalf("expected error on negative n, got nil")
-	}
+	require.Error(t, err, "expected error on negative n")
 }
 
 func TestAcquireErrorsOnZeroN(t *testing.T) {
@@ -123,9 +118,7 @@ func TestAcquireErrorsOnZeroN(t *testing.T) {
 	require.NoError(t, err)
 
 	err = s.Acquire(t.Context(), 0) // should fail
-	if err == nil {
-		t.Fatalf("expected error on zero n, got nil")
-	}
+	require.Error(t, err, "expected error on zero n")
 }
 
 func TestReleaseErrorsOnNegativeN(t *testing.T) {
@@ -201,9 +194,7 @@ func TestAcquireBlocksUntilRelease(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 
-	if err := s.Acquire(ctx, 1); err != nil {
-		t.Fatalf("initial acquire failed: %v", err)
-	}
+	require.NoError(t, s.Acquire(ctx, 1), "initial acquire")
 
 	done := make(chan struct{})
 	go func() {
@@ -219,7 +210,7 @@ func TestAcquireBlocksUntilRelease(t *testing.T) {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		t.Fatalf("Acquire did not unblock after Release")
+		require.Fail(t, "Acquire did not unblock after Release")
 	}
 }
 
@@ -227,9 +218,7 @@ func TestAcquireUnblocksOnSetLimit(t *testing.T) {
 	t.Parallel()
 	s, err := NewAdjustableSemaphore(1)
 	require.NoError(t, err)
-	if err := s.Acquire(t.Context(), 1); err != nil {
-		t.Fatalf("initial acquire failed: %v", err)
-	}
+	require.NoError(t, s.Acquire(t.Context(), 1), "initial acquire")
 
 	done := make(chan struct{})
 	go func() {
@@ -243,7 +232,7 @@ func TestAcquireUnblocksOnSetLimit(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("Acquire did not unblock after SetLimit")
+		require.Fail(t, "Acquire did not unblock after SetLimit")
 	}
 }
 
@@ -267,11 +256,9 @@ func TestAcquireRespectsContextCancel(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context.Canceled, got %v", err)
-		}
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("Acquire didn’t return after context cancellation")
+		require.Fail(t, "Acquire didn’t return after context cancellation")
 	}
 }
 
@@ -316,7 +303,7 @@ func TestAcquireCancellationBeforeWait(t *testing.T) {
 				s.mu.Unlock()
 				synctest.Wait()
 				<-result
-				t.Fatal("Acquire missed cancellation before entering Wait")
+				require.Fail(t, "Acquire missed cancellation before entering Wait")
 			}
 		}
 	})

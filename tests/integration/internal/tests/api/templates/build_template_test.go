@@ -50,11 +50,7 @@ func buildTemplate(
 	tb.Helper()
 
 	outcome := runTemplateBuild(tb, templateName, data, logHandler, preBuildFns...)
-	if !outcome.ready {
-		tb.Fatalf("Build failed: %v", outcome.reason)
-
-		return false
-	}
+	require.True(tb, outcome.ready, "Build failed: %v", outcome.reason)
 
 	return true
 }

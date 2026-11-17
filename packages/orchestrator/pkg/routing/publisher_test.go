@@ -291,7 +291,7 @@ func TestPublisher_StopDuringInFlightStoreWaitsAndDeletes(t *testing.T) {
 
 	select {
 	case <-stopDone:
-		t.Fatal("OnStopping returned while the store was still in flight")
+		require.Fail(t, "OnStopping returned while the store was still in flight")
 	case <-time.After(50 * time.Millisecond):
 	}
 

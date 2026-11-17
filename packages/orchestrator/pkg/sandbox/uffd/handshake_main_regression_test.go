@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
@@ -43,7 +44,7 @@ func startHandshakeTest(t *testing.T) *Uffd {
 		select {
 		case <-u.Exit().Done():
 		case <-ctx.Done():
-			t.Error("test cleanup could not join the handshake")
+			assert.Fail(t, "test cleanup could not join the handshake")
 		}
 	})
 
@@ -59,7 +60,7 @@ func TestStopUnblocksHandshakeListener(t *testing.T) {
 	select {
 	case <-u.Exit().Done():
 	case <-ctx.Done():
-		t.Fatal("Stop left the pre-handshake listener running")
+		require.Fail(t, "Stop left the pre-handshake listener running")
 	}
 	require.NoError(t, u.Exit().Error())
 	_, err := u.handler.WaitWithContext(ctx)
@@ -87,7 +88,7 @@ func TestStopUnblocksAcceptedHandshake(t *testing.T) {
 	select {
 	case <-u.Exit().Done():
 	case <-ctx.Done():
-		t.Fatal("Stop left the accepted handshake read running")
+		require.Fail(t, "Stop left the accepted handshake read running")
 	}
 	require.NoError(t, u.Exit().Error())
 	_, err = u.handler.WaitWithContext(ctx)
@@ -153,7 +154,7 @@ func TestRejectedHandshakeClosesReceivedDescriptors(t *testing.T) {
 			select {
 			case <-u.Exit().Done():
 			case <-ctx.Done():
-				t.Fatal("rejected handshake did not finish")
+				require.Fail(t, "rejected handshake did not finish")
 			}
 			require.ErrorContains(t, u.Exit().Error(), test.wantError)
 			require.Equal(t, 1, handshakeDescriptorCopies(t, identity), "a rejected handshake must not retain received rights")
@@ -172,7 +173,7 @@ func TestRejectedHandshakeClosesConnection(t *testing.T) {
 	select {
 	case <-u.Exit().Done():
 	case <-time.After(time.Second):
-		t.Fatal("rejected handshake did not finish")
+		require.Fail(t, "rejected handshake did not finish")
 	}
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
 	_, err = conn.Read(make([]byte, 1))
@@ -212,7 +213,7 @@ func TestHandshakePreservesOneOrTwoDescriptorOwnership(t *testing.T) {
 			select {
 			case <-u.Ready():
 			case <-time.After(time.Second):
-				t.Fatal("valid userspace handshake did not publish its handler")
+				require.Fail(t, "valid userspace handshake did not publish its handler")
 			}
 			_, err = u.handler.Result()
 			require.NoError(t, err)
@@ -229,7 +230,7 @@ func TestHandshakePreservesOneOrTwoDescriptorOwnership(t *testing.T) {
 			select {
 			case <-u.Exit().Done():
 			case <-time.After(time.Second):
-				t.Fatal("userspace handler did not join after Stop")
+				require.Fail(t, "userspace handler did not join after Stop")
 			}
 			require.NoError(t, u.Exit().Error())
 			require.Equal(t, 2, handshakeDescriptorCopies(t, pipeIdentity), "handler must close its event descriptor")

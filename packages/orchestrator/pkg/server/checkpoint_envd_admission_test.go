@@ -171,7 +171,7 @@ func TestCheckpoint_EnvdProbeFlagOffRunsTodaysOrder(t *testing.T) {
 			awaitCheckpointCrossedMarkStopping(t, s, sbx, "flag off must reach MarkStopping without probing")
 			select {
 			case <-answer.begun:
-				t.Fatal("no probe runs with the flag off")
+				require.Fail(t, "no probe runs with the flag off")
 			default:
 			}
 			assert.Empty(t, admissionCounterPoints(t, reader), "no probe, no decision")
@@ -248,7 +248,7 @@ func TestCheckpoint_FilesystemOnlyDisabledIsRefusedBeforeTheProbe(t *testing.T) 
 	assert.Nil(t, envdUnresponsiveDetail(t, ckptErr))
 	select {
 	case <-answer.begun:
-		t.Fatal("the guest must not be probed for a checkpoint the flag refuses")
+		require.Fail(t, "the guest must not be probed for a checkpoint the flag refuses")
 	default:
 	}
 	assert.Empty(t, admissionCounterPoints(t, reader), "no decision is recorded")

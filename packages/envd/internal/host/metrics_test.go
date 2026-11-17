@@ -30,6 +30,9 @@ func TestMetricsJSONKeys(t *testing.T) {
 		"mem_total",
 		"mem_used",
 		"mem_cache",
+		"mem_limit",
+		"mem_movable",
+		"mem_kernel",
 		"disk_used",
 		"disk_total",
 	}, slices.Collect(maps.Keys(fields)))

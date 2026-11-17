@@ -83,9 +83,7 @@ func TestSyncWPResolveDirectFault(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			t.Fatal("no WP fault event within 30s — this kernel may not deliver synchronous WP faults for hugetlb")
-		}
+		require.Positive(t, remaining, "no WP fault event within 30s — this kernel may not deliver synchronous WP faults for hugetlb")
 		pfd := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 		pn, perr := unix.Poll(pfd, int(remaining.Milliseconds()))
 		if perr == unix.EINTR {

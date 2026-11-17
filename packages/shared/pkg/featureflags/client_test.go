@@ -184,7 +184,7 @@ func TestWatchFlag_DeliversChangesOfTheFlagOnly(t *testing.T) {
 	case _, ok := <-changes:
 		require.True(t, ok, "the change of the watched flag must be delivered")
 	case <-time.After(5 * time.Second):
-		t.Fatal("the change of the watched flag was not delivered")
+		require.Fail(t, "the change of the watched flag was not delivered")
 	}
 
 	// Every event is handled in order, so these are seen before the stop

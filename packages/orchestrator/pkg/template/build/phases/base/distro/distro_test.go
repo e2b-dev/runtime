@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Golden lines lifted VERBATIM from the pre-change provision.sh so the debian
@@ -24,7 +25,7 @@ func profileByKey(t *testing.T, key string) Profile {
 			return p
 		}
 	}
-	t.Fatalf("no profile with key %q", key)
+	require.Failf(t, "profile not found", "no profile with key %q", key)
 
 	return Profile{}
 }
@@ -33,41 +34,27 @@ func profileByKey(t *testing.T, key string) Profile {
 func TestDebianPreserved(t *testing.T) {
 	t.Parallel()
 	p := profileByKey(t, "debian")
-	if got := strings.Join(p.Packages, " "); got != goldenDebianPackages {
-		t.Errorf("debian packages drifted:\n got: %s\nwant: %s", got, goldenDebianPackages)
-	}
-	if p.PkgQueryBody != goldenDebianQuery {
-		t.Errorf("debian query drifted:\n got: %s\nwant: %s", p.PkgQueryBody, goldenDebianQuery)
-	}
-	if p.InitBinary != goldenDebianInit {
-		t.Errorf("debian init drifted: got %s want %s", p.InitBinary, goldenDebianInit)
-	}
-	if p.TimeSyncUnit != "chrony" || p.AdminGroup != "sudo" {
-		t.Errorf("debian unit/group drifted: %s / %s", p.TimeSyncUnit, p.AdminGroup)
-	}
+	assert.Equal(t, goldenDebianPackages, strings.Join(p.Packages, " "), "debian packages drifted")
+	assert.Equal(t, goldenDebianQuery, p.PkgQueryBody, "debian query drifted")
+	assert.Equal(t, goldenDebianInit, p.InitBinary, "debian init drifted")
+	assert.Equal(t, "chrony", p.TimeSyncUnit, "debian unit drifted")
+	assert.Equal(t, "sudo", p.AdminGroup, "debian group drifted")
 }
 
 // The families genuinely diverge on the axes that matter.
 func TestFamiliesDiffer(t *testing.T) {
 	t.Parallel()
 	rhel := profileByKey(t, "rhel")
-	if rhel.TimeSyncUnit != "chronyd" || rhel.AdminGroup != "wheel" {
-		t.Errorf("rhel unit/group wrong: %s / %s", rhel.TimeSyncUnit, rhel.AdminGroup)
-	}
+	assert.Equal(t, "chronyd", rhel.TimeSyncUnit, "rhel unit wrong")
+	assert.Equal(t, "wheel", rhel.AdminGroup, "rhel group wrong")
 	// Must both regenerate the trust store AND materialize the bundle at the
 	// Debian-named path envd expects — update-ca-trust alone never creates
 	// ca-certificates.crt, which left envd.service unable to start on Fedora.
-	if !strings.Contains(rhel.CARefresh, "update-ca-trust extract") ||
-		!strings.Contains(rhel.CARefresh, `ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`) {
-		t.Errorf("rhel CA refresh wrong: %s", rhel.CARefresh)
-	}
-	if rhel.InitBinary != "/usr/lib/systemd/systemd" {
-		t.Errorf("rhel init path wrong: %s", rhel.InitBinary)
-	}
+	assert.Contains(t, rhel.CARefresh, "update-ca-trust extract", "rhel CA refresh wrong")
+	assert.Contains(t, rhel.CARefresh, `ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`, "rhel CA refresh wrong")
+	assert.Equal(t, "/usr/lib/systemd/systemd", rhel.InitBinary, "rhel init path wrong")
 	arch := profileByKey(t, "arch")
-	if !strings.Contains(arch.PkgInstall, "pacman") {
-		t.Errorf("arch install should use pacman: %s", arch.PkgInstall)
-	}
+	assert.Contains(t, arch.PkgInstall, "pacman", "arch install should use pacman")
 }
 
 // dnf5 (Fedora 41+) only accepts --allowerasing after the subcommand and exits 2
@@ -76,12 +63,8 @@ func TestFamiliesDiffer(t *testing.T) {
 func TestRhelAllowErasingFollowsSubcommand(t *testing.T) {
 	t.Parallel()
 	rhel := profileByKey(t, "rhel")
-	if !strings.Contains(rhel.PkgInstall, "install --allowerasing") {
-		t.Errorf("rhel install must place --allowerasing after the subcommand: %s", rhel.PkgInstall)
-	}
-	if strings.Contains(rhel.PkgInstall, "--allowerasing install") {
-		t.Errorf("rhel install has --allowerasing before the subcommand, which dnf5 rejects: %s", rhel.PkgInstall)
-	}
+	assert.Contains(t, rhel.PkgInstall, "install --allowerasing", "rhel install must place --allowerasing after the subcommand")
+	assert.NotContains(t, rhel.PkgInstall, "--allowerasing install", "rhel install has --allowerasing before the subcommand, which dnf5 rejects")
 }
 
 // Minimal RPM images ship only one of dnf, microdnf or yum (OpenCloudOS and
@@ -108,13 +91,9 @@ func TestSelectorNoPackageManagerProbing(t *testing.T) {
 		"command -v apt-get", "command -v dnf", "command -v yum",
 		"command -v microdnf", "command -v pacman", "PKG_FAMILY",
 	} {
-		if strings.Contains(sel, bad) {
-			t.Errorf("selector leaked package-manager probing: %q", bad)
-		}
+		assert.NotContains(t, sel, bad, "selector leaked package-manager probing")
 	}
-	if !strings.Contains(sel, `case "$E2B_DISTRO_ID" in`) {
-		t.Error("selector must switch on $E2B_DISTRO_ID (declared distro identity)")
-	}
+	assert.Contains(t, sel, `case "$E2B_DISTRO_ID" in`, "selector must switch on $E2B_DISTRO_ID (declared distro identity)")
 }
 
 // Every supported id gets a case arm; an unknown id hits the failing default.
@@ -122,21 +101,15 @@ func TestSelectorCoversIDsAndRejects(t *testing.T) {
 	t.Parallel()
 	sel := ShellSelector()
 	for _, id := range SupportedIDs() {
-		if !strings.Contains(sel, id) {
-			t.Errorf("selector missing arm for supported id %q", id)
-		}
+		assert.Contains(t, sel, id, "selector missing arm for supported id")
 	}
 	for _, want := range []string{"*)", "unsupported base image", "exit 1"} {
-		if !strings.Contains(sel, want) {
-			t.Errorf("selector missing fast-reject piece %q", want)
-		}
+		assert.Contains(t, sel, want, "selector missing fast-reject piece")
 	}
 	// Alpine is supported via the OpenRC track — and it must be the OpenRC
 	// profile, never folded into a systemd family.
 	alpine := profileByKey(t, "alpine")
-	if alpine.Init != InitOpenRC {
-		t.Errorf("alpine must be the OpenRC profile, got init %q", alpine.Init)
-	}
+	assert.Equal(t, InitOpenRC, alpine.Init, "alpine must be the OpenRC profile")
 }
 
 // Every profile declares a known init system with a rendered setup body, and
@@ -146,31 +119,21 @@ func TestInitSystemsDeclaredAndCoherent(t *testing.T) {
 	t.Parallel()
 	for _, p := range Profiles {
 		setup, ok := initSetup[p.Init]
-		if !ok {
-			t.Errorf("profile %q declares init %q with no setup body", p.Key, p.Init)
-
+		if !assert.True(t, ok, "profile %q declares init %q with no setup body", p.Key, p.Init) {
 			continue
 		}
 		switch p.Init {
 		case InitSystemd:
-			if strings.Contains(setup, "rc-update") {
-				t.Errorf("systemd init setup leaks rc-update (profile %q)", p.Key)
-			}
+			assert.NotContains(t, setup, "rc-update", "systemd init setup leaks rc-update (profile %q)", p.Key)
 		case InitOpenRC:
-			if strings.Contains(setup, "systemctl") {
-				t.Errorf("openrc init setup leaks systemctl (profile %q)", p.Key)
-			}
+			assert.NotContains(t, setup, "systemctl", "openrc init setup leaks systemctl (profile %q)", p.Key)
 		}
 	}
 	sel := ShellSelector()
-	if !strings.Contains(sel, "e2b_init_setup() {") {
-		t.Error("selector must define e2b_init_setup()")
-	}
+	assert.Contains(t, sel, "e2b_init_setup() {", "selector must define e2b_init_setup()")
 	// The OpenRC boot chain pieces the alpine arm must carry.
 	for _, want := range []string{"/etc/inittab", "rc-update add envd default", "openrc sysinit"} {
-		if !strings.Contains(sel, want) {
-			t.Errorf("selector missing OpenRC boot piece %q", want)
-		}
+		assert.Contains(t, sel, want, "selector missing OpenRC boot piece")
 	}
 }
 
@@ -185,9 +148,7 @@ func TestProfileFragmentsAreSingleLine(t *testing.T) {
 			"PkgInstall":   p.PkgInstall,
 			"CARefresh":    p.CARefresh,
 		} {
-			if strings.Contains(frag, "\n") {
-				t.Errorf("profile %q %s spans lines; chain with ; or && instead: %s", p.Key, name, frag)
-			}
+			assert.NotContains(t, frag, "\n", "profile %q %s spans lines; chain with ; or && instead", p.Key, name)
 		}
 	}
 }
@@ -206,18 +167,14 @@ func TestInitSetupWiresChronySourceSelector(t *testing.T) {
 		"Requires=e2b-chrony-source.service",
 		"After=e2b-chrony-source.service",
 	} {
-		if !strings.Contains(systemd, want) {
-			t.Errorf("systemd init setup missing chrony source wiring %q", want)
-		}
+		assert.Contains(t, systemd, want, "systemd init setup missing chrony source wiring")
 	}
 	openrc := initSetup[InitOpenRC]
 	for _, want := range []string{
 		"cp /usr/local/share/e2b/chrony-source.openrc /etc/init.d/e2b-chrony-source",
 		"rc-update add e2b-chrony-source boot",
 	} {
-		if !strings.Contains(openrc, want) {
-			t.Errorf("openrc init setup missing chrony source wiring %q", want)
-		}
+		assert.Contains(t, openrc, want, "openrc init setup missing chrony source wiring")
 	}
 }
 
@@ -230,9 +187,7 @@ func TestInitSetupWiresChronySourceSelector(t *testing.T) {
 func TestOpenRCDisablesChronySeccompRegardlessOfSource(t *testing.T) {
 	t.Parallel()
 	openrc := initSetup[InitOpenRC]
-	if !strings.Contains(openrc, `echo 'command_args="-F 0"' >>"/etc/conf.d/$E2B_TIMESYNC_UNIT"`) {
-		t.Error("openrc init setup must disable the chronyd seccomp filter via conf.d command_args")
-	}
+	assert.Contains(t, openrc, `echo 'command_args="-F 0"' >>"/etc/conf.d/$E2B_TIMESYNC_UNIT"`, "openrc init setup must disable the chronyd seccomp filter via conf.d command_args")
 	// The whole block runs on every Alpine build, so no COMMAND in it may branch
 	// on the device or on a provisioning-time PHC verdict. Comments are stripped
 	// first — they are where the reasoning lives and legitimately say "refclock".
@@ -244,9 +199,7 @@ func TestOpenRCDisablesChronySeccompRegardlessOfSource(t *testing.T) {
 	}
 	openrcCode := strings.Join(code, "\n")
 	for _, bad := range []string{"/dev/ptp0", "E2B_CHRONY_PHC", "refclock"} {
-		if strings.Contains(openrcCode, bad) {
-			t.Errorf("openrc init setup branches on %q; the time source is chosen at boot, not while provisioning", bad)
-		}
+		assert.NotContains(t, openrcCode, bad, "openrc init setup branches on %q; the time source is chosen at boot, not while provisioning", bad)
 	}
 }
 
@@ -256,13 +209,10 @@ func TestOpenRCDisablesChronySeccompRegardlessOfSource(t *testing.T) {
 func TestFingerprintStableAndVersioned(t *testing.T) {
 	t.Parallel()
 	a, b := Fingerprint(), Fingerprint()
-	if a != b || len(a) != 64 {
-		t.Errorf("fingerprint must be a stable sha256 hex: %q vs %q", a, b)
-	}
+	assert.Equal(t, a, b, "fingerprint must be stable")
+	assert.Len(t, a, 64, "fingerprint must be a sha256 hex")
 	want := sha256.Sum256([]byte(Version + "\x00" + ShellSelector()))
-	if a != hex.EncodeToString(want[:]) {
-		t.Error("fingerprint must hash Version + selector text")
-	}
+	assert.Equal(t, hex.EncodeToString(want[:]), a, "fingerprint must hash Version + selector text")
 }
 
 // Sanity: the RHEL-family rebuilds (centos/rocky/alma) all resolve to one arm.
@@ -270,15 +220,7 @@ func TestRHELFamilyAliases(t *testing.T) {
 	t.Parallel()
 	rhel := profileByKey(t, "rhel")
 	for _, want := range []string{"fedora", "centos", "rocky", "almalinux"} {
-		found := false
-		for _, id := range rhel.IDs {
-			if id == want {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("rhel family missing alias %q", want)
-		}
+		assert.Contains(t, rhel.IDs, want, "rhel family missing alias")
 	}
 }
 
@@ -288,11 +230,7 @@ func TestRHELFamilyAliases(t *testing.T) {
 func TestKernelDependentIDsAreRejected(t *testing.T) {
 	t.Parallel()
 	for _, id := range []string{"rhel", "ol", "amzn"} {
-		for _, got := range SupportedIDs() {
-			if got == id {
-				t.Errorf("id %q must not be accepted: E2B supplies the guest kernel", id)
-			}
-		}
+		assert.NotContains(t, SupportedIDs(), id, "id must not be accepted: E2B supplies the guest kernel")
 	}
 }
 
@@ -303,26 +241,15 @@ func TestKernelDependentIDsAreRejected(t *testing.T) {
 func TestUnknownIDFallsBackToIDLike(t *testing.T) {
 	t.Parallel()
 	sel := ShellSelector()
-	if !strings.Contains(sel, "e2b_select_profile") {
-		t.Error("selection must be a function so it can be retried per ID_LIKE token")
-	}
-	if !strings.Contains(sel, "for e2b_like in $E2B_ID_LIKE; do") {
-		t.Error("selector must retry each ID_LIKE token")
-	}
-	if !strings.Contains(sel, "WARNING") {
-		t.Error("an ID_LIKE match must warn, not pass silently")
-	}
+	assert.Contains(t, sel, "e2b_select_profile", "selection must be a function so it can be retried per ID_LIKE token")
+	assert.Contains(t, sel, "for e2b_like in $E2B_ID_LIKE; do", "selector must retry each ID_LIKE token")
+	assert.Contains(t, sel, "WARNING", "an ID_LIKE match must warn, not pass silently")
 	// Nothing matched is still fatal — better than provisioning a guessed family.
-	if !strings.Contains(sel, "unsupported base image distribution") {
-		t.Error("an id matching neither ID nor ID_LIKE must still fail")
-	}
+	assert.Contains(t, sel, "unsupported base image distribution", "an id matching neither ID nor ID_LIKE must still fail")
 	// An if-condition call runs the function body with errexit suppressed.
-	if strings.Contains(sel, "if e2b_select_profile") || strings.Contains(sel, "if ! e2b_select_profile") {
-		t.Error("e2b_select_profile must not be invoked as an if-condition (errexit suppression)")
-	}
-	if !strings.Contains(sel, "e2b_profile_matched=1") {
-		t.Error("a matched profile arm must set e2b_profile_matched")
-	}
+	assert.NotContains(t, sel, "if e2b_select_profile", "e2b_select_profile must not be invoked as an if-condition (errexit suppression)")
+	assert.NotContains(t, sel, "if ! e2b_select_profile", "e2b_select_profile must not be invoked as an if-condition (errexit suppression)")
+	assert.Contains(t, sel, "e2b_profile_matched=1", "a matched profile arm must set e2b_profile_matched")
 }
 
 // ID_LIKE must not re-admit the ids the rhel profile documents as out of scope:
@@ -331,11 +258,7 @@ func TestRejectedIDsAreNotReachableViaIDLike(t *testing.T) {
 	t.Parallel()
 	sel := ShellSelector()
 	guard := strings.Join(RejectedIDs, "|")
-	if !strings.Contains(sel, guard) {
-		t.Errorf("selector must guard rejected ids (%s) before the ID_LIKE fallback", guard)
-	}
+	assert.Contains(t, sel, guard, "selector must guard rejected ids before the ID_LIKE fallback")
 	// The guard has to come first, or ID_LIKE=fedora would match them.
-	if strings.Index(sel, guard) > strings.Index(sel, "E2B_ID_LIKE") {
-		t.Error("the rejected-id guard must precede the ID_LIKE fallback")
-	}
+	assert.LessOrEqual(t, strings.Index(sel, guard), strings.Index(sel, "E2B_ID_LIKE"), "the rejected-id guard must precede the ID_LIKE fallback")
 }

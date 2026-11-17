@@ -509,6 +509,13 @@ var (
 	// read, with the same store commands as before.
 	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
 
+	// NodeInfoRefreshIntervalSecondsFlag is how often, in seconds, each API
+	// replica asks the local cluster's nodes for their status and metrics
+	// between syncs, so a node that stopped accepting sandboxes is seen that
+	// much sooner. A sync that runs until the next one is due leaves no time
+	// for a refresh. The fallback, zero, leaves the sync as the only refresh.
+	NodeInfoRefreshIntervalSecondsFlag = NewIntFlag("node-info-refresh-interval-seconds", 0)
+
 	// UnpaginatedTemplateListCapFlag caps GET /templates at 5000 templates; a
 	// team above it gets a 400 pointing at GET /v2/templates. Evaluated per team.
 	UnpaginatedTemplateListCapFlag = NewBoolFlag("unpaginated-template-list-cap", true)

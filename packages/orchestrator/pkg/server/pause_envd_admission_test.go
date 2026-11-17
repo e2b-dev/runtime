@@ -24,6 +24,8 @@ import (
 
 	internalevents "github.com/e2b-dev/infra/packages/orchestrator/pkg/events"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -149,6 +151,9 @@ type fakePauseSteps struct {
 	stops            atomic.Int32
 	filesystemOnly   atomic.Bool
 	envdUnresponsive atomic.Bool
+	// seal, when set, backs the snapshot's rootfs diff: a harvest then waits on
+	// it instead of resuming, until the test settles it.
+	seal *utils.SetOnce[build.Diff]
 }
 
 func (f *fakePauseSteps) snapshot(_ context.Context, _ *sandbox.Sandbox, in *orchestrator.SandboxPauseRequest, filesystemOnly, _, envdUnresponsive bool) (*snapshotResult, error) {
@@ -156,10 +161,18 @@ func (f *fakePauseSteps) snapshot(_ context.Context, _ *sandbox.Sandbox, in *orc
 	f.filesystemOnly.Store(filesystemOnly)
 	f.envdUnresponsive.Store(envdUnresponsive)
 
+	var rootfsDiff build.Diff = &build.NoDiff{}
+	if f.seal != nil {
+		rootfsDiff = build.NewDeferredDiff("rootfs", 4096, f.seal)
+	}
+
 	return &snapshotResult{
+		// Stamped as the real snapshot stamps it, so the harvest reads the mark.
+		meta:               metadata.Template{}.MarkEnvdUnresponsive(envdUnresponsive),
 		schedulingMetadata: &orchestrator.SchedulingMetadata{BuildId: in.GetBuildId()},
 		completeUpload:     func(context.Context, error) {},
 		abandonUpload:      func(context.Context, error) {},
+		rootfsDiff:         rootfsDiff,
 		filesystemOnly:     filesystemOnly,
 	}, nil
 }
@@ -200,7 +213,7 @@ func TestPause_EnvdUnresponsiveProceedsWhenAllowed(t *testing.T) {
 	select {
 	case <-answer.begun:
 	default:
-		t.Fatal("the guest must still be probed")
+		require.Fail(t, "the guest must still be probed")
 	}
 	assert.True(t, resp.GetEnvdUnresponsive(), "the response must report the miss the API persists")
 	assert.Equal(t, "build-1", resp.GetSchedulingMetadata().GetBuildId())
@@ -252,6 +265,79 @@ func TestPause_EnvdUnresponsiveRefusesBeforeMarkStoppingByDefault(t *testing.T) 
 	waits := admissionWaitPoints(t, reader)
 	require.Len(t, waits, 1)
 	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrsAsMap(t, waits[0].Attributes)["outcome"])
+}
+
+// envdProbeHarvestFlagClient is envdProbeFlagClient with the prefetch harvest
+// enabled on a one-second budget, so a pause schedules the harvest.
+func envdProbeHarvestFlagClient(t *testing.T, envdMs int) *featureflags.Client {
+	t.Helper()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.PauseEnvdHealthTimeoutMs.Key()).ValueForAll(ldvalue.Int(envdMs)))
+	td.Update(td.Flag(featureflags.PauseResumePrefetchHarvestFlag.Key()).VariationForAll(true))
+	td.Update(td.Flag(featureflags.PauseResumePrefetchHarvestTimeoutMsFlag.Key()).ValueForAll(ldvalue.Int(1000)))
+	ff, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	return ff
+}
+
+// The mark a missed probe stamps on the snapshot reaches the harvest through
+// the handler: a pause over an unresponsive guest counts the skip and
+// schedules nothing, while a pause whose guest answered schedules the harvest,
+// which waits on the snapshot's seal and counts an attempt that is not the
+// skip once the seal settles.
+func TestPause_EnvdUnresponsiveSkipsThePrefetchHarvest(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		answer    *envdAnswer
+		harvested bool
+	}{
+		{name: "unresponsive guest is not harvested", answer: &envdAnswer{unreachable: true}},
+		{name: "healthy guest is harvested", answer: &envdAnswer{status: http.StatusNoContent}, harvested: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			teamID := harvestTeamID("pause-harvest")
+			s, _ := envdProbePauseServer(t, new(envdProbeMs))
+			s.featureFlags = envdProbeHarvestFlagClient(t, envdProbeMs)
+			sbx := envdProbeSandbox(t, "sbx-"+teamID, 36)
+			sbx.Runtime.TeamID = teamID
+			registerEnvd(t, sbx, tc.answer)
+			s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
+
+			steps := &fakePauseSteps{seal: utils.NewSetOnce[build.Diff]()}
+			resp, pauseErr := s.pauseWith(t.Context(), &orchestrator.SandboxPauseRequest{SandboxId: sbx.Runtime.SandboxID, BuildId: "build-1", AllowEnvdUnresponsive: true}, steps)
+			require.NoError(t, pauseErr)
+			require.Equal(t, !tc.harvested, resp.GetEnvdUnresponsive())
+			require.Equal(t, !tc.harvested, steps.envdUnresponsive.Load(), "the snapshot carries the probe's verdict")
+
+			if !tc.harvested {
+				// The skip is counted before the handler returns; nothing waits on the seal.
+				points := harvestAttemptsForTeam(t, teamID)
+				require.Len(t, points, 1, "exactly one attempt is counted for a marked pause")
+				assert.Equal(t, string(harvestGuestUnresponsive), attrsAsMap(t, points[0].Attributes)["result"])
+				assert.Equal(t, string(harvestSourcePause), attrsAsMap(t, points[0].Attributes)["path"])
+				require.Eventually(t, func() bool { return s.info.OutstandingWork() == 0 }, 2*time.Second, time.Millisecond)
+				assert.Len(t, harvestAttemptsForTeam(t, teamID), 1, "nothing else is counted once the pause's detached work drains")
+
+				return
+			}
+
+			// Settle the seal as failed so the scheduled harvest books its attempt
+			// without ever reaching the factory; what it books is not the skip.
+			require.NoError(t, steps.seal.SetError(build.ErrDeferredSealFailed))
+			require.Eventually(t, func() bool { return s.info.OutstandingWork() == 0 }, 2*time.Second, time.Millisecond)
+			points := harvestAttemptsForTeam(t, teamID)
+			require.Len(t, points, 1, "the harvest was scheduled and counted one attempt")
+			assert.Equal(t, string(harvestSkipped), attrsAsMap(t, points[0].Attributes)["result"], "a healthy guest's harvest is never the guest_unresponsive skip")
+			assert.Equal(t, string(harvestSourcePause), attrsAsMap(t, points[0].Attributes)["path"])
+		})
+	}
 }
 
 // An envd that answers admits the pause: it runs to its response, which
@@ -432,7 +518,7 @@ func TestPause_EnvdProbeMissWhileACheckpointClaimsTheSandboxIsRetryable(t *testi
 	select {
 	case <-answer.begun:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the probe never reached the guest")
+		require.Fail(t, "the probe never reached the guest")
 	}
 
 	done := startSlowCheckpoint(t.Context(), s, steps, sbx)
@@ -442,7 +528,7 @@ func TestPause_EnvdProbeMissWhileACheckpointClaimsTheSandboxIsRetryable(t *testi
 	select {
 	case err = <-pauseErr:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pause never answered")
+		require.Fail(t, "the pause never answered")
 	}
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
 	assert.NotNil(t, checkpointInProgressDetail(t, err), "the hold, not the guest, is the reason the API acts on")
@@ -503,7 +589,7 @@ func TestPause_EnvdProbeMissAfterASuccessorTookTheIDIsRetryable(t *testing.T) {
 	select {
 	case <-answer.begun:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the probe never reached the guest")
+		require.Fail(t, "the probe never reached the guest")
 	}
 
 	// The probed execution ends and a fresh one takes its ID.
@@ -517,7 +603,7 @@ func TestPause_EnvdProbeMissAfterASuccessorTookTheIDIsRetryable(t *testing.T) {
 	select {
 	case err = <-pauseErr:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the pause never answered")
+		require.Fail(t, "the pause never answered")
 	}
 	requireEnvdUnresponsive(t, err)
 	cur, live := s.sandboxFactory.Sandboxes.Get("sbx-envd-successor")

@@ -52,7 +52,7 @@ func TestRunClosers_DeadlineCutsAHungCloser(t *testing.T) { //nolint:paralleltes
 		require.Equal(t, "third", <-ran)
 		select {
 		case got := <-ran:
-			t.Fatalf("closer %q ran after the deadline", got)
+			require.Failf(t, "a closer ran after the deadline", "closer %q", got)
 		default:
 		}
 

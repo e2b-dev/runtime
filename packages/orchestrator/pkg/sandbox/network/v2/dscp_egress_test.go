@@ -225,7 +225,7 @@ func TestV2Pool_GetStampsAndRecycleRestoresDSCP(t *testing.T) { //nolint:paralle
 	case reused := <-pool.reusedSlots:
 		require.Equal(t, slot.Idx, reused.Idx)
 	default:
-		t.Fatal("recycled slot must go back to the reuse queue, not be torn down")
+		require.Fail(t, "recycled slot must go back to the reuse queue, not be torn down")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/chrooted"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/nfsproxy/mountcache"
@@ -21,7 +22,7 @@ func retireIdleRoots(tb testing.TB, h *NFSHandler, path string, count int) {
 	for i := range count {
 		fs, err := chrooted.Chroot(path)
 		if err != nil {
-			tb.Fatal(err)
+			require.NoError(tb, err)
 		}
 		var id uuid.UUID
 		id[0] = byte(i)
@@ -29,14 +30,14 @@ func retireIdleRoots(tb testing.TB, h *NFSHandler, path string, count int) {
 	}
 	h.chrootsByOwner[owner] = roots
 	if err := h.RemoveOwner(tb.Context(), owner); err != nil {
-		tb.Fatal(err)
+		require.NoError(tb, err)
 	}
 	if h.Count() != 0 {
-		tb.Fatal("retired roots remain registered")
+		require.Zero(tb, h.Count(), "retired roots remain registered")
 	}
 	for _, fs := range roots {
 		if err := fs.WaitClosed(tb.Context()); err != nil {
-			tb.Fatal(err)
+			require.NoError(tb, err)
 		}
 	}
 }
@@ -44,16 +45,14 @@ func retireIdleRoots(tb testing.TB, h *NFSHandler, path string, count int) {
 func benchmarkRemoveOwnerIdle(b *testing.B, path string, count int, cold bool) {
 	b.Helper()
 	h, err := NewNFSHandler(nil, nil, nil)
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		if cold {
 			h, err = NewNFSHandler(nil, nil, nil)
 			if err != nil {
-				b.Fatal(err)
+				require.NoError(b, err)
 			}
 		}
 		retireIdleRoots(b, h, path, count)
@@ -62,9 +61,7 @@ func benchmarkRemoveOwnerIdle(b *testing.B, path string, count int, cold bool) {
 
 func BenchmarkRemoveOwnerIdle(b *testing.B) {
 	path := b.TempDir()
-	if err := os.WriteFile(filepath.Join(path, "unread-payload"), make([]byte, 64<<10), 0o600); err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, os.WriteFile(filepath.Join(path, "unread-payload"), make([]byte, 64<<10), 0o600))
 	for _, count := range []int{1, 8} {
 		for _, cold := range []bool{false, true} {
 			b.Run(fmt.Sprintf("roots=%d/cold=%t", count, cold), func(b *testing.B) {
@@ -93,10 +90,8 @@ func TestRemoveOwnerIdleCost(t *testing.T) {
 				b.Helper()
 				benchmarkRemoveOwnerIdle(b, path, tc.roots, tc.cold)
 			})
-			if result.AllocsPerOp() > tc.allocs || result.AllocedBytesPerOp() > tc.bytes {
-				t.Fatalf("idle retirement exceeds pre-change cost: %d allocs/%d bytes; maximum %d/%d",
-					result.AllocsPerOp(), result.AllocedBytesPerOp(), tc.allocs, tc.bytes)
-			}
+			require.LessOrEqual(t, result.AllocsPerOp(), tc.allocs, "idle retirement allocations exceed pre-change cost")
+			require.LessOrEqual(t, result.AllocedBytesPerOp(), tc.bytes, "idle retirement bytes exceed pre-change cost")
 		})
 	}
 }

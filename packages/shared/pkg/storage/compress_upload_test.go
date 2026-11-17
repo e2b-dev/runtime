@@ -394,7 +394,7 @@ func BenchmarkCompress(b *testing.B) {
 					nil,
 				)
 				if err != nil {
-					b.Fatal(err)
+					require.NoError(b, err)
 				}
 
 				lastParts.Store(int32(len(up.parts)))
@@ -452,7 +452,7 @@ func BenchmarkStoreFile(b *testing.B) {
 
 					fullFT, _, err := obj.StoreFile(b.Context(), inputPath, WithCompressConfig(compCfg))
 					if err != nil {
-						b.Fatal(err)
+						require.NoError(b, err)
 					}
 					ft := fullFT.Table()
 
@@ -472,17 +472,17 @@ func BenchmarkStoreFile(b *testing.B) {
 
 			in, err := os.Open(inputPath)
 			if err != nil {
-				b.Fatal(err)
+				require.NoError(b, err)
 			}
 			out, err := os.Create(outPath)
 			if err != nil {
 				in.Close()
-				b.Fatal(err)
+				require.NoError(b, err)
 			}
 			if _, err := io.Copy(out, in); err != nil {
 				in.Close()
 				out.Close()
-				b.Fatal(err)
+				require.NoError(b, err)
 			}
 			in.Close()
 			out.Close()

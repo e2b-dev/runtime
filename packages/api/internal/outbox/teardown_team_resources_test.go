@@ -195,7 +195,7 @@ func TestTeardownTeamResourcesRunsThroughTheOutboxClient(t *testing.T) {
 	case event := <-completed:
 		require.Equal(t, inserted.Job.ID, event.Job.ID)
 	case <-time.After(30 * time.Second):
-		t.Fatal("the teardown job did not complete")
+		require.Fail(t, "the teardown job did not complete")
 	}
 	require.Equal(t, fullTeardown, recorder.recorded())
 }

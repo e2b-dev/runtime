@@ -10,9 +10,10 @@ type TLSConfig struct {
 	InternalGRPC   mtls.ListenerSettings `envPrefix:"E2B_TLS_INTERNAL_GRPC_"`
 	PublicGRPC     mtls.ListenerSettings `envPrefix:"E2B_TLS_PUBLIC_GRPC_"`
 
-	SecretsStore mtls.HopSettings `envPrefix:"E2B_TLS_SECRETS_STORE_"`
-	Webhooks     mtls.HopSettings `envPrefix:"E2B_TLS_WEBHOOKS_"`
-	Analytics    mtls.HopSettings `envPrefix:"E2B_TLS_ANALYTICS_"`
-	Orchestrator mtls.HopSettings `envPrefix:"E2B_TLS_ORCHESTRATOR_"`
-	Scheduling   mtls.HopSettings `envPrefix:"E2B_TLS_SCHEDULING_"`
+	SecretsStore   mtls.HopSettings `envPrefix:"E2B_TLS_SECRETS_STORE_"`
+	Webhooks       mtls.HopSettings `envPrefix:"E2B_TLS_WEBHOOKS_"`
+	Analytics      mtls.HopSettings `envPrefix:"E2B_TLS_ANALYTICS_"`
+	Orchestrator   mtls.HopSettings `envPrefix:"E2B_TLS_ORCHESTRATOR_"`
+	Scheduling     mtls.HopSettings `envPrefix:"E2B_TLS_SCHEDULING_"`
+	ClusterService mtls.HopSettings `envPrefix:"E2B_TLS_CLUSTER_SERVICE_"`
 }

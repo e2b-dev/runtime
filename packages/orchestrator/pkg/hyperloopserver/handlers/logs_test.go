@@ -468,15 +468,13 @@ func TestAPIStoreForwardLogsStatus(t *testing.T) {
 
 			store := &APIStore{collectorClient: *server.Client()}
 			err := store.forwardLogs(t.Context(), server.URL, []byte(`{"secret":"not-in-error"}`), 0)
-			if tt.wantErr && err == nil {
-				t.Fatal("expected an error")
+			if !tt.wantErr {
+				require.NoError(t, err)
+
+				return
 			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if err != nil && strings.Contains(err.Error(), "not-in-error") {
-				t.Fatalf("error contains request payload: %v", err)
-			}
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), "not-in-error", "error contains request payload")
 		})
 	}
 }
@@ -506,12 +504,8 @@ func TestAPIStoreForwardLogsRespectsTimeout(t *testing.T) {
 	err := store.forwardLogs(t.Context(), server.URL, []byte(`{"msg":"slow"}`), 50*time.Millisecond)
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected an error from a slow/hung response once the timeout passes")
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("forwardLogs took %v to return; expected it to abort promptly once the 50ms timeout passed", elapsed)
-	}
+	require.Error(t, err, "expected an error from a slow/hung response once the timeout passes")
+	require.LessOrEqual(t, elapsed, 2*time.Second, "forwardLogs should abort promptly once the 50ms timeout passed")
 }
 
 // TestAPIStoreForwardLogsZeroTimeoutRespectsClientTimeout is the legacy-mode
@@ -541,10 +535,6 @@ func TestAPIStoreForwardLogsZeroTimeoutRespectsClientTimeout(t *testing.T) {
 	err := store.forwardLogs(t.Context(), server.URL, []byte(`{"msg":"slow"}`), 0)
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected an error from a slow/hung response once the client timeout passes")
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("forwardLogs took %v to return; expected it to abort promptly once the 50ms client timeout passed", elapsed)
-	}
+	require.Error(t, err, "expected an error from a slow/hung response once the client timeout passes")
+	require.LessOrEqual(t, elapsed, 2*time.Second, "forwardLogs should abort promptly once the 50ms client timeout passed")
 }

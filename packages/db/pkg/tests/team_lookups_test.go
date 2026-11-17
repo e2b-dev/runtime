@@ -51,11 +51,6 @@ func TestTeamLookupsDoNotReadTheTier(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, withLimits, 1)
 	assert.Equal(t, teamID, withLimits[0].ID)
-
-	memberships, err := db.AuthDB.GetTeamsWithUsersTeams(ctx, userID)
-	require.NoError(t, err)
-	require.Len(t, memberships, 1)
-	assert.Equal(t, teamID, memberships[0].ID)
 }
 
 // A column TeamFromRow leaves behind reaches every authenticated team as zero,

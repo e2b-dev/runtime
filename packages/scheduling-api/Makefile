@@ -17,10 +17,6 @@ build:
 run-local: build
 	NODE_ID=local ENVIRONMENT=local SCHEDULING_GRPC_ADDRESS=:50051 ./bin/scheduling-api
 
-.PHONY: migrate
-migrate:
-	go run ./cmd/migrate
-
 .PHONY: test
 test:
 	go test -race -v ./...

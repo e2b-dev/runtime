@@ -274,7 +274,7 @@ func (e *buildStartV2Env) waitForPoll(t *testing.T) {
 	select {
 	case <-e.builder.polled:
 	case <-time.After(30 * time.Second):
-		t.Fatal("dispatched build was never polled")
+		require.Fail(t, "dispatched build was never polled")
 	}
 }
 

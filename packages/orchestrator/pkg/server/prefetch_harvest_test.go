@@ -7,17 +7,25 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/service"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // TestClampHarvestTimeoutMs locks the floor that protects the harvest from a
@@ -203,6 +211,109 @@ func testHarvestSandbox() *sandbox.Sandbox {
 			Runtime: sandboxtypes.RuntimeMetadata{SandboxID: "sandbox-1", TeamID: "team-1", BuildID: "original-build", TemplateID: "tmpl-1"},
 		},
 	}
+}
+
+// harvestAttemptsForTeam reads the harvest attempts counter's points for one
+// team. The reader is process-wide and the suite is parallel, so a test owns
+// only the points carrying a team id nobody else uses.
+func harvestAttemptsForTeam(t *testing.T, teamID string) []metricdata.DataPoint[int64] {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, testMetricReader.Collect(t.Context(), &rm))
+
+	var out []metricdata.DataPoint[int64]
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != string(telemetry.PauseResumePrefetchHarvestAttempts) {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "%s is not an int64 sum", m.Name)
+			for _, dp := range sum.DataPoints {
+				if v, ok := dp.Attributes.Value("team.id"); ok && v.AsString() == teamID {
+					out = append(out, dp)
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+// harvestTeamID mints a team id for one test run. The counter is cumulative
+// across the binary, including repeated runs of the same test, so the id that
+// scopes a test's points has to be new every run.
+func harvestTeamID(name string) string {
+	return "team-" + name + "-" + uuid.NewString()
+}
+
+// harvestTeamSandbox is testHarvestSandbox owned by one team, so the harvest
+// metrics it records are the test's alone.
+func harvestTeamSandbox(teamID string) *sandbox.Sandbox {
+	sbx := testHarvestSandbox()
+	sbx.Runtime.TeamID = teamID
+
+	return sbx
+}
+
+// A snapshot taken over an unresponsive guest agent is only ever resumed
+// without memory, so the harvest is skipped before it tracks work or detaches:
+// nothing is outstanding when the call returns, and the one attempt counted
+// says why.
+func TestHarvestResumePrefetchAsync_SkipsAnUnresponsiveGuestSnapshot(t *testing.T) {
+	t.Parallel()
+
+	teamID := harvestTeamID("harvest-skip-marked")
+	s := &Server{info: &service.ServiceInfo{}, featureFlags: harvestFlagClient(t)}
+	res := &snapshotResult{
+		meta:       metadata.Template{}.MarkEnvdUnresponsive(true),
+		rootfsDiff: &build.NoDiff{},
+	}
+
+	s.harvestResumePrefetchAsync(t.Context(), harvestTeamSandbox(teamID), res, "build-1", storage.ObjectMetadata{}, harvestSourcePause)
+	require.Zero(t, s.info.OutstandingWork(), "a skipped harvest tracks no work")
+	points := harvestAttemptsForTeam(t, teamID)
+	require.Len(t, points, 1, "exactly one attempt is counted")
+	assert.Equal(t, int64(1), points[0].Value)
+	assert.Equal(t, map[string]string{
+		"result":  string(harvestGuestUnresponsive),
+		"path":    string(harvestSourcePause),
+		"team.id": teamID,
+	}, attrsAsMap(t, points[0].Attributes))
+}
+
+// The skip is conditional on the mark: the same call for a snapshot whose
+// agent answered schedules the harvest as tracked work, which waits on the
+// snapshot's seal, and the attempt it then counts is not the skip.
+func TestHarvestResumePrefetchAsync_HarvestsAnUnmarkedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	teamID := harvestTeamID("harvest-unmarked")
+	ff := harvestFlagClient(t)
+	synctest.Test(t, func(t *testing.T) {
+		s := &Server{info: &service.ServiceInfo{}, featureFlags: ff}
+		// A seal that settles only when the test says so keeps the harvest off the
+		// factory: it blocks on the seal, then books the failed seal and ends.
+		seal := utils.NewSetOnce[build.Diff]()
+		res := &snapshotResult{meta: metadata.Template{}, rootfsDiff: build.NewDeferredDiff("rootfs", 4096, seal)}
+
+		s.harvestResumePrefetchAsync(t.Context(), harvestTeamSandbox(teamID), res, "build-1", storage.ObjectMetadata{}, harvestSourcePause)
+		synctest.Wait()
+		require.Equal(t, int64(1), s.info.OutstandingWork(), "an unmarked snapshot schedules the harvest")
+		require.Empty(t, harvestAttemptsForTeam(t, teamID), "nothing is counted while the harvest waits on the seal")
+
+		require.NoError(t, seal.SetError(build.ErrDeferredSealFailed))
+		synctest.Wait()
+		require.Zero(t, s.info.OutstandingWork())
+		points := harvestAttemptsForTeam(t, teamID)
+		require.Len(t, points, 1)
+		assert.Equal(t, map[string]string{
+			"result":  string(harvestSkipped),
+			"path":    string(harvestSourcePause),
+			"team.id": teamID,
+		}, attrsAsMap(t, points[0].Attributes), "the harvest ran to its attempt and was not the guest_unresponsive skip")
+	})
 }
 
 // TestHarvestRun_ConsumePersistsAndReaps: with consume on and a non-empty trace,

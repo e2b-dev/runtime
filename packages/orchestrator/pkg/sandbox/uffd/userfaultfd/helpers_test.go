@@ -254,7 +254,7 @@ func (h *testHandler) executeAll(t *testing.T, operations []operation) {
 		case err := <-errCh:
 			require.NoError(t, err, "async operation")
 		case <-t.Context().Done():
-			t.Fatal("timed out waiting for async operation")
+			require.Fail(t, "timed out waiting for async operation")
 		}
 	}
 }

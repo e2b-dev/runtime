@@ -13,6 +13,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -30,22 +31,69 @@ func (o *Orchestrator) GetSandbox(ctx context.Context, teamID uuid.UUID, sandbox
 
 // keepInSync the cache with the actual instances in Orchestrator to handle instances that died.
 func (o *Orchestrator) keepInSync(ctx context.Context, store *sandbox.Store, skipSyncingWithNomad bool) {
+	// A stop ends the loop between syncs. A sync cut short would report every
+	// node it had not reached as failing and mark it unhealthy; it ends on
+	// its own timeout instead.
+	syncCtx := context.WithoutCancel(ctx)
+
 	// Run the first sync immediately
 	logger.L().Info(ctx, "Running the initial node sync")
-	o.syncNodes(ctx, store, skipSyncingWithNomad)
+	o.syncNodes(syncCtx, store, skipSyncingWithNomad)
 
 	// Sync the nodes every cacheSyncTime
 	ticker := time.NewTicker(cacheSyncTime)
 	defer ticker.Stop()
 
 	for {
+		// Between syncs, refresh as often as the flag asks. A nil channel never fires.
+		var refresh <-chan time.Time
+		if every := o.nodeRefreshInterval(ctx); every > 0 {
+			refresh = time.After(every)
+		}
+
 		select {
 		case <-ctx.Done():
 			logger.L().Info(ctx, "Stopping keepInSync")
 
 			return
+		// A tick can be ready together with the stop, and select then picks
+		// either: no round starts once stopped.
 		case <-ticker.C:
-			o.syncNodes(ctx, store, skipSyncingWithNomad)
+			if ctx.Err() == nil {
+				o.syncNodes(syncCtx, store, skipSyncingWithNomad)
+			}
+		case <-refresh:
+			if ctx.Err() == nil {
+				o.refreshNodes(syncCtx)
+			}
+		}
+	}
+}
+
+// nodeRefreshInterval is how often the flag asks for a refresh between syncs;
+// zero is never. A flag that does not exist yet reads as zero.
+func (o *Orchestrator) nodeRefreshInterval(ctx context.Context) time.Duration {
+	seconds, _ := o.featureFlagsClient.IntFlagWithError(ctx, featureflags.NodeInfoRefreshIntervalSecondsFlag)
+
+	return time.Duration(seconds) * time.Second
+}
+
+// refreshNodes asks the local cluster's nodes for their status and metrics.
+// A remote cluster's nodes are left to the sync: they are reached through the
+// cluster's proxy, and its registry already polls each of them.
+func (o *Orchestrator) refreshNodes(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, nodeHealthCheckTimeout)
+	defer cancel()
+
+	ctx, span := tracer.Start(ctx, "refresh-nodes")
+	defer span.End()
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	for _, n := range o.nodes.Items() {
+		if !n.IsClusterNode() {
+			wg.Go(func() { n.RefreshInfo(ctx) })
 		}
 	}
 }

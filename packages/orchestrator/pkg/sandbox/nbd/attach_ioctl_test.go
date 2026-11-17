@@ -209,7 +209,7 @@ func TestIoctlAttachServesIO(t *testing.T) {
 	select {
 	case <-mnt.ioctlSession.done:
 	default:
-		t.Fatal("the NBD_DO_IT thread did not return")
+		require.Fail(t, "the NBD_DO_IT thread did not return")
 	}
 	require.True(t, mnt.ioctlSession.disconnectRequested.Load(), "a Close is an end this process asked for, not one the kernel chose")
 }
@@ -330,7 +330,7 @@ func awaitDeviceReleased(t *testing.T, deviceReleased <-chan struct{}) {
 	select {
 	case <-deviceReleased:
 	case <-time.After(disconnectTimeout):
-		t.Fatal("the session the attach left behind never let go of its device")
+		require.Fail(t, "the session the attach left behind never let go of its device")
 	}
 }
 
@@ -498,7 +498,7 @@ func TestIoctlAttachLosingTheDeviceLeavesItsOwnerAlone(t *testing.T) {
 	require.ErrorIs(t, err, errIoctlDeviceTaken, "a lost race is retryable")
 	select {
 	case <-mnt.ioctlSession.done:
-		t.Fatalf("the owner's session ended: %v", mnt.ioctlSession.exitErr)
+		require.Failf(t, "the owner's session ended", "exit error: %v", mnt.ioctlSession.exitErr)
 	default:
 	}
 	require.Equal(t, strconv.Itoa(ioctlTestDeviceSize/512), sysfsAttr(t, idx, "size"), "the owner's geometry is untouched")
@@ -609,7 +609,7 @@ func TestIoctlSessionSurvivesSignals(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		select {
 		case <-mnt.ioctlSession.done:
-			t.Fatalf("the session ended under signals: %v", mnt.ioctlSession.exitErr)
+			require.Failf(t, "the session ended under signals", "exit error: %v", mnt.ioctlSession.exitErr)
 		default:
 		}
 		writeReadDevice(t, idx, 3)
@@ -625,7 +625,7 @@ func TestIoctlSessionSurvivesSignals(t *testing.T) {
 		case <-mnt.ioctlSession.done:
 			require.ErrorIs(t, mnt.ioctlSession.exitErr, unix.EBUSY, "the restarted NBD_DO_IT finds the pid set")
 		case <-time.After(5 * time.Second):
-			t.Fatal("an unmasked thread should lose its session to one signal")
+			require.Fail(t, "an unmasked thread should lose its session to one signal")
 		}
 	})
 }
@@ -646,7 +646,7 @@ func TestIoctlSessionEndsWhenTheServerCloses(t *testing.T) {
 	select {
 	case <-mnt.ioctlSession.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("NBD_DO_IT did not return after the server side closed")
+		require.Fail(t, "NBD_DO_IT did not return after the server side closed")
 	}
 	require.True(t, mnt.ioctlSession.endedByKernel.Load())
 
@@ -726,7 +726,7 @@ func TestIoctlDisconnectBoundHoldsWhenTheRequestHangs(t *testing.T) {
 	select {
 	case <-sess.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the socket shutdown must end NBD_DO_IT although the request never answered")
+		require.Fail(t, "the socket shutdown must end NBD_DO_IT although the request never answered")
 	}
 	release <- struct{}{}
 	require.Eventually(t, func() bool { return !ioctlDeviceConnected(slot) }, 10*time.Second, 10*time.Millisecond)
@@ -833,7 +833,7 @@ func TestCloseReturnsWhileTheSessionCloseHangs(t *testing.T) {
 	}, nil)
 	select {
 	case <-mnt.ioctlSession.done:
-		t.Fatal("the held close must keep the session's cleanup from finishing")
+		require.Fail(t, "the held close must keep the session's cleanup from finishing")
 	default:
 	}
 
@@ -860,7 +860,7 @@ func TestCloseReturnsWhileADisconnectDuplicateIsHeld(t *testing.T) {
 	select {
 	case <-mnt.ioctlSession.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the socket shutdown must end the session although a duplicate is held")
+		require.Fail(t, "the socket shutdown must end the session although a duplicate is held")
 	}
 	require.True(t, ioctlDeviceConnected(slot), "the held duplicate must keep the device in use")
 

@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"net"
+	"strings"
 
 	"google.golang.org/grpc/credentials"
 
@@ -93,6 +96,48 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, scheduling
 	}
 
 	return s, nil
+}
+
+const clusterServiceHop = "cluster_service"
+
+// newClusterServiceHop builds the hop to the cluster service, which hands its
+// callers each cluster's edge token. A blank mode is on. Off dials plaintext,
+// so it is refused outside local development unless the address is loopback,
+// where the token never leaves the machine. The hop itself refuses on without
+// certificates or an expected server name.
+func newClusterServiceHop(proc *mtls.Process, settings mtls.HopSettings, address string, local bool) (credentials.TransportCredentials, error) {
+	prefix := mtls.EnvPrefix(clusterServiceHop)
+	if strings.TrimSpace(settings.Mode) == "" {
+		settings.Mode = "on"
+	}
+	mode, err := mtls.ParseClientMode(settings.Mode)
+	if err != nil {
+		return nil, fmt.Errorf("%sCLIENT_MODE: %w", prefix, err)
+	}
+	if mode == mtls.ClientOff && !local && !isLoopbackAddress(address) {
+		return nil, fmt.Errorf("%sCLIENT_MODE may be off only in local development or for a loopback address", prefix)
+	}
+	hop, err := proc.Hop(clusterServiceHop, "", settings)
+	if err != nil {
+		return nil, err
+	}
+
+	return mtls.NewClientCredentials(hop), nil
+}
+
+// isLoopbackAddress reports whether a host:port target names this machine. A
+// schemed target such as dns:///name:port is not.
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }
 
 // grpcTLSOptions puts a gRPC port behind its listener's credentials and

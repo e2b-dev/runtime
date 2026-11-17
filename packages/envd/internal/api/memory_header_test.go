@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/envd/internal/host"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/memlimit"
 )
 
 // TestPostInit_ReportsMemoryProtection pins the header contract the orchestrator decodes
@@ -48,13 +50,22 @@ func TestPostInit_ReportsMemoryProtection(t *testing.T) {
 
 		api := newAPIWithCgroupManager(&fakeCgroupManager{})
 		api.isNotFC = true
+		api.memLimits = &fakeMemLimits{state: memlimit.State{
+			Layout: host.MemoryLayout{OnlinePolicy: "auto-movable", AutoOnline: "online", Movable: 6 << 30, Kernel: 2 << 30},
+		}}
 		body, err := json.Marshal(PostInitJSONBody{})
 		require.NoError(t, err)
 
 		rec := postInit(t, api, body)
 
+		// A served /init adds the limit and the layout next to the protection fields, which
+		// keep their place at the top level for decoders that know only them.
 		require.Equal(t, http.StatusNoContent, rec.Code)
-		assert.JSONEq(t, `{"request":0,"low":0,"floor":0,"partial":true}`, rec.Header().Get("X-Envd-Memory"))
+		assert.JSONEq(t, `{"request":0,"low":0,"floor":0,"partial":true,`+
+			`"limit":{"mem_total":0,"applied":0},`+
+			`"layout":{"policy":"auto-movable","auto_online":"online","movable":6442450944,"kernel":2147483648}}`,
+			rec.Header().Get("X-Envd-Memory"))
+		assert.Less(t, len(rec.Header().Get("X-Envd-Memory")), 1<<10, "the orchestrator refuses the header above 1 KiB")
 	})
 
 	// No cgroupfs exists here, so a header carrying these values can only have come from

@@ -64,10 +64,8 @@ WHERE
 SELECT
     t.id, t.email, t.name, t.slug, t.created_at,
     t.is_blocked, t.is_banned, t.blocked_reason,
-    t.sandbox_scheduling_labels, t.cluster_id,
-    c.name AS cluster_name
+    t.sandbox_scheduling_labels, t.cluster_id
 FROM public.teams t
-LEFT JOIN public.clusters c ON c.id = t.cluster_id
 WHERE t.id = sqlc.arg(team_id)::uuid;
 
 -- name: SetTeamSchedulingLabels :execrows

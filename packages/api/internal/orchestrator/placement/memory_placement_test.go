@@ -202,7 +202,7 @@ func failingCreateClient(t *testing.T) *nodemanager.MockSandboxClientCustom {
 	t.Helper()
 
 	return &nodemanager.MockSandboxClientCustom{CreateFunc: func() error {
-		t.Error("create sent to a node that had no room")
+		assert.Fail(t, "create sent to a node that had no room")
 
 		return nil
 	}}

@@ -16,6 +16,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/fsfreeze"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/memlimit"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -84,6 +85,10 @@ type API struct {
 	// cpuManager applies the target online CPU count.
 	cpuManager cpus.Manager
 
+	// memLimits keeps the user and PTY cgroups' memory limit sized to the guest's
+	// current memory.
+	memLimits memlimit.Manager
+
 	// handover, when non-nil, is the outcome of the live-upgrade handover this
 	// envd booted from; PostInit advertises it to the orchestrator via the
 	// X-Envd-Handover header. Set once at startup, before serving.
@@ -149,7 +154,7 @@ func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retai
 	}
 }
 
-func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, oomKills *host.OOMWatcher, cpuManager cpus.Manager, logFlushers ...LogFlusher) *API {
+func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.MMDSOpts, isNotFC bool, workloadFreezer *cgroups.WorkloadFreezer, oomKills *host.OOMWatcher, cpuManager cpus.Manager, memLimits memlimit.Manager, logFlushers ...LogFlusher) *API {
 	logFlusher := NewNoopLogFlusher()
 	if len(logFlushers) > 0 && logFlushers[0] != nil {
 		logFlusher = logFlushers[0]
@@ -177,6 +182,7 @@ func New(l *zerolog.Logger, defaults *execcontext.Defaults, mmdsChan chan *host.
 		nfs:                execNFSMounter{},
 		nfsMountRetryFor:   nfsMountTimeout,
 		nfsMountRetryDelay: nfsMountRetryDelay,
+		memLimits:          memLimits,
 	}
 }
 
@@ -215,6 +221,9 @@ func (a *API) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics.CPUTarget = uint32(cpu.Target)
 	metrics.CPUTargetAttempts = uint32(cpu.Attempts)
 	metrics.CPUWritePendingMs = uint64(cpu.WritePending.Milliseconds())
+	mem := a.memLimits.Status()
+	metrics.MemLimit = mem.Limit
+	metrics.MemMovable, metrics.MemKernel, metrics.MemOnlinePolicy = mem.Layout.Movable, mem.Layout.Kernel, mem.Layout.OnlinePolicy
 
 	if a.oomKills != nil {
 		if kills, ok := a.oomKills.Kills(); ok {

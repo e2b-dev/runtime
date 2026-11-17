@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
@@ -74,7 +75,7 @@ func TestNBDDeadConnectionReturnsWithoutReconnectWait(t *testing.T) {
 		require.ErrorIs(t, err, unix.EIO, "a device without command connections must reject I/O")
 		t.Logf("dead connection returned after %s: %v", time.Since(start), err)
 	case <-time.After(10 * time.Second):
-		t.Error("read is waiting for an unimplemented reconnect path")
+		assert.Fail(t, "read is waiting for an unimplemented reconnect path")
 		// Join even on the old-code control; never leave a blocked read behind.
 		<-result
 	}

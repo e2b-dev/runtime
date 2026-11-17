@@ -148,7 +148,7 @@ func TestCompressStreamReportsHeldFrames(t *testing.T) {
 			select {
 			case capacity = <-up.started:
 			case err := <-done:
-				t.Fatalf("stream finished before uploading: %v", err)
+				require.Failf(t, "stream finished before uploading", "error: %v", err)
 			}
 			assert.Equal(t, base+capacity, uploadFramesHeldValue(t), "while the part uploads")
 

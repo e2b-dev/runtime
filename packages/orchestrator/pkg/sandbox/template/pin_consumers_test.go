@@ -127,7 +127,7 @@ func TestAddSnapshot_SwapGoroutineHoldsItsOwnPin(t *testing.T) {
 	select {
 	case <-swapDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("swap goroutine did not complete")
+		require.Fail(t, "swap goroutine did not complete")
 	}
 	require.Eventually(t, func() bool { return pinRefs(c, buildID) == 0 }, 5*time.Second, time.Millisecond,
 		"the swap returns its pin")

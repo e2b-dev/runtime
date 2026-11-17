@@ -55,7 +55,7 @@ func TestCheckpointResumeFresh_DeleteDuringThePowerOffRestoreKeepsItsKill(t *tes
 	select {
 	case <-inserted:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the checkpoint never published the restored original")
+		require.Fail(t, "the checkpoint never published the restored original")
 	}
 	deleted := make(chan error, 1)
 	go func() {
@@ -65,7 +65,7 @@ func TestCheckpointResumeFresh_DeleteDuringThePowerOffRestoreKeepsItsKill(t *tes
 	select {
 	case <-deleteAtHealth:
 	case <-time.After(5 * time.Second):
-		t.Fatal("the Delete never recorded its kill")
+		require.Fail(t, "the Delete never recorded its kill")
 	}
 
 	close(releaseInsert)
@@ -79,7 +79,7 @@ func TestCheckpointResumeFresh_DeleteDuringThePowerOffRestoreKeepsItsKill(t *tes
 	select {
 	case <-hold:
 	default:
-		t.Error("the Delete succeeded but the power-off hold is still blocked")
+		assert.Fail(t, "the Delete succeeded but the power-off hold is still blocked")
 	}
 	_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 	assert.False(t, live, "the killed sandbox left the live map")

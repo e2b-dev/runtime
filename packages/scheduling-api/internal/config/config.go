@@ -11,15 +11,15 @@ import (
 )
 
 type Config struct {
-	TLS               mtls.ListenerSettings `envPrefix:"E2B_TLS_GRPC_"`
-	GRPCAddress       string                `env:"SCHEDULING_GRPC_ADDRESS,required,notEmpty"`
-	DatabaseURL       string                `env:"SCHEDULING_DATABASE_URL,required,notEmpty"`
-	WritePoolMaxConns int32                 `env:"SCHEDULING_WRITE_POOL_MAX_CONNS"           envDefault:"24"`
-	ReadPoolMaxConns  int32                 `env:"SCHEDULING_READ_POOL_MAX_CONNS"            envDefault:"8"`
-}
+	TLS         mtls.ListenerSettings `envPrefix:"E2B_TLS_GRPC_"`
+	GRPCAddress string                `env:"SCHEDULING_GRPC_ADDRESS,required,notEmpty"`
 
-type MigratorConfig struct {
-	DatabaseURL string `env:"SCHEDULING_MIGRATOR_DATABASE_URL,required,notEmpty"`
+	InfraRedisURL         string `env:"INFRA_REDIS_URL"`
+	InfraRedisClusterURL  string `env:"INFRA_REDIS_CLUSTER_URL"`
+	InfraRedisTLSCABase64 string `env:"INFRA_REDIS_TLS_CA_BASE64"`
+	InfraRedisTLSEnabled  bool   `env:"INFRA_REDIS_TLS_ENABLED"`
+	InfraRedisPassword    string `env:"INFRA_REDIS_PASSWORD"`
+	InfraRedisPoolSize    int    `env:"INFRA_REDIS_POOL_SIZE"     envDefault:"160"`
 }
 
 func Parse() (Config, error) {
@@ -27,31 +27,13 @@ func Parse() (Config, error) {
 }
 
 func parseConfig(options env.Options) (Config, error) {
-	cfg, err := parse[Config](options)
+	cfg, err := env.ParseAsWithOptions[Config](options)
 	if err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
-	if cfg.WritePoolMaxConns <= 0 {
-		return Config{}, errors.New("SCHEDULING_WRITE_POOL_MAX_CONNS must be positive")
-	}
-	if cfg.ReadPoolMaxConns <= 0 {
-		return Config{}, errors.New("SCHEDULING_READ_POOL_MAX_CONNS must be positive")
+	if cfg.InfraRedisURL == "" && cfg.InfraRedisClusterURL == "" {
+		return Config{}, errors.New("invalid configuration: set INFRA_REDIS_URL or INFRA_REDIS_CLUSTER_URL")
 	}
 
 	return cfg, nil
-}
-
-func ParseMigrator() (MigratorConfig, error) {
-	return parse[MigratorConfig](env.Options{Environment: env.ToMap(os.Environ())})
-}
-
-func parse[T any](options env.Options) (T, error) {
-	config, err := env.ParseAsWithOptions[T](options)
-	if err != nil {
-		var zero T
-
-		return zero, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	return config, nil
 }

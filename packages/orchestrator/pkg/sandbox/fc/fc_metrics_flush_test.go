@@ -43,7 +43,7 @@ func TestRunMetricsFlushLoop_NoFlushAfterExit(t *testing.T) {
 
 				return nil
 			},
-			func(error) { t.Error("unexpected flush error") },
+			func(error) { assert.Fail(t, "unexpected flush error") },
 		)
 	}
 
@@ -69,7 +69,7 @@ func TestRunMetricsFlushLoop_FlushesWhileRunning(t *testing.T) {
 
 				return nil
 			},
-			func(error) { t.Error("unexpected flush error") },
+			func(error) { assert.Fail(t, "unexpected flush error") },
 		)
 	}()
 
@@ -77,14 +77,14 @@ func TestRunMetricsFlushLoop_FlushesWhileRunning(t *testing.T) {
 	select {
 	case <-flushed:
 	case <-time.After(5 * time.Second):
-		t.Fatal("tick did not trigger a flush")
+		require.Fail(t, "tick did not trigger a flush")
 	}
 
 	close(exit)
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("loop did not stop after exit")
+		require.Fail(t, "loop did not stop after exit")
 	}
 }
 
@@ -108,7 +108,7 @@ func TestRunMetricsFlushLoop_ReportsFlushError(t *testing.T) {
 	case err := <-errs:
 		require.ErrorIs(t, err, assert.AnError)
 	case <-time.After(5 * time.Second):
-		t.Fatal("flush error was not reported")
+		require.Fail(t, "flush error was not reported")
 	}
 
 	close(exit)
@@ -137,14 +137,14 @@ func TestRunMetricsFlushLoop_SuppressesErrorWhenExitRacesFlush(t *testing.T) {
 
 				return assert.AnError
 			},
-			func(error) { t.Error("reported a flush error that was really VM shutdown") },
+			func(error) { assert.Fail(t, "reported a flush error that was really VM shutdown") },
 		)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("loop did not stop after exit raced the flush")
+		require.Fail(t, "loop did not stop after exit raced the flush")
 	}
 }
 

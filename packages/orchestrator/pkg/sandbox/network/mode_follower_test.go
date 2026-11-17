@@ -15,6 +15,7 @@ import (
 	"github.com/google/nftables"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -248,7 +249,7 @@ func TestPool_ReturnAsyncDoesNotWaitOnAFirewallRebuild(t *testing.T) { //nolint:
 		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		slot.firewallMu.Unlock()
-		t.Fatal("the return waited on the firewall mutex")
+		require.Fail(t, "the return waited on the firewall mutex")
 	}
 	require.False(t, slot.handedOut.Load(), "the slot is marked on its way back while the rebuild still holds the mutex")
 	slot.firewallMu.Unlock()
@@ -275,7 +276,7 @@ func TestPool_PopulateWaitsForAFlagChangeRebuild(t *testing.T) { //nolint:parall
 		select {
 		case <-populated:
 		case <-time.After(10 * time.Second):
-			t.Error("Populate did not return")
+			assert.Fail(t, "Populate did not return")
 		}
 	})
 
@@ -301,7 +302,7 @@ func TestPool_PopulateWaitsForAFlagChangeRebuild(t *testing.T) { //nolint:parall
 		select {
 		case <-ch:
 		case <-time.After(10 * time.Second):
-			t.Fatalf("timed out waiting for %s", what)
+			require.Failf(t, "timed out", "waiting for %s", what)
 		}
 	}
 
@@ -311,7 +312,7 @@ func TestPool_PopulateWaitsForAFlagChangeRebuild(t *testing.T) { //nolint:parall
 
 	select {
 	case <-populated:
-		t.Fatal("Populate returned while a rebuild was still running")
+		require.Fail(t, "Populate returned while a rebuild was still running")
 	case <-time.After(500 * time.Millisecond):
 	}
 	releaseRebuild()

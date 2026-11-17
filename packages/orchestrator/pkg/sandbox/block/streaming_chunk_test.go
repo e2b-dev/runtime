@@ -341,7 +341,7 @@ func TestChunker_EarlyReturn(t *testing.T) {
 	// No more reads have been allowed, so the last offset is unreachable.
 	select {
 	case <-lateDone:
-		t.Fatal("late reader completed before its data was delivered")
+		require.Fail(t, "late reader completed before its data was delivered")
 	default:
 	}
 

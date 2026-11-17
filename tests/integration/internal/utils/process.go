@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/envd/process"
 	"github.com/e2b-dev/infra/tests/integration/internal/api"
@@ -34,15 +35,11 @@ func RequireProcessStarted(tb testing.TB, stream *connect.ServerStreamForClient[
 	go func() { received <- stream.Receive() }()
 	select {
 	case ok := <-received:
-		if !ok {
-			tb.Fatalf("the process did not start: %v", stream.Err())
-		}
+		require.True(tb, ok, "the process did not start: %v", stream.Err())
 	case <-time.After(processStartWait):
-		tb.Fatalf("the process did not report its start within %s", processStartWait)
+		require.Fail(tb, "the process did not report its start", "within %s", processStartWait)
 	}
-	if stream.Msg().GetEvent().GetStart() == nil {
-		tb.Fatalf("the process stream did not open with a start event: %v", stream.Msg().GetEvent())
-	}
+	require.NotNil(tb, stream.Msg().GetEvent().GetStart(), "the process stream did not open with a start event: %v", stream.Msg().GetEvent())
 }
 
 func ExecCommand(tb testing.TB, ctx context.Context, sbx *api.Sandbox, envdClient *setup.EnvdClient, command string, args ...string) error {

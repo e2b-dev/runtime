@@ -175,7 +175,7 @@ func TestSnapshotListLiveIndexesMigrationStopsWhileABuildRuns(t *testing.T) {
 			select {
 			case err = <-stopped:
 			case <-time.After(30 * time.Second):
-				require.FailNow(t, "the migration waits on the running build instead of stopping")
+				require.Fail(t, "the migration waits on the running build instead of stopping")
 			}
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(t, building, indexOID(t, sqlDB, "idx_snapshots_team_base_env_time_id_live"), "the running build keeps its index")

@@ -97,7 +97,7 @@ func TestPrefaultConcurrentWithClose(t *testing.T) {
 		select {
 		case <-arrived:
 		case <-ctx.Done():
-			t.Fatal("Prefault goroutine did not reach pre-RLock hook within budget")
+			require.Fail(t, "Prefault goroutine did not reach pre-RLock hook within budget")
 		}
 
 		// Close the uffd while Prefault is parked.
@@ -116,7 +116,7 @@ func TestPrefaultConcurrentWithClose(t *testing.T) {
 				"Prefault must return ErrClosed after concurrent Close() — "+
 					"any other error means UFFDIO_COPY was attempted on the closed fd (EBADF/ENOTTY regression)")
 		case <-ctx.Done():
-			t.Fatal("Prefault goroutine did not complete after hook release")
+			require.Fail(t, "Prefault goroutine did not complete after hook release")
 		}
 	})
 }

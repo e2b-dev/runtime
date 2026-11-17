@@ -83,7 +83,7 @@ func getLocalIP(t *testing.T) net.IP {
 		}
 	}
 
-	t.Fatal("no non-loopback IPv4 address found")
+	require.Fail(t, "no non-loopback IPv4 address found")
 
 	return nil
 }
@@ -152,7 +152,7 @@ func TestIntegrationTest(t *testing.T) {
 		case err := <-served:
 			assert.NoError(t, err)
 		case <-time.After(5 * time.Second):
-			t.Error("NFS listener closed but Serve did not join")
+			assert.Fail(t, "NFS listener closed but Serve did not join")
 		}
 	})
 	nfsListener := getListener(t, 0)

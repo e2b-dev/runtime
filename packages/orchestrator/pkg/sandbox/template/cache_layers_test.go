@@ -124,7 +124,7 @@ func (f *layerTestTemplate) waitClosed(t *testing.T) {
 	select {
 	case <-f.closed:
 	case <-time.After(5 * time.Second):
-		t.Fatalf("template %q was not closed", f.key)
+		require.Failf(t, "template was not closed", "key %q", f.key)
 	}
 }
 
@@ -134,7 +134,7 @@ func (f *layerTestTemplate) assertNotClosed(t *testing.T) {
 
 	select {
 	case <-f.closed:
-		t.Fatalf("template %q was closed", f.key)
+		require.Failf(t, "template was closed", "key %q", f.key)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -1028,7 +1028,7 @@ func TestEvictionCallbacksRunOffTheDeletingGoroutine(t *testing.T) {
 	select {
 	case <-deleted:
 	case <-time.After(5 * time.Second):
-		t.Fatal("a delete under extendMu blocked on its eviction callback")
+		require.Fail(t, "a delete under extendMu blocked on its eviction callback")
 	}
 	waitEvicted(t, evicted, tmpl.key)
 }

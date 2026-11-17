@@ -115,7 +115,7 @@ func requireReceive(t *testing.T, done <-chan struct{}) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("Populate did not exit promptly")
+		require.Fail(t, "Populate did not exit promptly")
 	}
 }
 

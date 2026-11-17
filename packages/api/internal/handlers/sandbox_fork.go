@@ -222,7 +222,7 @@ func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.Sand
 				return nil
 			}
 
-			results[i] = api.SandboxForkResult{Sandbox: forkedSbx.ToAPISandbox()}
+			results[i] = api.SandboxForkResult{Sandbox: toAPISandbox(forkedSbx)}
 			forkNodeIDs[i] = forkedSbx.NodeID
 
 			return nil

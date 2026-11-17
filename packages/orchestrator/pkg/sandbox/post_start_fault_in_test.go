@@ -101,7 +101,7 @@ func TestRunPostStartWindows_PastWindowsDoNotWait(t *testing.T) {
 
 	start := time.Unix(1000, 0)
 	after := func(time.Duration) <-chan time.Time {
-		t.Fatal("no window should wait")
+		require.Fail(t, "no window should wait")
 
 		return nil
 	}
@@ -171,7 +171,7 @@ func TestPostStartWindowAppearsOnResumeTrace(t *testing.T) {
 
 		return
 	}
-	t.Fatal("post-start fault window missing from the resume trace")
+	require.Fail(t, "post-start fault window missing from the resume trace")
 }
 
 // Only a customer memory resume records windows: a create or reboot cold boots
@@ -208,6 +208,6 @@ func TestContextUntil(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("context not cancelled after the process exited")
+		require.Fail(t, "context not cancelled after the process exited")
 	}
 }

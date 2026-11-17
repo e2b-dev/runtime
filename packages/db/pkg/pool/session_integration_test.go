@@ -575,7 +575,7 @@ func TestAdvisoryLockHoldsASecondKeyAroundEachAttempt(t *testing.T) {
 			case err := <-competed:
 				require.NoError(t, err)
 			case <-ctx.Done():
-				t.Error("the competitor could not acquire between attempts")
+				assert.Fail(t, "the competitor could not acquire between attempts")
 			}
 
 			return 7, returned
@@ -680,7 +680,7 @@ func TestAdvisoryLockWaitHasServerTimeout(t *testing.T) {
 			go func() {
 				defer close(done)
 				_, err := InSerializableTxUnderAdvisoryLockReturn1(ctx, outer, "inner", func(context.Context, pgx.Tx) (int, error) {
-					t.Error("transaction ran without the second lock")
+					assert.Fail(t, "transaction ran without the second lock")
 
 					return 0, nil
 				})
@@ -756,7 +756,7 @@ func closeBounded(t *testing.T, client *Client) {
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
-		t.Error("client.Close did not return within 30s; a lock connection leaked")
+		assert.Fail(t, "client.Close did not return within 30s; a lock connection leaked")
 	}
 }
 

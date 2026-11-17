@@ -72,7 +72,7 @@ func TestClosePprofServerFinishesActiveRequest(t *testing.T) {
 				select {
 				case <-shutdownStarted:
 				case <-time.After(5 * time.Second):
-					t.Fatal("pprof shutdown did not start")
+					require.Fail(t, "pprof shutdown did not start")
 				}
 			}
 			graceful := tt.mode == "graceful" || tt.mode == "shutdown failure"
@@ -88,7 +88,7 @@ func TestClosePprofServerFinishesActiveRequest(t *testing.T) {
 					require.ErrorIs(t, err, tt.closeErr)
 				}
 			case <-time.After(10 * time.Second):
-				t.Fatal("pprof shutdown did not finish")
+				require.Fail(t, "pprof shutdown did not finish")
 			}
 			if tt.mode == "deadline fallback" {
 				require.NoError(t, ctx.Err(), "pprof must enforce its own shutdown deadline")
@@ -97,7 +97,7 @@ func TestClosePprofServerFinishesActiveRequest(t *testing.T) {
 			case completed := <-handlerDone:
 				assert.Equal(t, graceful, completed)
 			case <-time.After(5 * time.Second):
-				t.Fatal("pprof request did not exit")
+				require.Fail(t, "pprof request did not exit")
 			}
 
 			if graceful {

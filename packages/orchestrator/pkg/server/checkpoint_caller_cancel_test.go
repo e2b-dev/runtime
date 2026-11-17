@@ -285,7 +285,7 @@ func awaitOutcome(t *testing.T, done <-chan checkpointOutcome) checkpointOutcome
 	case out := <-done:
 		return out
 	case <-time.After(testWait):
-		t.Fatal("the checkpoint did not return")
+		require.Fail(t, "the checkpoint did not return")
 
 		return checkpointOutcome{}
 	}
@@ -298,7 +298,7 @@ func awaitCheckpoint(t *testing.T, done <-chan error) error {
 	case err := <-done:
 		return err
 	case <-time.After(testWait):
-		t.Fatal("the checkpoint did not return")
+		require.Fail(t, "the checkpoint did not return")
 
 		return nil
 	}
@@ -310,7 +310,7 @@ func awaitStep(t *testing.T, started <-chan struct{}, step string) {
 	select {
 	case <-started:
 	case <-time.After(testWait):
-		t.Fatalf("the %s step did not start", step)
+		require.Failf(t, "a step did not start", "the %s step did not start", step)
 	}
 }
 
@@ -345,7 +345,7 @@ func TestCheckpointResumeFresh_CallerCancelDoesNotCancelTheSnapshot(t *testing.T
 
 		select {
 		case err := <-done:
-			t.Fatalf("the caller's cancellation ended the snapshot: %v", err)
+			require.Failf(t, "the caller's cancellation ended the snapshot", "err: %v", err)
 		default:
 		}
 
@@ -382,7 +382,7 @@ func TestCheckpointResumeFresh_CallerCancelDoesNotCancelTheResume(t *testing.T) 
 
 		select {
 		case err := <-done:
-			t.Fatalf("the caller's cancellation ended the resume: %v", err)
+			require.Failf(t, "the caller's cancellation ended the resume", "err: %v", err)
 		default:
 		}
 
@@ -568,11 +568,11 @@ func TestCheckpointResumeFresh_DeleteEndsTheCheckpointAndWaits(t *testing.T) {
 			require.ErrorIs(t, steps.resumeCtxErr, context.Canceled)
 			require.ErrorContains(t, err, deletedMessage)
 		default:
-			t.Fatal("Delete did not end the checkpoint")
+			require.Fail(t, "Delete did not end the checkpoint")
 		}
 		select {
 		case err := <-delDone:
-			t.Fatalf("Delete answered before the rollback ran: %v", err)
+			require.Failf(t, "Delete answered before the rollback ran", "err: %v", err)
 		default:
 		}
 		_, err := s.sandboxFactory.Sandboxes.Reserve(sbx.Runtime.SandboxID)
@@ -776,7 +776,7 @@ func TestCheckpointResumeFresh_ExcludesAnInPlaceCheckpoint(t *testing.T) {
 		assert.Nil(t, s.detachedCheckpointFor(sbx.Runtime.SandboxID), "no claim is left behind")
 		select {
 		case <-steps.snapshotStarted:
-			t.Fatal("the snapshot ran on the VM the in-place checkpoint holds")
+			require.Fail(t, "the snapshot ran on the VM the in-place checkpoint holds")
 		default:
 		}
 		sbx.EndCheckpoint()
@@ -1057,7 +1057,7 @@ func TestCheckpointResumeFresh_DeleteFindsTheSandboxThatWentLive(t *testing.T) {
 			assert.True(t, got.ended)
 			assert.Same(t, resumed, got.live, "Delete is handed the sandbox that went live")
 		case <-time.After(testWait):
-			t.Fatal("Delete kept waiting after the claim ended")
+			require.Fail(t, "Delete kept waiting after the claim ended")
 		}
 		r.Release()
 	})
@@ -1125,7 +1125,7 @@ func TestCheckpointResumeFresh_RegistrationRefusedByTheDeleteMarksTheSandboxKill
 			assert.True(t, got.ended)
 			assert.Nil(t, got.live)
 		case <-time.After(testWait):
-			t.Fatal("Delete kept waiting after the claim ended")
+			require.Fail(t, "Delete kept waiting after the claim ended")
 		}
 	})
 
@@ -1195,7 +1195,7 @@ func TestCheckpointResumeFresh_DeleteThatTimedOutDuringRegistrationIsHandedTheSa
 			assert.True(t, got.ended)
 			assert.Same(t, resumed, got.live, "the Delete is handed the sandbox that went live under its nose")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 	})
 }
@@ -1235,7 +1235,7 @@ func TestCheckpointResumeFresh_PublicationAfterAnAcknowledgedDeleteIsKilled(t *t
 			require.True(t, got.ended)
 			require.Nil(t, got.live, "nothing of the checkpoint's was live when the Delete answered")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 
 		// The publication read no cancellation before the Delete's and goes
@@ -1290,7 +1290,7 @@ func TestCheckpointResumeFresh_DeleteAnsweringNotFoundLeavesNoAcknowledgement(t 
 			require.False(t, got.ended, "the checkpoint ended for its own cause")
 			require.Nil(t, got.live)
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 		_, acknowledged := op.acknowledgedDelete()
 		assert.False(t, acknowledged, "a Delete that answered NotFound left no acknowledgement")
@@ -1356,7 +1356,7 @@ func TestCheckpointResumeFresh_DeleteAtItsDeadlineIsHandedARestoredOriginal(t *t
 			require.NoError(t, got.err)
 			require.Same(t, sbx, got.sbx, "the Delete is handed the restored original to kill")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 		_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 		assert.False(t, live, "the Delete marked the restored original stopping")
@@ -1404,7 +1404,7 @@ func TestCheckpointResumeFresh_DeleteAtItsDeadlineOverARefusedReservationIsNotFo
 			assert.Nil(t, got.live)
 			assert.False(t, got.ended, "the delete killed nothing")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 		_, acknowledged := op.acknowledgedDelete()
 		assert.False(t, acknowledged, "no acknowledgement for a kill another operation did")
@@ -1462,7 +1462,7 @@ func TestCheckpointResumeFresh_DeleteAtItsDeadlineOverARefusedReservationIsHande
 			assert.True(t, got.ended, "the Delete answers success")
 			assert.Same(t, sbx, got.live, "the restored original is handed to the Delete")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 		_, acknowledged := op.acknowledgedDelete()
 		assert.False(t, acknowledged, "the sandbox is in hand, nothing to acknowledge")
@@ -1510,7 +1510,7 @@ func TestCheckpointResumeFresh_RestoreAfterAnAcknowledgedDeleteIsKilled(t *testi
 			require.True(t, got.ended)
 			require.Nil(t, got.live, "the original was out of the map when the Delete answered")
 		case <-time.After(testWait):
-			t.Fatal("the Delete did not answer at its deadline")
+			require.Fail(t, "the Delete did not answer at its deadline")
 		}
 		_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 		assert.False(t, live, "the restored original is marked stopping by the checkpoint")
@@ -1558,7 +1558,7 @@ func TestCheckpointResumeFresh_DeleteWaitingThroughTheReservationPanicKillsTheRe
 			require.NoError(t, got.err)
 			require.Same(t, sbx, got.sbx, "the Delete is handed the restored sandbox to kill")
 		case <-time.After(testWait):
-			t.Fatal("the Delete kept waiting")
+			require.Fail(t, "the Delete kept waiting")
 		}
 		_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 		assert.False(t, live, "the Delete marked the restored sandbox stopping")
@@ -1812,7 +1812,7 @@ func TestCheckpointResumeFresh_DeleteOfACheckpointThatNeverReservedIsNotFound(t 
 			assert.Nil(t, got.live)
 			assert.False(t, got.ended, "the delete killed nothing")
 		case <-time.After(testWait):
-			t.Fatal("Delete kept waiting after the claim ended")
+			require.Fail(t, "Delete kept waiting after the claim ended")
 		}
 		assert.Empty(t, kills.killed())
 	})
@@ -1909,7 +1909,7 @@ func TestCheckpointResumeFresh_DeleteDoesNotTakeAStrangersLifecycle(t *testing.T
 			assert.Nil(t, got.live, "the stranger's lifecycle is not handed to the Delete")
 			assert.True(t, got.ended, "the delete did end the checkpoint")
 		case <-time.After(testWait):
-			t.Fatal("Delete kept waiting after the claim ended")
+			require.Fail(t, "Delete kept waiting after the claim ended")
 		}
 		live, ok := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 		require.True(t, ok)
@@ -2016,7 +2016,7 @@ func TestCheckpointResumeFresh_PoweredOffGuestIsRefusedBeforeTheReservation(t *t
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 	select {
 	case <-steps.snapshotStarted:
-		t.Fatal("the snapshot step ran")
+		require.Fail(t, "the snapshot step ran")
 	default:
 	}
 	assert.Zero(t, steps.stopAndCloses.Load(), "nothing was torn down")

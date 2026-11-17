@@ -66,7 +66,7 @@ func TestSandboxObserverCollectsWhileSandboxesStartAndStop(t *testing.T) {
 	select {
 	case <-collected:
 	case <-time.After(10 * time.Second):
-		t.Fatal("a collection never returned while sandboxes started and stopped")
+		require.Fail(t, "a collection never returned while sandboxes started and stopped")
 	}
 }
 

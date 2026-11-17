@@ -152,7 +152,7 @@ func TestSetupDeferredMemoryExport_AbortCleanupOrder(t *testing.T) {
 	case runErr := <-done:
 		require.NoError(t, runErr)
 	case <-time.After(10 * time.Second):
-		t.Fatal("cleanup deadlocked: deferred memory diff Close ran before the promise was poisoned")
+		require.Fail(t, "cleanup deadlocked: deferred memory diff Close ran before the promise was poisoned")
 	}
 
 	// The promise was poisoned, so the diff's data methods resolve (to the

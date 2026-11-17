@@ -79,7 +79,7 @@ func TestV2Pool_TakeReceivesSlotReturnedWhileWaiting(t *testing.T) {
 			require.NoError(t, got.err)
 			require.Same(t, returned, got.slot)
 		default:
-			t.Fatal("a waiting take must receive a slot returned to the reuse queue")
+			require.Fail(t, "a waiting take must receive a slot returned to the reuse queue")
 		}
 	})
 }
@@ -143,12 +143,12 @@ func TestV2Pool_CloseCanceledBeforePublicationLeavesPoolOpen(t *testing.T) {
 		case err := <-closeDone:
 			require.ErrorIs(t, err, context.Canceled)
 		default:
-			t.Fatal("Close did not return the cancellation before publishing closed")
+			require.Fail(t, "Close did not return the cancellation before publishing closed")
 		}
 
 		select {
 		case <-pool.done:
-			t.Fatal("canceled Close published closed")
+			require.Fail(t, "canceled Close published closed")
 		default:
 		}
 
@@ -230,7 +230,7 @@ func TestV2Pool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) {
 		select {
 		case <-cleanupStarted:
 		default:
-			t.Error("post-close claim did not start slot cleanup")
+			assert.Fail(t, "post-close claim did not start slot cleanup")
 		}
 		assert.Empty(t, getDone, "Get returned before rejected-slot cleanup finished")
 		assert.Empty(t, closeDone, "Close returned before admission-owned cleanup finished")

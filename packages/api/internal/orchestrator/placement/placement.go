@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -19,6 +21,8 @@ import (
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement")
+
+var createRefusals = sharedutils.Must(telemetry.GetCounter(otel.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"), telemetry.ApiOrchestratorCreateRefusals))
 
 // PlacementResult carries the outcome of a placement attempt alongside the error.
 type PlacementResult struct {
@@ -302,9 +306,12 @@ func placeSandbox(
 		case codes.ResourceExhausted:
 			refusals++
 			failedNode.PlacementMetrics.Skip(sbxRequest.GetSandbox().GetSandboxId())
+			cause := "capacity"
 			if ok && createRefusedByStatus(st) {
+				cause = "status"
 				skipped[failedNode.ID] = struct{}{}
 			}
+			createRefusals.Add(ctx, 1, metric.WithAttributes(attribute.String("cause", cause)))
 
 			delay := backoff.delay(refusals)
 			logger.L().Warn(ctx, "Node exhausted, trying another node", logger.WithSandboxID(sbxRequest.GetSandbox().GetSandboxId()), logger.WithNodeID(failedNode.ID), zap.Int("refusals", refusals), zap.Duration("retry_in", delay), zap.Error(utils.UnwrapGRPCError(err)))

@@ -4,7 +4,6 @@ package mountcache
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -273,7 +272,7 @@ func TestHandlerDoesNotRegisterMountAfterOwnerRemoval(t *testing.T) {
 	<-closed
 	select {
 	case <-cleanupDone:
-		t.Fatal("cleanup returned before the admitted MOUNT completed")
+		require.Fail(t, "cleanup returned before the admitted MOUNT completed")
 	default:
 	}
 
@@ -433,22 +432,17 @@ func TestHandlerConcurrentLookupAndCleanup(t *testing.T) {
 		wg.Go(func() {
 			for range 500 {
 				root := handler.ToHandle(t.Context(), filesystem, nil)
-				if len(root) != 2*uuidLength {
-					t.Errorf("root handle length = %d, want %d during concurrent cleanup", len(root), 2*uuidLength)
-
+				if !assert.Len(t, root, 2*uuidLength, "root handle during concurrent cleanup") {
 					return
 				}
 				_, _, err := handler.FromHandle(t.Context(), handle)
 				if err != nil {
 					var statusErr *nfs.NFSStatusError
-					if !errors.As(err, &statusErr) {
-						t.Errorf("expected NFS status error, got %T: %v", err, err)
-
+					//nolint:testifylint // runs off the test goroutine, so it must not call require
+					if !assert.ErrorAs(t, err, &statusErr) {
 						return
 					}
-					if statusErr.NFSStatus != nfs.NFSStatusStale {
-						t.Errorf("status = %v, want stale", statusErr.NFSStatus)
-					}
+					assert.Equal(t, nfs.NFSStatusStale, statusErr.NFSStatus)
 				}
 			}
 		})
@@ -478,7 +472,7 @@ func BenchmarkHandlerRoundTrip(b *testing.B) {
 				index := i % mounts
 				resolved, _, err := handler.FromHandle(b.Context(), handles[index])
 				if err != nil || resolved == nil {
-					b.Fatalf("resolve: %v", err)
+					require.Fail(b, "resolve", "handle %d: %v", index, err)
 				}
 			}
 		})

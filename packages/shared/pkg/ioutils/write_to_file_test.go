@@ -46,9 +46,9 @@ func TestWriteToFileFromReaderAtomicallyReplacesExistingFile(t *testing.T) {
 	case <-reader.started:
 	case err := <-errCh:
 		finished = true
-		t.Fatalf("writer completed before reading input: %v", err)
+		require.Failf(t, "writer completed before reading input", "error: %v", err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("writer did not read input")
+		require.Fail(t, "writer did not read input")
 	}
 
 	contents, err := os.ReadFile(path)
@@ -119,7 +119,7 @@ func waitForWrite(t *testing.T, errCh <-chan error) error {
 	case err := <-errCh:
 		return err
 	case <-time.After(5 * time.Second):
-		t.Fatal("writer did not finish")
+		require.Fail(t, "writer did not finish")
 
 		return nil
 	}

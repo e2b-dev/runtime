@@ -40,15 +40,13 @@ func TestChecks_StopBeforeStart_DoesNotStartHealthLoop(t *testing.T) {
 	case <-returned:
 		// Start observed the prior Stop and skipped logHealth.
 	case <-time.After(2 * time.Second):
-		t.Fatal("Checks.Start entered the health loop after a prior Stop — goroutine leak")
+		require.Fail(t, "Checks.Start entered the health loop after a prior Stop — goroutine leak")
 	}
 
 	c.mu.Lock()
 	cancelCtx := c.cancelCtx
 	c.mu.Unlock()
-	if cancelCtx != nil {
-		t.Fatal("Checks.Start installed a health-loop context despite a prior Stop")
-	}
+	require.Nil(t, cancelCtx, "Checks.Start installed a health-loop context despite a prior Stop")
 }
 
 // A second Start, as a repeated promotion makes, starts no loops of its own:
@@ -80,13 +78,13 @@ func TestChecks_SecondStartIsANoOp(t *testing.T) {
 	select {
 	case <-second:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the second Start entered the health loop")
+		require.Fail(t, "the second Start entered the health loop")
 	}
 
 	c.Stop()
 	select {
 	case <-first:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Stop did not end the loops the first Start began")
+		require.Fail(t, "Stop did not end the loops the first Start began")
 	}
 }

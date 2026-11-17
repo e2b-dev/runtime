@@ -45,7 +45,7 @@ func TestWaitGroupWaitCompletesLater(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("WaitGroupWait did not return after wait group completed")
+		require.Fail(t, "WaitGroupWait did not return after wait group completed")
 	}
 }
 

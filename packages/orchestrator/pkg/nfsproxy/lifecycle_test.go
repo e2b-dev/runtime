@@ -41,7 +41,7 @@ func TestNetworkReleaseDoesNotWaitForOriginalRootClose(t *testing.T) { //nolint:
 	case err := <-released:
 		require.NoError(t, err, "logical release must finish without waiting for the backing operation")
 	case <-time.After(time.Second):
-		t.Fatal("network release waited on the original blocked root operation")
+		require.Fail(t, "network release waited on the original blocked root operation")
 	}
 	require.Equal(t, 1, concernRootFDCount(t, f.paths[0]), "logical release must not claim the held root was closed")
 	_, _, err := f.proxy.server.Handler.FromHandle(t.Context(), rootHandle)
@@ -54,7 +54,7 @@ func TestNetworkReleaseDoesNotWaitForOriginalRootClose(t *testing.T) { //nolint:
 	case <-retirement.done:
 		require.NoError(t, retirement.err)
 	case <-time.After(time.Second):
-		t.Fatal("original root cleanup did not finish after unblocking its syscall")
+		require.Fail(t, "original root cleanup did not finish after unblocking its syscall")
 	}
 	require.Zero(t, concernRootFDCount(t, f.paths[0]))
 	require.Zero(t, f.proxy.retirement.count())
@@ -102,7 +102,7 @@ func TestNetworkReleaseClosesIndependentRoots(t *testing.T) { //nolint:parallelt
 	select {
 	case held = <-closing:
 	case <-time.After(time.Second):
-		t.Fatal("retirement did not close either root to new operations")
+		require.Fail(t, "retirement did not close either root to new operations")
 	}
 	idle := 1 - held
 	unblock[idle]()
@@ -111,7 +111,7 @@ func TestNetworkReleaseClosesIndependentRoots(t *testing.T) { //nolint:parallelt
 	require.Equal(t, 1, concernRootFDCount(t, f.paths[held]))
 	select {
 	case <-retirement.done:
-		t.Fatal("retirement completed before the held root was physically closed")
+		require.Fail(t, "retirement completed before the held root was physically closed")
 	default:
 	}
 	unblock[held]()
@@ -119,7 +119,7 @@ func TestNetworkReleaseClosesIndependentRoots(t *testing.T) { //nolint:parallelt
 	case <-retirement.done:
 		require.NoError(t, retirement.err)
 	case <-time.After(time.Second):
-		t.Fatal("retirement did not join both original root closes")
+		require.Fail(t, "retirement did not join both original root closes")
 	}
 	require.Zero(t, concernRootFDCount(t, f.paths[held]))
 }

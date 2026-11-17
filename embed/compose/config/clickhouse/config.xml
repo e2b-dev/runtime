@@ -26,4 +26,9 @@
     <listen_host>0.0.0.0</listen_host>
 
     <tcp_port>9000</tcp_port>
+
+    <!-- The stock config sends crash reports to ClickHouse's developers. -->
+    <send_crash_reports>
+        <enabled>false</enabled>
+    </send_crash_reports>
 </clickhouse>

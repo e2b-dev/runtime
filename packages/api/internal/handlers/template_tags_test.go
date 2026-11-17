@@ -13,10 +13,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
@@ -49,10 +51,29 @@ func TestPostTemplatesTags_RejectsOtherTeamBeforeTransaction(t *testing.T) {
 				ID: uuid.New(), Slug: teamSlug,
 			}})
 
-			store.PostTemplatesTags(c)
+			store.PostTemplatesTags(c, api.PostTemplatesTagsParams{})
 
 			require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+			require.Equal(t, "false", recorder.Result().Header.Get(apierrors.ShouldRetryHeader))
 			require.JSONEq(t, `{"code":403,"message":"You don't have access to sandbox template 'foreign-template'"}`, recorder.Body.String())
+		})
+	}
+}
+
+func TestPostTemplatesTagsRejectsInvalidBodyBeforeWritingHeaders(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{`, `{"target":"base","tags":[]}`} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			store := &APIStore{}
+			router := gin.New()
+			router.POST("/templates/tags", func(c *gin.Context) { store.PostTemplatesTags(c, api.PostTemplatesTagsParams{}) })
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/templates/tags", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, "false", recorder.Result().Header.Get(apierrors.ShouldRetryHeader))
 		})
 	}
 }

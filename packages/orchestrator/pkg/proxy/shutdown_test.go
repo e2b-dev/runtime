@@ -90,14 +90,14 @@ func TestSandboxProxyCloseInterruptsStalledUpload(t *testing.T) {
 			case err := <-backendStarted:
 				require.NoError(t, err)
 			case <-time.After(5 * time.Second):
-				t.Fatal("backend did not receive the upload")
+				require.Fail(t, "backend did not receive the upload")
 			}
 			backend.CloseClientConnections()
 			if tt.completeUpload {
 				select {
 				case <-handlerDone:
 				case <-time.After(5 * time.Second):
-					t.Fatal("completed upload did not finish")
+					require.Fail(t, "completed upload did not finish")
 				}
 			}
 
@@ -116,7 +116,7 @@ func TestSandboxProxyCloseInterruptsStalledUpload(t *testing.T) {
 			select {
 			case <-handlerDone:
 			case <-time.After(5 * time.Second):
-				t.Fatal("shutdown left the upload handler blocked")
+				require.Fail(t, "shutdown left the upload handler blocked")
 			}
 			assert.Zero(t, proxy.proxy.CurrentServerConnections())
 		})

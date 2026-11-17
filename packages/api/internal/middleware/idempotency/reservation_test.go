@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -158,7 +159,7 @@ func TestLateReservationCleanupWaitsForRedis(t *testing.T) {
 				select {
 				case <-requestDone:
 				case <-time.After(5 * time.Second):
-					t.Error("cancelled request did not return")
+					assert.Fail(t, "cancelled request did not return")
 				}
 			})
 			flags, _ := testFlags(t, false, 86400)
@@ -178,14 +179,14 @@ func TestLateReservationCleanupWaitsForRedis(t *testing.T) {
 			select {
 			case <-gated.started:
 			case <-time.After(5 * time.Second):
-				t.Fatal("reservation did not start")
+				require.Fail(t, "reservation did not start")
 			}
 			cancel()
 			select {
 			case response := <-responses:
 				require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 			case <-time.After(2 * time.Second):
-				t.Fatal("request waited for the outstanding reservation")
+				require.Fail(t, "request waited for the outstanding reservation")
 			}
 			require.Zero(t, calls.Load())
 			require.Zero(t, client.Exists(t.Context(), key).Val())
@@ -193,14 +194,14 @@ func TestLateReservationCleanupWaitsForRedis(t *testing.T) {
 			select {
 			case <-gated.written:
 			case <-time.After(5 * time.Second):
-				t.Fatal("reservation did not reach Redis")
+				require.Fail(t, "reservation did not reach Redis")
 			}
 			reserved, err := client.HGetAll(t.Context(), key).Result()
 			require.NoError(t, err)
 			require.NotEmpty(t, reserved["owner"])
 			select {
 			case <-gated.releases:
-				t.Fatal("cleanup ran before the reservation call returned")
+				require.Fail(t, "cleanup ran before the reservation call returned")
 			default:
 			}
 			var replacement map[string]string
@@ -226,7 +227,7 @@ func TestLateReservationCleanupWaitsForRedis(t *testing.T) {
 				require.Positive(t, observation.remaining)
 				require.LessOrEqual(t, observation.remaining, reservationCleanupTimeout)
 			case <-time.After(5 * time.Second):
-				t.Fatal("unused late reservation was not released")
+				require.Fail(t, "unused late reservation was not released")
 			}
 			if tc.replaceOwner {
 				after, err := client.HGetAll(t.Context(), key).Result()
@@ -297,7 +298,7 @@ func TestReservationReplyFailureReleasesUnusedKey(t *testing.T) {
 				require.Positive(t, observation.remaining)
 				require.LessOrEqual(t, observation.remaining, reservationCleanupTimeout)
 			default:
-				t.Fatal("reservation error returned without cleanup")
+				require.Fail(t, "reservation error returned without cleanup")
 			}
 			r = testRouter(t, flags, &redisStore{client: client}, team, time.Minute, handler)
 			retry := request(t.Context(), r, "/v2/sandboxes", validBody, []string{"key"})

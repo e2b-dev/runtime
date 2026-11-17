@@ -4,7 +4,6 @@ package commands
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,11 +49,9 @@ func executeScript(t *testing.T, script string, workDir string) (stdout, stderr 
 	stderr = errBuf.String()
 
 	if err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			t.Fatalf("Failed to execute script: %v", err)
-		}
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, err, &exitErr, "Failed to execute script")
+		exitCode = exitErr.ExitCode()
 	} else {
 		exitCode = 0
 	}
@@ -125,7 +122,7 @@ func createFilesAndDirsWithContent(t *testing.T, baseDir string, paths map[strin
 
 				continue
 			}
-			t.Fatalf("Unknown entry type: %s", entryType)
+			require.Fail(t, "Unknown entry type: "+entryType)
 		}
 	}
 }
@@ -151,7 +148,7 @@ func verifyFilesAndDirs(t *testing.T, baseDir string, paths map[string]string) {
 			require.NoError(t, err, "File %s should exist", path)
 			assert.True(t, info.Mode().IsRegular(), "%s should be a regular file, got %s", path, info.Mode())
 		default:
-			t.Fatalf("Unknown entry type: %s", entryType)
+			require.Fail(t, "Unknown entry type: "+entryType)
 		}
 	}
 }

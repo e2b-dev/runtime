@@ -21,10 +21,8 @@ func remoteEdgeStub(t *testing.T, status int, payload any) *api.ClientWithRespon
 		if payload == nil {
 			return
 		}
-		// t.Errorf, not require: FailNow from a handler goroutine is illegal.
-		if err := json.NewEncoder(w).Encode(payload); err != nil {
-			t.Errorf("encoding edge stub response: %v", err)
-		}
+		// assert, not require: FailNow from a handler goroutine is illegal.
+		assert.NoError(t, json.NewEncoder(w).Encode(payload), "encoding edge stub response")
 	}))
 	t.Cleanup(srv.Close)
 

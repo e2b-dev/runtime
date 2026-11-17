@@ -265,6 +265,30 @@ components:
         type: array
         items:
           $ref: "#/components/schemas/BuildStatus"
+    templateBuildStatuses:
+      name: statuses
+      in: query
+      required: false
+      description: Comma-separated list of build statuses to include. Every status when omitted.
+      style: form
+      explode: false
+      schema:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: "#/components/schemas/TemplateBuildStatus"
+    templateBuildTags:
+      name: tags
+      in: query
+      required: false
+      description: Comma-separated list of tags. Only the builds these tags point at are returned. Every build when omitted.
+      style: form
+      explode: false
+      schema:
+        type: array
+        maxItems: 100
+        items:
+          type: string
     buildsCursor:
       name: cursor
       in: query
@@ -567,26 +591,6 @@ components:
         action:
           type: string
           description: Action being performed when the error occurred (e.g. CREATING)
-
-    Team:
-      required:
-        - teamID
-        - name
-        - apiKey
-        - isDefault
-      properties:
-        teamID:
-          type: string
-          description: Identifier of the team
-        name:
-          type: string
-          description: Name of the team
-        apiKey:
-          type: string
-          description: API key for the team. Empty when the user's role on the team is read-only.
-        isDefault:
-          type: boolean
-          description: Whether the team is the default team
 
     TeamUser:
       required:
@@ -3049,6 +3053,86 @@ components:
         envdVersion:
           $ref: "#/components/schemas/EnvdVersion"
 
+    TemplateBuildWithTags:
+      allOf:
+        - $ref: "#/components/schemas/TemplateBuild"
+        - type: object
+          required:
+            - tags
+          properties:
+            tags:
+              type: array
+              description: Tags of the template that point at this build. A tag points at the latest ready build it was assigned to, the build a sandbox created with that tag starts from.
+              items:
+                type: string
+
+    TemplateV2:
+      description: >
+        A template with its default build. `defaultBuild` is the build a sandbox created
+        without a tag starts from, the latest ready build tagged default; it is absent until
+        such a build is ready. `buildStatus` is the status of the latest build tagged default
+        in any state: it is `building` while a rebuild runs, although sandboxes still start
+        from the default build.
+      required:
+        - templateID
+        - names
+        - public
+        - createdAt
+        - updatedAt
+        - createdBy
+        - lastSpawnedAt
+        - spawnCount
+        - buildCount
+        - isDefault
+        - buildStatus
+      properties:
+        templateID:
+          type: string
+          description: Identifier of the template
+        names:
+          type: array
+          description: Names of the template (namespace/alias format when namespaced)
+          items:
+            type: string
+        public:
+          type: boolean
+          description: Whether the template is public or only accessible by the team
+        createdAt:
+          type: string
+          format: date-time
+          description: Time when the template was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time when the template was last updated
+        createdBy:
+          allOf:
+            - $ref: "#/components/schemas/TeamUser"
+          nullable: true
+        lastSpawnedAt:
+          type: string
+          nullable: true
+          format: date-time
+          description: Time when the template was last used
+        spawnCount:
+          type: integer
+          format: int64
+          description: Number of times the template was used
+        buildCount:
+          type: integer
+          format: int32
+          description: Number of times the template was built
+        isDefault:
+          type: boolean
+          description: Whether the template is one of the platform's default templates
+        description:
+          type: string
+          description: Description of the template
+        buildStatus:
+          $ref: "#/components/schemas/TemplateBuildStatus"
+        defaultBuild:
+          $ref: "#/components/schemas/TemplateBuild"
+
     TemplateWithBuilds:
       allOf:
         - $ref: "#/components/schemas/Template"
@@ -4841,29 +4925,6 @@ paths:
               schema:
                 type: string
 
-  /teams:
-    get:
-      summary: List teams
-      description: List all teams
-      tags: [auth]
-      security:
-        - AuthProviderBearerAuth: []
-      responses:
-        "200":
-          description: Successfully returned all teams
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Team"
-        "401":
-          $ref: "#/components/responses/401"
-        "429":
-          $ref: "#/components/responses/429"
-        "500":
-          $ref: "#/components/responses/500"
-
   /teams/{teamID}/metrics:
     get:
       summary: Team metrics
@@ -6648,6 +6709,51 @@ paths:
         "500":
           $ref: "#/components/responses/500"
 
+  /templates/{templateID}/builds:
+    get:
+      summary: List a template's builds
+      x-api-group: list
+      description: List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+      tags: [templates]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/templateID"
+        - $ref: "#/components/parameters/paginationNextToken"
+        - $ref: "#/components/parameters/paginationLimit"
+        - $ref: "#/components/parameters/templateBuildStatuses"
+        - $ref: "#/components/parameters/templateBuildTags"
+      responses:
+        "200":
+          description: Successfully returned the template builds
+          headers:
+            X-Next-Token:
+              $ref: "#/components/headers/XNextToken"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TemplateBuildWithTags"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+
   /v2/templates/{templateID}/builds/{buildID}:
     post:
       summary: Start template build (v2)
@@ -6750,6 +6856,40 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /v2/templates/{templateID}:
+    get:
+      summary: Template info (v2)
+      x-api-group: list
+      description: Get a template by its ID or name, with its default build and without its other builds.
+      tags: [templates]
+      security:
+        - ApiKeyAuth: []
+        - AuthProviderBearerAuth: []
+          AuthProviderTeamAuth: []
+        - AdminApiKeyAuth: []
+          AdminTeamAuth: []
+        - AdminJWTAuth: []
+          AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/templateID"
+      responses:
+        "200":
+          description: Successfully returned the template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateV2"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
     patch:
       summary: Update template (v2)
       description: Update template
@@ -6903,7 +7043,9 @@ paths:
   /templates/tags:
     post:
       summary: Assign template tags
-      description: Assign tag(s) to a template build
+      description: Assign tag(s) to a template build.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       tags: [tags]
       security:
         - ApiKeyAuth: []
@@ -6927,15 +7069,111 @@ paths:
               schema:
                 $ref: "#/components/schemas/AssignedTemplateTags"
         "400":
-          $ref: "#/components/responses/400"
+          description: Bad request
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
-          $ref: "#/components/responses/401"
+          description: Authentication error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
-          $ref: "#/components/responses/404"
+          description: Not found
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "408":
+          description: Request body read timed out before execution
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The Idempotency-Key conflicts with a different request (error_code idempotency_request_mismatch), or the matching original request has no recorded response yet and is within its expected response window (error_code idempotency_in_progress); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: Request body exceeds the size limit
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            text/plain:
+              schema:
+                type: string
+        "422":
+          description: The matching original request has no recorded response and its expected response deadline has passed or is unknown (error_code idempotency_outcome_unknown); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
-          $ref: "#/components/responses/429"
+          description: Too many requests
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+            Retry-After:
+              description: When present, the number of seconds to wait before retrying the request.
+              required: false
+              schema:
+                type: integer
+                minimum: 0
+              example: 30
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error. A failed commit has an uncertain outcome and omits Should-Retry; with an Idempotency-Key that error is replayed without executing again.
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Idempotency is unavailable; the request was not executed
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       summary: Delete template tags
       description: Delete multiple tags from templates
@@ -7725,7 +7963,7 @@ paths:
     put:
       operationId: managementRegisterCluster
       summary: Register a cluster.
-      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
       tags: [admin]
       security:
         - AdminJWTAuth: []
@@ -7746,10 +7984,12 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDeleteCluster
       summary: Delete a cluster and its environments.
-      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      description: Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [admin]
       security:
         - AdminJWTAuth: []
@@ -7764,6 +8004,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/telemetry:
     parameters:
@@ -7799,6 +8041,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/projects:
     parameters:
@@ -7849,6 +8093,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/clusters/{clusterID}/destroy-readiness:
     parameters:
@@ -7875,6 +8121,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/management/projects/{projectID}/cluster/{clusterID}:
     parameters:
@@ -7908,6 +8156,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDetachProjectCluster
       summary: Detach a cluster assignment from a project.
@@ -7970,6 +8220,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: managementDeleteProject
       summary: Soft-delete a project.
@@ -8472,6 +8724,8 @@ paths:
           $ref: "#/components/responses/401"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     post:
       operationId: adminCreateCluster
       summary: Create a cluster as admin
@@ -8501,6 +8755,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}:
     parameters:
@@ -8548,6 +8804,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     patch:
       operationId: adminUpdateCluster
       summary: Update a cluster as admin
@@ -8587,10 +8845,12 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     delete:
       operationId: adminDeleteCluster
       summary: Delete a cluster and its environments as admin
-      description: Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+      description: Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []
@@ -8606,6 +8866,8 @@ paths:
           $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}/metadata:
     parameters:
@@ -8633,6 +8895,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
   /unstable/admin/clusters/{clusterID}/teams:
     parameters:
       - $ref: "#/components/parameters/clusterID"
@@ -8701,6 +8965,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/clusters/{clusterID}/token:
     parameters:
@@ -8730,6 +8996,8 @@ paths:
           $ref: "#/components/responses/404"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /unstable/admin/templates/aliases:
     get:

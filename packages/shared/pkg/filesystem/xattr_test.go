@@ -3,6 +3,8 @@ package filesystem
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateMetadata(t *testing.T) {
@@ -74,18 +76,11 @@ func TestValidateMetadata(t *testing.T) {
 			t.Parallel()
 			err := ValidateMetadata(tc.metadata)
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				require.NoError(t, err)
 
 				return
 			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("expected error containing %q, got %q", tc.wantErr, err.Error())
-			}
+			require.ErrorContains(t, err, tc.wantErr)
 		})
 	}
 }

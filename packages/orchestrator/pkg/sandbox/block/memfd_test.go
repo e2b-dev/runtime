@@ -542,7 +542,7 @@ func TestDedupedMemfdCache_InflightConcurrentDrainRace(t *testing.T) {
 	wg.Wait()
 	select {
 	case e := <-errCh:
-		t.Fatal(e)
+		require.NoError(t, e)
 	default:
 	}
 }
@@ -878,7 +878,7 @@ func TestDedupedMemfdCache_FreeIndexUnderConcurrentReads(t *testing.T) {
 	wg.Wait()
 	select {
 	case e := <-errCh:
-		t.Fatal(e)
+		require.NoError(t, e)
 	default:
 	}
 }
@@ -921,7 +921,7 @@ func TestDedupedMemfdCache_CloseWaitsForReleaseOwner(t *testing.T) {
 		synctest.Wait()
 		select {
 		case err := <-closeDone:
-			t.Fatalf("Close returned before the release owner finished: %v", err)
+			require.Failf(t, "Close returned before the release owner finished", "error: %v", err)
 		default:
 		}
 

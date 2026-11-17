@@ -41,12 +41,12 @@ func TestStartupGateRequiresLocalNodeAndProjectsAfterClusters(t *testing.T) {
 
 	select {
 	case <-gate.Ready():
-		t.Fatal("remote node must not satisfy startup readiness")
+		require.Fail(t, "remote node must not satisfy startup readiness")
 	default:
 	}
 	select {
 	case <-projectionStarted:
-		t.Fatal("projection must wait for a local node")
+		require.Fail(t, "projection must wait for a local node")
 	default:
 	}
 
@@ -55,12 +55,12 @@ func TestStartupGateRequiresLocalNodeAndProjectsAfterClusters(t *testing.T) {
 	select {
 	case <-projectionStarted:
 	case <-t.Context().Done():
-		t.Fatal("startup projection did not run")
+		require.Fail(t, "startup projection did not run")
 	}
 	select {
 	case <-gate.Ready():
 	case <-t.Context().Done():
-		t.Fatal("startup readiness was not released after projection")
+		require.Fail(t, "startup readiness was not released after projection")
 	}
 
 	o.deregisterNode(&nodemanager.Node{ID: "local", ClusterID: consts.LocalClusterID})
@@ -68,7 +68,7 @@ func TestStartupGateRequiresLocalNodeAndProjectsAfterClusters(t *testing.T) {
 	select {
 	case <-gate.Ready():
 	default:
-		t.Fatal("startup readiness must remain monotonic")
+		require.Fail(t, "startup readiness must remain monotonic")
 	}
 }
 
@@ -88,12 +88,12 @@ func TestStartupGateCancellationPreventsReadiness(t *testing.T) {
 
 	select {
 	case <-projectionStarted:
-		t.Fatal("canceled startup must not run projection")
+		require.Fail(t, "canceled startup must not run projection")
 	default:
 	}
 	select {
 	case <-gate.Ready():
-		t.Fatal("canceled startup must not become ready")
+		require.Fail(t, "canceled startup must not become ready")
 	default:
 	}
 }
@@ -213,7 +213,7 @@ func TestStartupGateIdlesUntilStarted(t *testing.T) {
 	select {
 	case <-gate.Ready():
 	case <-time.After(time.Second):
-		t.Fatalf("the gate did not open; projections=%d", projections.Load())
+		require.Failf(t, "the gate did not open", "projections=%d", projections.Load())
 	}
 	require.Equal(t, int32(2), projections.Load())
 }
@@ -237,7 +237,7 @@ func TestStartupGateCancellationIgnoresRegistryChange(t *testing.T) {
 	require.Zero(t, projections.Load(), "canceled startup must not run the projection")
 	select {
 	case <-gate.Ready():
-		t.Fatal("canceled startup must not become ready")
+		require.Fail(t, "canceled startup must not become ready")
 	default:
 	}
 }
