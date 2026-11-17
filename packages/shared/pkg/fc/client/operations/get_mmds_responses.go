@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetMmdsReader is a Reader for the GetMmds structure.
@@ -51,11 +50,9 @@ func NewGetMmdsOK() *GetMmdsOK {
 	return &GetMmdsOK{}
 }
 
-/*
-GetMmdsOK describes a response with status code 200, with default header values.
-
-The MMDS data store JSON.
-*/
+// GetMmdsOK describes a response with status code 200, with default header values.
+//
+// The MMDS data store JSON.
 type GetMmdsOK struct {
 	Payload any
 }
@@ -119,11 +116,9 @@ func NewGetMmdsNotFound() *GetMmdsNotFound {
 	return &GetMmdsNotFound{}
 }
 
-/*
-GetMmdsNotFound describes a response with status code 404, with default header values.
-
-The MMDS data store content can not be found.
-*/
+// GetMmdsNotFound describes a response with status code 404, with default header values.
+//
+// The MMDS data store content can not be found.
 type GetMmdsNotFound struct {
 	Payload *models.Error
 }
@@ -191,11 +186,9 @@ func NewGetMmdsDefault(code int) *GetMmdsDefault {
 	}
 }
 
-/*
-GetMmdsDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetMmdsDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetMmdsDefault struct {
 	_statusCode int
 

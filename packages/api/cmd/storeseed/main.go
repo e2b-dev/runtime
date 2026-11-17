@@ -16,11 +16,11 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
-	redisbackend "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
+	redisbackend "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
 
 const (

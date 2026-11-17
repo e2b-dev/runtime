@@ -170,7 +170,7 @@ func TestConcurrentRetryableOperation(t *testing.T) {
 	select {
 	case <-started:
 	case <-done:
-		t.Fatalf("retry did not execute: %s", (<-owner).Body.String())
+		require.Failf(t, "retry did not execute", "%s", (<-owner).Body.String())
 	}
 	var wg sync.WaitGroup
 	responses := make([]*httptest.ResponseRecorder, 16)

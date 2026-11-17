@@ -34,7 +34,7 @@ func TestPauseSandbox_MarkAndKindChangeLandTogether(t *testing.T) {
 	require.NotNil(t, mark, "the mark is written with the kind change")
 	assert.True(t, *mark)
 	buildStatus, hasFinishedAt := snapshotBuildStatus(t, db, sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 	assert.True(t, hasFinishedAt)
 }
 

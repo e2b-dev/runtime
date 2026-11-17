@@ -1,51 +1,43 @@
 package handlers
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-const (
-	adminClusterListDefaultLimit = 50
+const adminClusterListDefaultLimit = 50
 
-	// clusterDeletionRequestedConstraint refuses turning deletion protection
-	// on once the cluster's deletion is recorded.
-	clusterDeletionRequestedConstraint = "clusters_deletion_requested_unprotected"
-)
-
+// AdminListClusters filters, sorts and pages the clusters in memory: the
+// cluster service lists every cluster, and the team counts come from the
+// teams table.
 func (a *APIStore) AdminListClusters(c *gin.Context, params api.AdminListClustersParams) {
 	ctx := c.Request.Context()
 
-	search := strings.TrimSpace(sharedutils.FromPtr(params.Search))
-	filter := queries.CountAdminClustersParams{
-		BySearch: search != "",
-		Search:   likePatternEscaper.Replace(search),
+	if !a.requireClusterService(c) {
+		return
 	}
 
-	// The operator surface reads the primary throughout, so a cluster just
-	// created or updated reads back as written.
-	rows, err := a.sqlcDB.ListAdminClusters(ctx, queries.ListAdminClustersParams{
-		BySearch:    filter.BySearch,
-		Search:      filter.Search,
-		SortBy:      string(sharedutils.DerefOrDefault(params.SortBy, api.AdminListClustersParamsSortByEndpoint)),
-		Descending:  sharedutils.DerefOrDefault(params.SortOrder, api.AdminListClustersSortOrderAsc) == api.AdminListClustersSortOrderDesc,
-		OffsetCount: int64(sharedutils.FromPtr(params.Offset)),
-		PageSize:    int64(sharedutils.DerefOrDefault(params.Limit, adminClusterListDefaultLimit)),
-	})
+	resp, err := a.clusterService.ListClusters(ctx, clustersgrpc.ListClustersRequest_builder{}.Build())
 	if err != nil {
 		logger.L().Error(ctx, "Failed to list clusters", zap.Error(err))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to list clusters")
@@ -53,32 +45,95 @@ func (a *APIStore) AdminListClusters(c *gin.Context, params api.AdminListCluster
 		return
 	}
 
-	total, err := a.sqlcDB.CountAdminClusters(ctx, filter)
+	// The operator surface reads the primary throughout, so a team just
+	// assigned counts at once.
+	counts, err := a.sqlcDB.CountLiveTeamsByCluster(ctx)
 	if err != nil {
-		logger.L().Error(ctx, "Failed to count clusters", zap.Error(err))
+		logger.L().Error(ctx, "Failed to count cluster teams", zap.Error(err))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to count clusters")
 
 		return
 	}
+	teamCounts := make(map[uuid.UUID]int64, len(counts))
+	for _, row := range counts {
+		teamCounts[row.ClusterID] = row.TeamCount
+	}
 
-	items := make([]api.ClusterListItem, 0, len(rows))
-	for _, row := range rows {
+	search := strings.ToLower(strings.TrimSpace(sharedutils.FromPtr(params.Search)))
+	items := make([]api.ClusterListItem, 0, len(resp.GetClusters()))
+	for _, cluster := range resp.GetClusters() {
+		if search != "" &&
+			!strings.Contains(strings.ToLower(cluster.GetName()), search) &&
+			!strings.Contains(strings.ToLower(cluster.GetEndpoint()), search) {
+			continue
+		}
+		id, err := uuid.Parse(cluster.GetClusterId())
+		if err != nil {
+			logger.L().Error(ctx, "Failed to parse cluster ID", zap.Error(err), zap.String("cluster_id", cluster.GetClusterId()))
+			a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to list clusters")
+
+			return
+		}
 		items = append(items, api.ClusterListItem{
-			Id:                 row.ID,
-			Name:               row.Name,
-			Endpoint:           row.Endpoint,
-			SandboxProxyDomain: row.SandboxProxyDomain,
-			TeamCount:          row.TeamCount,
+			Id:                 id,
+			Name:               cluster.GetName(),
+			Endpoint:           cluster.GetEndpoint(),
+			SandboxProxyDomain: optionalOf(cluster.HasSandboxProxyDomain(), cluster.GetSandboxProxyDomain()),
+			TeamCount:          teamCounts[id],
 		})
 	}
 
-	c.JSON(http.StatusOK, api.ClusterListResponse{Items: items, Total: total})
+	sortBy := sharedutils.DerefOrDefault(params.SortBy, api.AdminListClustersParamsSortByEndpoint)
+	descending := sharedutils.DerefOrDefault(params.SortOrder, api.AdminListClustersSortOrderAsc) == api.AdminListClustersSortOrderDesc
+	slices.SortStableFunc(items, func(x, y api.ClusterListItem) int {
+		var order int
+		switch sortBy {
+		case api.AdminListClustersParamsSortByName:
+			order = compareText(x.Name, y.Name)
+		case api.AdminListClustersParamsSortByTeamCount:
+			order = cmp.Compare(x.TeamCount, y.TeamCount)
+		default:
+			order = compareText(x.Endpoint, y.Endpoint)
+		}
+		if descending {
+			order = -order
+		}
+		// Team counts collide often, so that sort breaks ties on the endpoint.
+		if order == 0 && sortBy == api.AdminListClustersParamsSortByTeamCount {
+			order = compareText(x.Endpoint, y.Endpoint)
+		}
+		if order == 0 {
+			order = strings.Compare(x.Id.String(), y.Id.String())
+		}
+
+		return order
+	})
+
+	total := int64(len(items))
+	offset := min(int(sharedutils.FromPtr(params.Offset)), len(items))
+	end := min(offset+int(sharedutils.DerefOrDefault(params.Limit, adminClusterListDefaultLimit)), len(items))
+
+	c.JSON(http.StatusOK, api.ClusterListResponse{Items: items[offset:end], Total: total})
+}
+
+// compareText orders case-insensitively, then by the exact text so the order
+// is total.
+func compareText(x, y string) int {
+	if order := strings.Compare(strings.ToLower(x), strings.ToLower(y)); order != 0 {
+		return order
+	}
+
+	return strings.Compare(x, y)
 }
 
 // AdminCreateCluster creates a protected cluster. A replay with the same
 // cluster_id and configuration answers with the stored cluster.
 func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 	ctx := c.Request.Context()
+
+	if !a.requireClusterService(c) {
+		return
+	}
 
 	body, err := ginutils.ParseBody[api.AdminClusterCreateRequest](ctx, c)
 	if err != nil {
@@ -87,7 +142,7 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 		return
 	}
 
-	clusterID, err := a.createCluster(ctx, clusterRegistration{
+	cluster, err := a.createCluster(ctx, clusterRegistration{
 		ClusterID:          body.ClusterId,
 		Name:               body.Name,
 		Endpoint:           body.Endpoint,
@@ -95,6 +150,7 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 		Token:              body.Token,
 		SandboxProxyDomain: body.SandboxProxyDomain,
 		AuthOrgID:          body.AuthOrgId,
+		TelemetryClientID:  body.TelemetryClientId,
 		DeletionProtection: true,
 	})
 	switch {
@@ -102,7 +158,7 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: clusterRegistrationInvalidCode, ClientMsg: "name, endpoint and token are required"})
 
 		return
-	case dberrors.IsUniqueConstraintViolation(err), dberrors.IsNotFoundError(err):
+	case errors.Is(err, errClusterRegistrationConflict):
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterRegistrationConflictCode, ClientMsg: "Cluster ID or auth organization is already registered"})
 
 		return
@@ -113,30 +169,31 @@ func (a *APIStore) AdminCreateCluster(c *gin.Context) {
 		return
 	}
 
-	cluster, err := a.sqlcDB.GetAdminCluster(ctx, clusterID)
+	detail, err := clusterDetail(cluster)
 	if err != nil {
-		logger.L().Error(ctx, "Failed to read created cluster", zap.Error(err), logger.WithClusterID(clusterID))
+		logger.L().Error(ctx, "Failed to read created cluster", zap.Error(err))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to read created cluster")
 
 		return
 	}
 
-	c.JSON(http.StatusCreated, clusterDetail(cluster))
+	c.JSON(http.StatusCreated, detail)
+}
+
+func (a *APIStore) AdminGetClusterMetadata(c *gin.Context, clusterID api.ClusterID) {
+	detail, ok := a.adminClusterDetail(c, clusterID, "Failed to get cluster")
+	if !ok {
+		return
+	}
+
+	c.JSON(http.StatusOK, detail)
 }
 
 func (a *APIStore) AdminGetCluster(c *gin.Context, clusterID api.ClusterID, params api.AdminGetClusterParams) {
 	ctx := c.Request.Context()
 
-	cluster, err := a.sqlcDB.GetAdminCluster(ctx, clusterID)
-	if dberrors.IsNotFoundError(err) {
-		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
-
-		return
-	}
-	if err != nil {
-		logger.L().Error(ctx, "Failed to get cluster", zap.Error(err), logger.WithClusterID(clusterID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to get cluster")
-
+	detail, ok := a.adminClusterDetail(c, clusterID, "Failed to get cluster")
+	if !ok {
 		return
 	}
 
@@ -171,7 +228,7 @@ func (a *APIStore) AdminGetCluster(c *gin.Context, clusterID api.ClusterID, para
 	}
 
 	c.JSON(http.StatusOK, api.ClusterDetailWithTeams{
-		Cluster:       clusterDetail(cluster),
+		Cluster:       detail,
 		Teams:         api.ClusterTeamListResponse{Items: clusterTeamItems(teams), Total: teamCount},
 		TeamCount:     teamCount,
 		TemplateCount: templateCount,
@@ -184,6 +241,10 @@ func (a *APIStore) AdminGetCluster(c *gin.Context, clusterID api.ClusterID, para
 // one leaves it alone, so presence is read off the raw body.
 func (a *APIStore) AdminUpdateCluster(c *gin.Context, clusterID api.ClusterID) {
 	ctx := c.Request.Context()
+
+	if !a.requireClusterService(c) {
+		return
+	}
 
 	raw, err := c.GetRawData()
 	if err != nil {
@@ -209,59 +270,71 @@ func (a *APIStore) AdminUpdateCluster(c *gin.Context, clusterID api.ClusterID) {
 		return ok
 	}
 
-	update := queries.UpdateAdminClusterParams{
-		ClusterID:             clusterID,
-		SetName:               isPresent("name"),
-		Name:                  strings.TrimSpace(sharedutils.FromPtr(body.Name)),
-		SetEndpoint:           isPresent("endpoint"),
-		Endpoint:              strings.TrimSpace(sharedutils.FromPtr(body.Endpoint)),
-		SetEndpointTls:        isPresent("endpointTls"),
-		EndpointTls:           sharedutils.FromPtr(body.EndpointTls),
-		SetSandboxProxyDomain: isPresent("sandboxProxyDomain"),
-		SandboxProxyDomain:    trimmedOptional(body.SandboxProxyDomain),
-		SetAuthOrgID:          isPresent("authOrgId"),
-		AuthOrgID:             trimmedOptional(body.AuthOrgId),
-		SetDeletionProtection: isPresent("deletionProtection"),
-		DeletionProtection:    sharedutils.FromPtr(body.DeletionProtection),
-	}
-	if update.SetName && update.Name == "" {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "name must not be blank")
+	update := clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String()}
+	if isPresent("name") {
+		name := strings.TrimSpace(sharedutils.FromPtr(body.Name))
+		if name == "" {
+			a.sendAPIStoreError(c, http.StatusBadRequest, "name must not be blank")
 
-		return
+			return
+		}
+		update.Name = &name
 	}
-	if update.SetEndpoint && update.Endpoint == "" {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "endpoint must not be blank")
+	if isPresent("endpoint") {
+		endpoint := strings.TrimSpace(sharedutils.FromPtr(body.Endpoint))
+		if endpoint == "" {
+			a.sendAPIStoreError(c, http.StatusBadRequest, "endpoint must not be blank")
 
-		return
+			return
+		}
+		update.Endpoint = &endpoint
 	}
-	if update.SetEndpointTls && body.EndpointTls == nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "endpointTls must not be null")
+	if isPresent("endpointTls") {
+		if body.EndpointTls == nil {
+			a.sendAPIStoreError(c, http.StatusBadRequest, "endpointTls must not be null")
 
-		return
+			return
+		}
+		update.EndpointTls = body.EndpointTls
 	}
-	if update.SetDeletionProtection && body.DeletionProtection == nil {
-		a.sendAPIStoreError(c, http.StatusBadRequest, "deletionProtection must not be null")
+	if isPresent("sandboxProxyDomain") {
+		update.SandboxProxyDomain = clustersgrpc.NullableStringUpdate_builder{Value: trimmedOptional(body.SandboxProxyDomain)}.Build()
+	}
+	if isPresent("authOrgId") {
+		update.AuthOrgId = clustersgrpc.NullableStringUpdate_builder{Value: trimmedOptional(body.AuthOrgId)}.Build()
+	}
+	if isPresent("deletionProtection") {
+		if body.DeletionProtection == nil {
+			a.sendAPIStoreError(c, http.StatusBadRequest, "deletionProtection must not be null")
 
-		return
+			return
+		}
+		update.DeletionProtection = body.DeletionProtection
 	}
-	if !update.SetName && !update.SetEndpoint && !update.SetEndpointTls &&
-		!update.SetSandboxProxyDomain && !update.SetAuthOrgID && !update.SetDeletionProtection {
+	if update.Name == nil && update.Endpoint == nil && update.EndpointTls == nil &&
+		update.SandboxProxyDomain == nil && update.AuthOrgId == nil && update.DeletionProtection == nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, "No updatable field supplied")
 
 		return
 	}
 
-	cluster, err := a.sqlcDB.UpdateAdminCluster(ctx, update)
-	switch {
-	case dberrors.IsNotFoundError(err):
+	if clusterID == consts.LocalClusterID {
 		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
 
 		return
-	case dberrors.IsUniqueConstraintViolation(err):
+	}
+
+	resp, err := a.clusterService.UpdateCluster(ctx, update.Build())
+	switch {
+	case status.Code(err) == codes.NotFound:
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+
+		return
+	case status.Code(err) == codes.AlreadyExists:
 		a.sendAPIStoreError(c, http.StatusConflict, "A cluster with that auth org ID already exists")
 
 		return
-	case dberrors.ConstraintName(err) == clusterDeletionRequestedConstraint:
+	case clusterErrorReason(err) == clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED:
 		a.sendAPIStoreError(c, http.StatusConflict, "This cluster is being deleted, so its deletion protection cannot be turned on")
 
 		return
@@ -272,7 +345,15 @@ func (a *APIStore) AdminUpdateCluster(c *gin.Context, clusterID api.ClusterID) {
 		return
 	}
 
-	c.JSON(http.StatusOK, clusterDetail(queries.GetAdminClusterRow(cluster)))
+	detail, err := clusterDetail(resp.GetCluster())
+	if err != nil {
+		logger.L().Error(ctx, "Failed to read updated cluster", zap.Error(err), logger.WithClusterID(clusterID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to update cluster")
+
+		return
+	}
+
+	c.JSON(http.StatusOK, detail)
 }
 
 // AdminDeleteCluster is the management delete; both callers get the same
@@ -285,15 +366,7 @@ func (a *APIStore) AdminListClusterTeams(c *gin.Context, clusterID api.ClusterID
 	ctx := c.Request.Context()
 
 	// A cluster without teams answers an empty page, an unknown one 404.
-	if _, err := a.sqlcDB.GetAdminCluster(ctx, clusterID); err != nil {
-		if dberrors.IsNotFoundError(err) {
-			a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
-
-			return
-		}
-		logger.L().Error(ctx, "Failed to get cluster", zap.Error(err), logger.WithClusterID(clusterID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to list cluster teams")
-
+	if _, ok := a.adminClusterDetail(c, clusterID, "Failed to list cluster teams"); !ok {
 		return
 	}
 
@@ -325,6 +398,10 @@ func (a *APIStore) AdminListClusterTeams(c *gin.Context, clusterID api.ClusterID
 func (a *APIStore) AdminRotateClusterToken(c *gin.Context, clusterID api.ClusterID) {
 	ctx := c.Request.Context()
 
+	if !a.requireClusterService(c) {
+		return
+	}
+
 	body, err := ginutils.ParseBody[api.ClusterTokenRotateRequest](ctx, c)
 	if err != nil {
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Error when parsing request: %s", err))
@@ -338,32 +415,74 @@ func (a *APIStore) AdminRotateClusterToken(c *gin.Context, clusterID api.Cluster
 		return
 	}
 
-	rows, err := a.sqlcDB.UpdateAdminClusterToken(ctx, queries.UpdateAdminClusterTokenParams{ClusterID: clusterID, Token: token})
-	if err != nil {
-		logger.L().Error(ctx, "Failed to rotate cluster token", zap.Error(err), logger.WithClusterID(clusterID))
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to rotate cluster token")
-
-		return
-	}
-	if rows == 0 {
+	if clusterID == consts.LocalClusterID {
 		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
 
 		return
 	}
 
-	c.Status(http.StatusNoContent)
+	_, err = a.clusterService.UpdateCluster(ctx, clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String(), Token: &token}.Build())
+	switch {
+	case status.Code(err) == codes.NotFound:
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+	case err != nil:
+		logger.L().Error(ctx, "Failed to rotate cluster token", zap.Error(err), logger.WithClusterID(clusterID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to rotate cluster token")
+	default:
+		c.Status(http.StatusNoContent)
+	}
 }
 
-func clusterDetail(row queries.GetAdminClusterRow) api.ClusterDetail {
-	return api.ClusterDetail{
-		Id:                 row.ID,
-		Name:               row.Name,
-		Endpoint:           row.Endpoint,
-		EndpointTls:        row.EndpointTls,
-		SandboxProxyDomain: row.SandboxProxyDomain,
-		AuthOrgId:          row.AuthOrgID,
-		DeletionProtection: row.DeletionProtection,
+// adminClusterDetail reads a cluster for an admin route, answering 503
+// without a cluster service, 404 for an unknown cluster and failMsg for a
+// failed read.
+func (a *APIStore) adminClusterDetail(c *gin.Context, clusterID api.ClusterID, failMsg string) (api.ClusterDetail, bool) {
+	ctx := c.Request.Context()
+
+	if !a.requireClusterService(c) {
+		return api.ClusterDetail{}, false
 	}
+
+	cluster, err := a.lookUpCluster(ctx, &clusterID)
+	if err != nil {
+		logger.L().Error(ctx, "Failed to get cluster", zap.Error(err), logger.WithClusterID(clusterID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, failMsg)
+
+		return api.ClusterDetail{}, false
+	}
+	if cluster == nil {
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+
+		return api.ClusterDetail{}, false
+	}
+
+	detail, err := clusterDetail(cluster)
+	if err != nil {
+		logger.L().Error(ctx, "Failed to read cluster", zap.Error(err), logger.WithClusterID(clusterID))
+		a.sendAPIStoreError(c, http.StatusInternalServerError, failMsg)
+
+		return api.ClusterDetail{}, false
+	}
+
+	return detail, true
+}
+
+// clusterDetail leaves the token out on purpose: no admin read returns it.
+func clusterDetail(cluster *clustersgrpc.Cluster) (api.ClusterDetail, error) {
+	id, err := uuid.Parse(cluster.GetClusterId())
+	if err != nil {
+		return api.ClusterDetail{}, fmt.Errorf("parse cluster ID %q: %w", cluster.GetClusterId(), err)
+	}
+
+	return api.ClusterDetail{
+		Id:                 id,
+		Name:               cluster.GetName(),
+		Endpoint:           cluster.GetEndpoint(),
+		EndpointTls:        cluster.GetEndpointTls(),
+		SandboxProxyDomain: optionalOf(cluster.HasSandboxProxyDomain(), cluster.GetSandboxProxyDomain()),
+		AuthOrgId:          optionalOf(cluster.HasAuthOrgId(), cluster.GetAuthOrgId()),
+		DeletionProtection: cluster.GetDeletionProtection(),
+	}, nil
 }
 
 func clusterTeamItems(rows []queries.ListAdminClusterTeamsRow) []api.ClusterTeamListItem {

@@ -16,10 +16,19 @@ func NewMockSeekable(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockSeekable {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockSeekable{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -81,7 +90,7 @@ type MockSeekable_OpenRangeReader_Call struct {
 //   - offsetU int64
 //   - length int64
 //   - frameTable *FrameTable
-func (_e *MockSeekable_Expecter) OpenRangeReader(ctx interface{}, offsetU interface{}, length interface{}, frameTable interface{}) *MockSeekable_OpenRangeReader_Call {
+func (_e *MockSeekable_Expecter) OpenRangeReader(ctx any, offsetU any, length any, frameTable any) *MockSeekable_OpenRangeReader_Call {
 	return &MockSeekable_OpenRangeReader_Call{Call: _e.mock.On("OpenRangeReader", ctx, offsetU, length, frameTable)}
 }
 
@@ -156,7 +165,7 @@ type MockSeekable_Size_Call struct {
 
 // Size is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockSeekable_Expecter) Size(ctx interface{}) *MockSeekable_Size_Call {
+func (_e *MockSeekable_Expecter) Size(ctx any) *MockSeekable_Size_Call {
 	return &MockSeekable_Size_Call{Call: _e.mock.On("Size", ctx)}
 }
 
@@ -234,9 +243,9 @@ type MockSeekable_StoreFile_Call struct {
 //   - ctx context.Context
 //   - path string
 //   - opts ...PutOption
-func (_e *MockSeekable_Expecter) StoreFile(ctx interface{}, path interface{}, opts ...interface{}) *MockSeekable_StoreFile_Call {
+func (_e *MockSeekable_Expecter) StoreFile(ctx any, path any, opts ...any) *MockSeekable_StoreFile_Call {
 	return &MockSeekable_StoreFile_Call{Call: _e.mock.On("StoreFile",
-		append([]interface{}{ctx, path}, opts...)...)}
+		append([]any{ctx, path}, opts...)...)}
 }
 
 func (_c *MockSeekable_StoreFile_Call) Run(run func(ctx context.Context, path string, opts ...PutOption)) *MockSeekable_StoreFile_Call {

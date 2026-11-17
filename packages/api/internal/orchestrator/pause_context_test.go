@@ -139,7 +139,7 @@ func TestRemoveSandbox_PausePersistsSnapshotAfterCallerCancellation(t *testing.T
 			snapshot, err := f.o.sqlcDB.GetLastSnapshot(t.Context(), f.sbx.SandboxID)
 			require.NoError(t, err, "the completed snapshot must remain available for resume")
 			assert.Equal(t, snapshotBuildID, snapshot.EnvBuild.ID)
-			assert.Equal(t, types.BuildStatusSuccess, snapshot.EnvBuild.Status)
+			assert.Equal(t, types.BuildStatusGroupReady, snapshot.EnvBuild.StatusGroup)
 			assert.NotNil(t, snapshot.EnvBuild.FinishedAt)
 			assert.Equal(t, f.sbx.TeamID, snapshot.Snapshot.TeamID)
 

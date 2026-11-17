@@ -47,10 +47,10 @@ func failBuild(t *testing.T, ctx context.Context, db *testutils.Database, buildI
 	now := time.Now()
 
 	recorded, err := db.SqlcClient.FailTemplateBuildAndDeactivate(ctx, queries.FailTemplateBuildAndDeactivateParams{
-		Status:     types.BuildStatusFailed,
-		FinishedAt: &now,
-		Reason:     types.BuildReason{Message: message},
-		BuildID:    buildID,
+		StatusGroup: types.BuildStatusGroupFailed,
+		FinishedAt:  &now,
+		Reason:      types.BuildReason{Message: message},
+		BuildID:     buildID,
 	})
 	require.NoError(t, err)
 
@@ -65,7 +65,7 @@ func finishBuild(t *testing.T, ctx context.Context, db *testutils.Database, buil
 
 	err := db.SqlcClient.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		BuildID:            buildID,
-		Status:             types.BuildStatusUploaded,
+		StatusGroup:        types.BuildStatusGroupReady,
 		TotalDiskSizeMb:    &totalDisk,
 		EnvdVersion:        &envdVersion,
 		KernelVersion:      seededKernel,
@@ -82,11 +82,11 @@ func TestFailTemplateBuildAndDeactivate_RecordsTheFirstTerminalOutcome(t *testin
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	assert.True(t, failBuild(t, ctx, db, buildID, "build status polling timed out"),
 		"the write that ends an in-progress build reports that it did")
-	assert.Equal(t, string(types.BuildStatusFailed), testutils.GetBuildStatus(t, ctx, db, buildID))
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, buildID))
 
 	assert.False(t, failBuild(t, ctx, db, buildID, "cancelled by admin"),
 		"a build already over must report the loss so the caller does not act on it")
@@ -102,13 +102,13 @@ func TestFailTemplateBuildAndDeactivate_LeavesAFinishedBuildReady(t *testing.T) 
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	finishBuild(t, ctx, db, buildID)
 
 	assert.False(t, failBuild(t, ctx, db, buildID, "build status polling timed out"),
 		"a poller whose deadline fires after a peer recorded success must not overwrite it")
-	assert.Equal(t, string(types.BuildStatusUploaded), testutils.GetBuildStatus(t, ctx, db, buildID))
+	assert.Equal(t, types.BuildStatusGroupReady, testutils.GetBuildStatusGroup(t, ctx, db, buildID))
 }
 
 func TestFinishTemplateBuild_LeavesAFailedBuildFailed(t *testing.T) {
@@ -119,13 +119,13 @@ func TestFinishTemplateBuild_LeavesAFailedBuildFailed(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	failBuild(t, ctx, db, buildID, "build status polling timed out")
 
 	finishBuild(t, ctx, db, buildID)
 
-	assert.Equal(t, string(types.BuildStatusFailed), testutils.GetBuildStatus(t, ctx, db, buildID),
+	assert.Equal(t, types.BuildStatusGroupFailed, testutils.GetBuildStatusGroup(t, ctx, db, buildID),
 		"a failed build has had its artifacts deleted, so it must not come back as ready")
 }
 
@@ -137,7 +137,7 @@ func TestFailTemplateBuildAndDeactivate_ReleasesTheConcurrencySlotWhenItWins(t *
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 
 	err := db.SqlcClient.CreateActiveTemplateBuild(ctx, queries.CreateActiveTemplateBuildParams{
 		BuildID:    buildID,

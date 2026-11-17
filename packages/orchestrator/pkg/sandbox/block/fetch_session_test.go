@@ -146,7 +146,7 @@ func TestFetchSession_FastPath(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
 		s.mu.Unlock()
-		t.Fatal("a covered block waited for the session lock instead of taking the fast path")
+		require.Fail(t, "a covered block waited for the session lock instead of taking the fast path")
 	}
 }
 
@@ -313,7 +313,7 @@ func TestFetchSession_CancelBetweenCheckAndWait(t *testing.T) {
 			s.fail(context.Canceled)
 			synctest.Wait()
 			require.ErrorIs(t, <-result, context.Canceled)
-			t.Fatal("context cancellation wakeup was lost between Err and Cond.Wait")
+			require.Fail(t, "context cancellation wakeup was lost between Err and Cond.Wait")
 		}
 	})
 }

@@ -157,6 +157,26 @@ func TestBuildKernelArgs_BootCpus(t *testing.T) {
 	assert.Equal(t, base, withCap, "nothing else may change")
 }
 
+// A boot with a hotplug region gets the online policy; without one the command line is unchanged.
+func TestBuildKernelArgs_MemoryHotplugOnlinePolicy(t *testing.T) {
+	t.Parallel()
+
+	options := ProcessOptions{InitScriptPath: "/sbin/init"}
+	base := buildKernelArgs(testIPv4, options)
+	assert.NotContains(t, base.String(), "memhp_default_state")
+	assert.NotContains(t, base.String(), "memory_hotplug.online_policy")
+
+	options.MemoryHotplugMB = 1024
+	withRegion := buildKernelArgs(testIPv4, options)
+	assert.Equal(t, "online", withRegion["memhp_default_state"])
+	assert.Equal(t, "auto-movable", withRegion["memory_hotplug.online_policy"])
+
+	for k := range memoryHotplugKernelArgs {
+		delete(withRegion, k)
+	}
+	assert.Equal(t, base, withRegion, "nothing else may change")
+}
+
 // A variant naming a reserved key must reach the guest as the default command line —
 // not partially applied, and not as a boot failure. Dropping only the offending key
 // would boot a command line nobody specified.
@@ -317,4 +337,38 @@ func TestValidateCmdlineArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The build flag may not set the hotplug online policy; the boot-time check still lets a stored
+// overlay that names it through, so templates built before this keep their command line.
+func TestValidateBuildCmdlineArgsReservesTheHotplugPolicy(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"memhp_default_state", "memory_hotplug.online_policy", "memory_hotplug.auto_movable_ratio", "memory_hotplug.auto_movable_numa_aware"} {
+		args := map[string]string{"psi": "1", name: "x"}
+		require.Error(t, ValidateBuildCmdlineArgs(args), name)
+		require.NoError(t, ValidateCmdlineArgs(args), name)
+	}
+	require.NoError(t, ValidateBuildCmdlineArgs(map[string]string{"psi": "1"}))
+	require.Error(t, ValidateBuildCmdlineArgs(map[string]string{"init": "/x"}), "the boot reservations still apply")
+}
+
+// A stored overlay naming a hotplug policy key replays unchanged on a boot without a region; on a
+// boot with one, only those keys give way to the region's policy and the rest still applies.
+func TestBuildKernelArgs_StoredOverlayAndTheHotplugPolicy(t *testing.T) {
+	t.Parallel()
+
+	stored := map[string]string{"psi": "1", "memhp_default_state": "offline", "memory_hotplug.auto_movable_ratio": "1000"}
+
+	withoutRegion := buildKernelArgs(testIPv4, ProcessOptions{InitScriptPath: "/sbin/init", CmdlineArgs: stored})
+	assert.Equal(t, "1", withoutRegion["psi"])
+	assert.Equal(t, "offline", withoutRegion["memhp_default_state"])
+	assert.Equal(t, "1000", withoutRegion["memory_hotplug.auto_movable_ratio"])
+
+	withRegion := buildKernelArgs(testIPv4, ProcessOptions{InitScriptPath: "/sbin/init", CmdlineArgs: stored, MemoryHotplugMB: 1024})
+	assert.Equal(t, "1", withRegion["psi"], "the rest of the overlay still applies")
+	assert.Equal(t, "online", withRegion["memhp_default_state"])
+	assert.Equal(t, "auto-movable", withRegion["memory_hotplug.online_policy"])
+	assert.NotContains(t, withRegion, "memory_hotplug.auto_movable_ratio", "a stored ratio does not change the region's policy")
+	assert.Equal(t, []string{"memhp_default_state", "memory_hotplug.auto_movable_ratio"}, MemoryHotplugCmdlineConflicts(stored))
 }

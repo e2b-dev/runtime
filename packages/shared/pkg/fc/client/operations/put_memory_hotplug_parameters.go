@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutMemoryHotplugParams creates a new PutMemoryHotplugParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutMemoryHotplugParams() *PutMemoryHotplugParams {
-	return &PutMemoryHotplugParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutMemoryHotplugParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutMemoryHotplugParamsWithTimeout creates a new PutMemoryHotplugParams object
 // with the ability to set a timeout on a request.
 func NewPutMemoryHotplugParamsWithTimeout(timeout time.Duration) *PutMemoryHotplugParams {
 	return &PutMemoryHotplugParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutMemoryHotplugParamsWithContext creates a new PutMemoryHotplugParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMemoryHotplugParams].
 func NewPutMemoryHotplugParamsWithContext(ctx context.Context) *PutMemoryHotplugParams {
 	return &PutMemoryHotplugParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutMemoryHotplugParams contains all the parameters to send to the API endpoint
 */
 type PutMemoryHotplugParams struct {
 
-	/* Body.
-
-	   Hotpluggable memory configuration
-	*/
+	// Body.
+	//
+	// Hotpluggable memory configuration
 	Body *models.MemoryHotplugConfig
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put memory hotplug params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutMemoryHotplugParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put memory hotplug params
+// WithTimeout adds the timeout to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) WithTimeout(timeout time.Duration) *PutMemoryHotplugParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put memory hotplug params
+// SetTimeout adds the timeout to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put memory hotplug params
+// WithContext adds the context to the put memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMemoryHotplugParams].
 func (o *PutMemoryHotplugParams) WithContext(ctx context.Context) *PutMemoryHotplugParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put memory hotplug params
+// SetContext adds the context to the put memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMemoryHotplugParams].
 func (o *PutMemoryHotplugParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put memory hotplug params
+// WithHTTPClient adds the HTTPClient to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) WithHTTPClient(client *http.Client) *PutMemoryHotplugParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put memory hotplug params
+// SetHTTPClient adds the HTTPClient to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put memory hotplug params
+// WithBody adds the body to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) WithBody(body *models.MemoryHotplugConfig) *PutMemoryHotplugParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put memory hotplug params
+// SetBody adds the body to the put memory hotplug params.
 func (o *PutMemoryHotplugParams) SetBody(body *models.MemoryHotplugConfig) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutMemoryHotplugParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

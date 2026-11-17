@@ -112,3 +112,16 @@ EOF
     [[ "$output" == *"FIX: set NBDS_MAX to a whole number"* ]]
   done
 }
+
+# The sysctl file comes from a function so its content can be checked without
+# root. The neighbour thresholds are what let a host pass about 350 sandboxes.
+@test "the sysctl file carries the hugepage pool and the ARP neighbour thresholds" {
+  export HUGEPAGES=4096
+  run sysctl_conf
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"vm.nr_hugepages=4096"* ]]
+  [[ "$output" == *"net.ipv4.neigh.default.gc_thresh3=65536"* ]]
+  [[ "$output" == *"net.ipv6.neigh.default.gc_thresh3=65536"* ]]
+  [[ "$output" == *"net.ipv4.neigh.default.gc_thresh1=8192"* ]]
+  [[ "$output" == *"vm.max_map_count=1048576"* ]]
+}

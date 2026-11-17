@@ -241,7 +241,7 @@ func TestAnnotateEmitsOnlyCountsAndEnums(t *testing.T) {
 		case string:
 			logAttrs = append(logAttrs, attribute.String(key, v))
 		default:
-			t.Errorf("field %s has type %T", key, value)
+			assert.Failf(t, "unexpected field type", "field %s has type %T", key, value)
 		}
 	}
 	assertAttrs(t, logAttrs)

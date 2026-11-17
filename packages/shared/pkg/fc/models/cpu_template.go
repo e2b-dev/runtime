@@ -85,6 +85,6 @@ func (m CPUTemplate) Validate(formats strfmt.Registry) error {
 }
 
 // ContextValidate validates this Cpu template based on context it is used
-func (m CPUTemplate) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m CPUTemplate) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }

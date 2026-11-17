@@ -6,10 +6,12 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/nomad-autoscaler v0.4.5
 	github.com/hashicorp/nomad/api v0.0.0-20260324203407-b27b0c2e019a
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
@@ -25,11 +27,11 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-testing-interface v1.14.2-0.20210821155943-2d9075ca8770 // indirect
 	github.com/oklog/run v1.2.0 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
-	google.golang.org/grpc v1.84.0 // indirect
+	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )

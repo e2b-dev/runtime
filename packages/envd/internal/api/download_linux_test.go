@@ -21,6 +21,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/memlimit"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 )
 
@@ -49,7 +50,7 @@ func TestGetFiles_IdentityDownload_VirtualFile(t *testing.T) {
 		EnvVars: utils.NewEnvVars(),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager())
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(virtualFile), nil)
 	w := httptest.NewRecorder()
@@ -88,7 +89,7 @@ func TestGetFiles_IdentityRangeDownload_VirtualFile(t *testing.T) {
 		EnvVars: utils.NewEnvVars(),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager())
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(virtualFile), nil)
 	req.Header.Set("Range", "bytes=0-4")
@@ -125,7 +126,7 @@ func TestGetFiles_IdentityDownload_CharDevice(t *testing.T) {
 		EnvVars: utils.NewEnvVars(),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager())
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(device), nil)
 	w := httptest.NewRecorder()
@@ -172,7 +173,7 @@ func TestGetFiles_IdentityDownload_SysfsFile(t *testing.T) {
 		EnvVars: utils.NewEnvVars(),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager())
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(sysfsFile), nil)
 	w := httptest.NewRecorder()
@@ -205,7 +206,7 @@ func getFileIdentity(t *testing.T, path string, header http.Header) (int, http.H
 		EnvVars: utils.NewEnvVars(),
 		User:    currentUser.Username,
 	}
-	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager())
+	api := New(&logger, defaults, nil, false, cgroups.NewWorkloadFreezer(cgroups.NewNoopManager()), nil, cpus.NewNoopManager(), memlimit.NewNoopManager())
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/files?path="+url.QueryEscape(path), nil)
 	maps.Copy(req.Header, header)
@@ -220,7 +221,7 @@ func getFileIdentity(t *testing.T, path string, header http.Header) (int, http.H
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		require.FailNow(t, "GetFiles did not return", path)
+		require.Fail(t, "GetFiles did not return", path)
 	}
 
 	resp := w.Result()

@@ -42,7 +42,7 @@ func TestCreateSnapshotTemplate_NodeRefusalsFollowCommittedTemplateRows(t *testi
 			var templates, failedBuilds, aliases int
 			require.NoError(t, f.db.SqlcClient.TestsRawSQLQuery(t.Context(),
 				`SELECT count(DISTINCT e.id),
-				        count(DISTINCT b.id) FILTER (WHERE b.status = $2),
+				        count(DISTINCT b.id) FILTER (WHERE b.status_group = $2),
 				        count(DISTINCT a.alias) FILTER (WHERE a.alias = $3 AND a.namespace = $4)
 				 FROM public.snapshot_templates st
 				 JOIN public.envs e ON e.id = st.env_id AND e.source = 'snapshot_template'
@@ -54,7 +54,7 @@ func TestCreateSnapshotTemplate_NodeRefusalsFollowCommittedTemplateRows(t *testi
 
 					return rows.Scan(&templates, &failedBuilds, &aliases)
 				},
-				f.sbx.SandboxID, string(types.BuildStatusFailed), alias, namespace,
+				f.sbx.SandboxID, types.BuildStatusGroupFailed, alias, namespace,
 			))
 			assert.Equal(t, 1, templates, "the refused snapshot's template row is committed")
 			assert.Equal(t, 1, failedBuilds, "its build is committed and marked failed")

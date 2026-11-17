@@ -111,7 +111,7 @@ func WaitForBuildCompletion(
 	for {
 		select {
 		case <-ctx.Done():
-			tb.Fatal("Build timeout exceeded")
+			require.Fail(tb, "Build timeout exceeded")
 
 			return
 		default:
@@ -142,7 +142,7 @@ func WaitForBuildCompletion(
 
 			return
 		case api.TemplateBuildStatusError:
-			tb.Fatalf("Build failed: %v", safeValue(statusResp.JSON200.Reason))
+			require.Fail(tb, "Build failed", "reason: %v", safeValue(statusResp.JSON200.Reason))
 
 			return
 		}

@@ -3,17 +3,21 @@
 package operations
 
 import (
+	"context"
+	"time"
+
 	"github.com/go-openapi/runtime"
 	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 )
 
 // New creates a new operations API client.
-func New(transport runtime.ClientTransport, formats strfmt.Registry) ClientService {
+func New(transport runtime.ContextualTransport, formats strfmt.Registry) ClientService {
 	return &Client{transport: transport, formats: formats}
 }
 
 // New creates a new operations API client with basic auth credentials.
+//
 // It takes the following parameters:
 // - host: http host (github.com).
 // - basePath: any base path for the API client ("/v1", "/v3").
@@ -27,6 +31,7 @@ func NewClientWithBasicAuth(host, basePath, scheme, user, password string) Clien
 }
 
 // New creates a new operations API client with a bearer token for authentication.
+//
 // It takes the following parameters:
 // - host: http host (github.com).
 // - basePath: any base path for the API client ("/v1", "/v3").
@@ -38,118 +43,309 @@ func NewClientWithBearerToken(host, basePath, scheme, bearerToken string) Client
 	return &Client{transport: transport, formats: strfmt.Default}
 }
 
-/*
-Client for operations API
-*/
+// Client for operations API.
 type Client struct {
-	transport runtime.ClientTransport
+	transport runtime.ContextualTransport
 	formats   strfmt.Registry
 }
 
 // ClientOption may be used to customize the behavior of Client methods.
 type ClientOption func(*runtime.ClientOperation)
 
-// ClientService is the interface for Client methods
+// ClientService is the interface for Client methods.
 type ClientService interface {
+
+	// CreateSnapshot creates a full or diff snapshot post boot only.
 	CreateSnapshot(params *CreateSnapshotParams, opts ...ClientOption) (*CreateSnapshotNoContent, error)
 
+	// CreateSnapshotContext creates a full or diff snapshot post boot only.
+	CreateSnapshotContext(ctx context.Context, params *CreateSnapshotParams, opts ...ClientOption) (*CreateSnapshotNoContent, error)
+
+	// CreateSyncAction creates a synchronous action.
 	CreateSyncAction(params *CreateSyncActionParams, opts ...ClientOption) (*CreateSyncActionNoContent, error)
 
+	// CreateSyncActionContext creates a synchronous action.
+	CreateSyncActionContext(ctx context.Context, params *CreateSyncActionParams, opts ...ClientOption) (*CreateSyncActionNoContent, error)
+
+	// DescribeBalloonConfig returns the current balloon device configuration.
 	DescribeBalloonConfig(params *DescribeBalloonConfigParams, opts ...ClientOption) (*DescribeBalloonConfigOK, error)
 
+	// DescribeBalloonConfigContext returns the current balloon device configuration.
+	DescribeBalloonConfigContext(ctx context.Context, params *DescribeBalloonConfigParams, opts ...ClientOption) (*DescribeBalloonConfigOK, error)
+
+	// DescribeBalloonHinting returns the balloon hinting statistics only if enabled pre boot.
 	DescribeBalloonHinting(params *DescribeBalloonHintingParams, opts ...ClientOption) (*DescribeBalloonHintingOK, error)
 
+	// DescribeBalloonHintingContext returns the balloon hinting statistics only if enabled pre boot.
+	DescribeBalloonHintingContext(ctx context.Context, params *DescribeBalloonHintingParams, opts ...ClientOption) (*DescribeBalloonHintingOK, error)
+
+	// DescribeBalloonReporting returns whether free page reporting is paused only if enabled pre boot.
 	DescribeBalloonReporting(params *DescribeBalloonReportingParams, opts ...ClientOption) (*DescribeBalloonReportingOK, error)
 
+	// DescribeBalloonReportingContext returns whether free page reporting is paused only if enabled pre boot.
+	DescribeBalloonReportingContext(ctx context.Context, params *DescribeBalloonReportingParams, opts ...ClientOption) (*DescribeBalloonReportingOK, error)
+
+	// DescribeBalloonStats returns the latest balloon device statistics only if enabled pre boot.
 	DescribeBalloonStats(params *DescribeBalloonStatsParams, opts ...ClientOption) (*DescribeBalloonStatsOK, error)
 
+	// DescribeBalloonStatsContext returns the latest balloon device statistics only if enabled pre boot.
+	DescribeBalloonStatsContext(ctx context.Context, params *DescribeBalloonStatsParams, opts ...ClientOption) (*DescribeBalloonStatsOK, error)
+
+	// DescribeInstance returns general information about an instance.
 	DescribeInstance(params *DescribeInstanceParams, opts ...ClientOption) (*DescribeInstanceOK, error)
 
+	// DescribeInstanceContext returns general information about an instance.
+	DescribeInstanceContext(ctx context.Context, params *DescribeInstanceParams, opts ...ClientOption) (*DescribeInstanceOK, error)
+
+	// GetDirtyMemory gets the dirty pages bitmap for guest memory.
 	GetDirtyMemory(params *GetDirtyMemoryParams, opts ...ClientOption) (*GetDirtyMemoryOK, error)
 
+	// GetDirtyMemoryContext gets the dirty pages bitmap for guest memory.
+	GetDirtyMemoryContext(ctx context.Context, params *GetDirtyMemoryParams, opts ...ClientOption) (*GetDirtyMemoryOK, error)
+
+	// GetExportVMConfig gets the full VM configuration.
 	GetExportVMConfig(params *GetExportVMConfigParams, opts ...ClientOption) (*GetExportVMConfigOK, error)
 
+	// GetExportVMConfigContext gets the full VM configuration.
+	GetExportVMConfigContext(ctx context.Context, params *GetExportVMConfigParams, opts ...ClientOption) (*GetExportVMConfigOK, error)
+
+	// GetFirecrackerVersion gets the firecracker version.
 	GetFirecrackerVersion(params *GetFirecrackerVersionParams, opts ...ClientOption) (*GetFirecrackerVersionOK, error)
 
+	// GetFirecrackerVersionContext gets the firecracker version.
+	GetFirecrackerVersionContext(ctx context.Context, params *GetFirecrackerVersionParams, opts ...ClientOption) (*GetFirecrackerVersionOK, error)
+
+	// GetMachineConfiguration gets the machine configuration of the VM.
 	GetMachineConfiguration(params *GetMachineConfigurationParams, opts ...ClientOption) (*GetMachineConfigurationOK, error)
 
+	// GetMachineConfigurationContext gets the machine configuration of the VM.
+	GetMachineConfigurationContext(ctx context.Context, params *GetMachineConfigurationParams, opts ...ClientOption) (*GetMachineConfigurationOK, error)
+
+	// GetMemory gets the memory info resident and empty pages.
 	GetMemory(params *GetMemoryParams, opts ...ClientOption) (*GetMemoryOK, error)
 
+	// GetMemoryContext gets the memory info resident and empty pages.
+	GetMemoryContext(ctx context.Context, params *GetMemoryParams, opts ...ClientOption) (*GetMemoryOK, error)
+
+	// GetMemoryHotplug retrieves the status of the hotpluggable memory.
 	GetMemoryHotplug(params *GetMemoryHotplugParams, opts ...ClientOption) (*GetMemoryHotplugOK, error)
 
+	// GetMemoryHotplugContext retrieves the status of the hotpluggable memory.
+	GetMemoryHotplugContext(ctx context.Context, params *GetMemoryHotplugParams, opts ...ClientOption) (*GetMemoryHotplugOK, error)
+
+	// GetMemoryMappings gets the memory mappings with skippable pages bitmap.
 	GetMemoryMappings(params *GetMemoryMappingsParams, opts ...ClientOption) (*GetMemoryMappingsOK, error)
 
+	// GetMemoryMappingsContext gets the memory mappings with skippable pages bitmap.
+	GetMemoryMappingsContext(ctx context.Context, params *GetMemoryMappingsParams, opts ...ClientOption) (*GetMemoryMappingsOK, error)
+
+	// GetMmds get the m m d s data store.
 	GetMmds(params *GetMmdsParams, opts ...ClientOption) (*GetMmdsOK, error)
 
+	// GetMmdsContext get the m m d s data store.
+	GetMmdsContext(ctx context.Context, params *GetMmdsParams, opts ...ClientOption) (*GetMmdsOK, error)
+
+	// LoadSnapshot loads a snapshot pre boot only.
 	LoadSnapshot(params *LoadSnapshotParams, opts ...ClientOption) (*LoadSnapshotNoContent, error)
 
+	// LoadSnapshotContext loads a snapshot pre boot only.
+	LoadSnapshotContext(ctx context.Context, params *LoadSnapshotParams, opts ...ClientOption) (*LoadSnapshotNoContent, error)
+
+	// PatchBalloon updates a balloon device.
 	PatchBalloon(params *PatchBalloonParams, opts ...ClientOption) (*PatchBalloonNoContent, error)
 
+	// PatchBalloonContext updates a balloon device.
+	PatchBalloonContext(ctx context.Context, params *PatchBalloonParams, opts ...ClientOption) (*PatchBalloonNoContent, error)
+
+	// PatchBalloonStatsInterval updates a balloon device statistics polling interval.
 	PatchBalloonStatsInterval(params *PatchBalloonStatsIntervalParams, opts ...ClientOption) (*PatchBalloonStatsIntervalNoContent, error)
 
+	// PatchBalloonStatsIntervalContext updates a balloon device statistics polling interval.
+	PatchBalloonStatsIntervalContext(ctx context.Context, params *PatchBalloonStatsIntervalParams, opts ...ClientOption) (*PatchBalloonStatsIntervalNoContent, error)
+
+	// PatchGuestDriveByID updates the properties of a drive post boot only.
 	PatchGuestDriveByID(params *PatchGuestDriveByIDParams, opts ...ClientOption) (*PatchGuestDriveByIDNoContent, error)
 
+	// PatchGuestDriveByIDContext updates the properties of a drive post boot only.
+	PatchGuestDriveByIDContext(ctx context.Context, params *PatchGuestDriveByIDParams, opts ...ClientOption) (*PatchGuestDriveByIDNoContent, error)
+
+	// PatchGuestNetworkInterfaceByID updates the rate limiters applied to a network interface post boot only.
 	PatchGuestNetworkInterfaceByID(params *PatchGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PatchGuestNetworkInterfaceByIDNoContent, error)
 
+	// PatchGuestNetworkInterfaceByIDContext updates the rate limiters applied to a network interface post boot only.
+	PatchGuestNetworkInterfaceByIDContext(ctx context.Context, params *PatchGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PatchGuestNetworkInterfaceByIDNoContent, error)
+
+	// PatchMachineConfiguration partially updates the machine configuration of the VM pre boot only.
 	PatchMachineConfiguration(params *PatchMachineConfigurationParams, opts ...ClientOption) (*PatchMachineConfigurationNoContent, error)
 
+	// PatchMachineConfigurationContext partially updates the machine configuration of the VM pre boot only.
+	PatchMachineConfigurationContext(ctx context.Context, params *PatchMachineConfigurationParams, opts ...ClientOption) (*PatchMachineConfigurationNoContent, error)
+
+	// PatchMemoryHotplug updates the size of the hotpluggable memory region.
 	PatchMemoryHotplug(params *PatchMemoryHotplugParams, opts ...ClientOption) (*PatchMemoryHotplugNoContent, error)
 
+	// PatchMemoryHotplugContext updates the size of the hotpluggable memory region.
+	PatchMemoryHotplugContext(ctx context.Context, params *PatchMemoryHotplugParams, opts ...ClientOption) (*PatchMemoryHotplugNoContent, error)
+
+	// PatchMmds updates the m m d s data store.
 	PatchMmds(params *PatchMmdsParams, opts ...ClientOption) (*PatchMmdsNoContent, error)
 
+	// PatchMmdsContext updates the m m d s data store.
+	PatchMmdsContext(ctx context.Context, params *PatchMmdsParams, opts ...ClientOption) (*PatchMmdsNoContent, error)
+
+	// PatchVM updates the micro VM state.
 	PatchVM(params *PatchVMParams, opts ...ClientOption) (*PatchVMNoContent, error)
 
+	// PatchVMContext updates the micro VM state.
+	PatchVMContext(ctx context.Context, params *PatchVMParams, opts ...ClientOption) (*PatchVMNoContent, error)
+
+	// PauseBalloonReporting pauses free page reporting only if enabled pre boot.
 	PauseBalloonReporting(params *PauseBalloonReportingParams, opts ...ClientOption) (*PauseBalloonReportingOK, error)
 
+	// PauseBalloonReportingContext pauses free page reporting only if enabled pre boot.
+	PauseBalloonReportingContext(ctx context.Context, params *PauseBalloonReportingParams, opts ...ClientOption) (*PauseBalloonReportingOK, error)
+
+	// PutBalloon creates or updates a balloon device.
 	PutBalloon(params *PutBalloonParams, opts ...ClientOption) (*PutBalloonNoContent, error)
 
+	// PutBalloonContext creates or updates a balloon device.
+	PutBalloonContext(ctx context.Context, params *PutBalloonParams, opts ...ClientOption) (*PutBalloonNoContent, error)
+
+	// PutCPUConfiguration configures CPU features flags for the v CPUs of the guest VM pre boot only.
 	PutCPUConfiguration(params *PutCPUConfigurationParams, opts ...ClientOption) (*PutCPUConfigurationNoContent, error)
 
+	// PutCPUConfigurationContext configures CPU features flags for the v CPUs of the guest VM pre boot only.
+	PutCPUConfigurationContext(ctx context.Context, params *PutCPUConfigurationParams, opts ...ClientOption) (*PutCPUConfigurationNoContent, error)
+
+	// PutEntropyDevice creates an entropy device pre boot only.
 	PutEntropyDevice(params *PutEntropyDeviceParams, opts ...ClientOption) (*PutEntropyDeviceNoContent, error)
 
+	// PutEntropyDeviceContext creates an entropy device pre boot only.
+	PutEntropyDeviceContext(ctx context.Context, params *PutEntropyDeviceParams, opts ...ClientOption) (*PutEntropyDeviceNoContent, error)
+
+	// PutGuestBootSource creates or updates the boot source pre boot only.
 	PutGuestBootSource(params *PutGuestBootSourceParams, opts ...ClientOption) (*PutGuestBootSourceNoContent, error)
 
+	// PutGuestBootSourceContext creates or updates the boot source pre boot only.
+	PutGuestBootSourceContext(ctx context.Context, params *PutGuestBootSourceParams, opts ...ClientOption) (*PutGuestBootSourceNoContent, error)
+
+	// PutGuestDriveByID creates or updates a drive pre boot only.
 	PutGuestDriveByID(params *PutGuestDriveByIDParams, opts ...ClientOption) (*PutGuestDriveByIDNoContent, error)
 
+	// PutGuestDriveByIDContext creates or updates a drive pre boot only.
+	PutGuestDriveByIDContext(ctx context.Context, params *PutGuestDriveByIDParams, opts ...ClientOption) (*PutGuestDriveByIDNoContent, error)
+
+	// PutGuestNetworkInterfaceByID creates a network interface pre boot only.
 	PutGuestNetworkInterfaceByID(params *PutGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PutGuestNetworkInterfaceByIDNoContent, error)
 
+	// PutGuestNetworkInterfaceByIDContext creates a network interface pre boot only.
+	PutGuestNetworkInterfaceByIDContext(ctx context.Context, params *PutGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PutGuestNetworkInterfaceByIDNoContent, error)
+
+	// PutGuestPmemByID creates or updates a pmem device pre boot only.
 	PutGuestPmemByID(params *PutGuestPmemByIDParams, opts ...ClientOption) (*PutGuestPmemByIDNoContent, error)
 
+	// PutGuestPmemByIDContext creates or updates a pmem device pre boot only.
+	PutGuestPmemByIDContext(ctx context.Context, params *PutGuestPmemByIDParams, opts ...ClientOption) (*PutGuestPmemByIDNoContent, error)
+
+	// PutGuestVsock creates updates a vsock device pre boot only.
 	PutGuestVsock(params *PutGuestVsockParams, opts ...ClientOption) (*PutGuestVsockNoContent, error)
 
+	// PutGuestVsockContext creates updates a vsock device pre boot only.
+	PutGuestVsockContext(ctx context.Context, params *PutGuestVsockParams, opts ...ClientOption) (*PutGuestVsockNoContent, error)
+
+	// PutLogger initializes the logger by specifying a named pipe or a file for the logs output.
 	PutLogger(params *PutLoggerParams, opts ...ClientOption) (*PutLoggerNoContent, error)
 
+	// PutLoggerContext initializes the logger by specifying a named pipe or a file for the logs output.
+	PutLoggerContext(ctx context.Context, params *PutLoggerParams, opts ...ClientOption) (*PutLoggerNoContent, error)
+
+	// PutMachineConfiguration updates the machine configuration of the VM pre boot only.
 	PutMachineConfiguration(params *PutMachineConfigurationParams, opts ...ClientOption) (*PutMachineConfigurationNoContent, error)
 
+	// PutMachineConfigurationContext updates the machine configuration of the VM pre boot only.
+	PutMachineConfigurationContext(ctx context.Context, params *PutMachineConfigurationParams, opts ...ClientOption) (*PutMachineConfigurationNoContent, error)
+
+	// PutMemoryHotplug configures the hotpluggable memory.
 	PutMemoryHotplug(params *PutMemoryHotplugParams, opts ...ClientOption) (*PutMemoryHotplugNoContent, error)
 
+	// PutMemoryHotplugContext configures the hotpluggable memory.
+	PutMemoryHotplugContext(ctx context.Context, params *PutMemoryHotplugParams, opts ...ClientOption) (*PutMemoryHotplugNoContent, error)
+
+	// PutMetrics initializes the metrics system by specifying a named pipe or a file for the metrics output.
 	PutMetrics(params *PutMetricsParams, opts ...ClientOption) (*PutMetricsNoContent, error)
 
+	// PutMetricsContext initializes the metrics system by specifying a named pipe or a file for the metrics output.
+	PutMetricsContext(ctx context.Context, params *PutMetricsParams, opts ...ClientOption) (*PutMetricsNoContent, error)
+
+	// PutMmds creates a m m d s microvm metadata service data store.
 	PutMmds(params *PutMmdsParams, opts ...ClientOption) (*PutMmdsNoContent, error)
 
+	// PutMmdsContext creates a m m d s microvm metadata service data store.
+	PutMmdsContext(ctx context.Context, params *PutMmdsParams, opts ...ClientOption) (*PutMmdsNoContent, error)
+
+	// PutMmdsConfig set m m d s configuration pre boot only.
 	PutMmdsConfig(params *PutMmdsConfigParams, opts ...ClientOption) (*PutMmdsConfigNoContent, error)
 
+	// PutMmdsConfigContext set m m d s configuration pre boot only.
+	PutMmdsConfigContext(ctx context.Context, params *PutMmdsConfigParams, opts ...ClientOption) (*PutMmdsConfigNoContent, error)
+
+	// PutSerialDevice configures the serial console.
 	PutSerialDevice(params *PutSerialDeviceParams, opts ...ClientOption) (*PutSerialDeviceNoContent, error)
 
+	// PutSerialDeviceContext configures the serial console.
+	PutSerialDeviceContext(ctx context.Context, params *PutSerialDeviceParams, opts ...ClientOption) (*PutSerialDeviceNoContent, error)
+
+	// ResumeBalloonReporting resumes free page reporting only if enabled pre boot.
 	ResumeBalloonReporting(params *ResumeBalloonReportingParams, opts ...ClientOption) (*ResumeBalloonReportingOK, error)
 
+	// ResumeBalloonReportingContext resumes free page reporting only if enabled pre boot.
+	ResumeBalloonReportingContext(ctx context.Context, params *ResumeBalloonReportingParams, opts ...ClientOption) (*ResumeBalloonReportingOK, error)
+
+	// StartBalloonHinting starts a free page hinting run only if enabled pre boot.
 	StartBalloonHinting(params *StartBalloonHintingParams, opts ...ClientOption) (*StartBalloonHintingOK, error)
 
+	// StartBalloonHintingContext starts a free page hinting run only if enabled pre boot.
+	StartBalloonHintingContext(ctx context.Context, params *StartBalloonHintingParams, opts ...ClientOption) (*StartBalloonHintingOK, error)
+
+	// StopBalloonHinting stops a free page hinting run only if enabled pre boot.
 	StopBalloonHinting(params *StopBalloonHintingParams, opts ...ClientOption) (*StopBalloonHintingOK, error)
 
-	SetTransport(transport runtime.ClientTransport)
+	// StopBalloonHintingContext stops a free page hinting run only if enabled pre boot.
+	StopBalloonHintingContext(ctx context.Context, params *StopBalloonHintingParams, opts ...ClientOption) (*StopBalloonHintingOK, error)
+
+	SetTransport(transport runtime.ContextualTransport)
 }
 
-/*
-CreateSnapshot creates a full or diff snapshot post boot only
-
-Creates a snapshot of the microVM state. The microVM should be in the `Paused` state.
-*/
+// CreateSnapshot creates a full or diff snapshot post boot only.
+//
+// Creates a snapshot of the microVM state. The microVM should be in the `Paused` state..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.CreateSnapshotContext] instead.
 func (a *Client) CreateSnapshot(params *CreateSnapshotParams, opts ...ClientOption) (*CreateSnapshotNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.CreateSnapshotContext(ctx, params, opts...)
+}
+
+// CreateSnapshotContext creates a full or diff snapshot post boot only.
+//
+// Creates a snapshot of the microVM state. The microVM should be in the `Paused` state..
+//
+// Do not use the deprecated [CreateSnapshotParams.Context] with this method: it would be ignored.
+func (a *Client) CreateSnapshotContext(ctx context.Context, params *CreateSnapshotParams, opts ...ClientOption) (*CreateSnapshotNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewCreateSnapshotParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "createSnapshot",
 		Method:             "PUT",
@@ -159,13 +355,14 @@ func (a *Client) CreateSnapshot(params *CreateSnapshotParams, opts ...ClientOpti
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &CreateSnapshotReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -184,14 +381,32 @@ func (a *Client) CreateSnapshot(params *CreateSnapshotParams, opts ...ClientOpti
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-CreateSyncAction creates a synchronous action
-*/
+// CreateSyncAction creates a synchronous action.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.CreateSyncActionContext] instead.
 func (a *Client) CreateSyncAction(params *CreateSyncActionParams, opts ...ClientOption) (*CreateSyncActionNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.CreateSyncActionContext(ctx, params, opts...)
+}
+
+// CreateSyncActionContext creates a synchronous action.
+//
+// Do not use the deprecated [CreateSyncActionParams.Context] with this method: it would be ignored.
+func (a *Client) CreateSyncActionContext(ctx context.Context, params *CreateSyncActionParams, opts ...ClientOption) (*CreateSyncActionNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewCreateSyncActionParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "createSyncAction",
 		Method:             "PUT",
@@ -201,13 +416,14 @@ func (a *Client) CreateSyncAction(params *CreateSyncActionParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &CreateSyncActionReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -226,14 +442,32 @@ func (a *Client) CreateSyncAction(params *CreateSyncActionParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-DescribeBalloonConfig returns the current balloon device configuration
-*/
+// DescribeBalloonConfig returns the current balloon device configuration.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.DescribeBalloonConfigContext] instead.
 func (a *Client) DescribeBalloonConfig(params *DescribeBalloonConfigParams, opts ...ClientOption) (*DescribeBalloonConfigOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.DescribeBalloonConfigContext(ctx, params, opts...)
+}
+
+// DescribeBalloonConfigContext returns the current balloon device configuration.
+//
+// Do not use the deprecated [DescribeBalloonConfigParams.Context] with this method: it would be ignored.
+func (a *Client) DescribeBalloonConfigContext(ctx context.Context, params *DescribeBalloonConfigParams, opts ...ClientOption) (*DescribeBalloonConfigOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewDescribeBalloonConfigParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "describeBalloonConfig",
 		Method:             "GET",
@@ -243,13 +477,14 @@ func (a *Client) DescribeBalloonConfig(params *DescribeBalloonConfigParams, opts
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &DescribeBalloonConfigReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +503,32 @@ func (a *Client) DescribeBalloonConfig(params *DescribeBalloonConfigParams, opts
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-DescribeBalloonHinting returns the balloon hinting statistics only if enabled pre boot
-*/
+// DescribeBalloonHinting returns the balloon hinting statistics only if enabled pre boot.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.DescribeBalloonHintingContext] instead.
 func (a *Client) DescribeBalloonHinting(params *DescribeBalloonHintingParams, opts ...ClientOption) (*DescribeBalloonHintingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.DescribeBalloonHintingContext(ctx, params, opts...)
+}
+
+// DescribeBalloonHintingContext returns the balloon hinting statistics only if enabled pre boot.
+//
+// Do not use the deprecated [DescribeBalloonHintingParams.Context] with this method: it would be ignored.
+func (a *Client) DescribeBalloonHintingContext(ctx context.Context, params *DescribeBalloonHintingParams, opts ...ClientOption) (*DescribeBalloonHintingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewDescribeBalloonHintingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "describeBalloonHinting",
 		Method:             "GET",
@@ -285,13 +538,14 @@ func (a *Client) DescribeBalloonHinting(params *DescribeBalloonHintingParams, op
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &DescribeBalloonHintingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -310,14 +564,32 @@ func (a *Client) DescribeBalloonHinting(params *DescribeBalloonHintingParams, op
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-DescribeBalloonReporting returns whether free page reporting is paused only if enabled pre boot
-*/
+// DescribeBalloonReporting returns whether free page reporting is paused only if enabled pre boot.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.DescribeBalloonReportingContext] instead.
 func (a *Client) DescribeBalloonReporting(params *DescribeBalloonReportingParams, opts ...ClientOption) (*DescribeBalloonReportingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.DescribeBalloonReportingContext(ctx, params, opts...)
+}
+
+// DescribeBalloonReportingContext returns whether free page reporting is paused only if enabled pre boot.
+//
+// Do not use the deprecated [DescribeBalloonReportingParams.Context] with this method: it would be ignored.
+func (a *Client) DescribeBalloonReportingContext(ctx context.Context, params *DescribeBalloonReportingParams, opts ...ClientOption) (*DescribeBalloonReportingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewDescribeBalloonReportingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "describeBalloonReporting",
 		Method:             "GET",
@@ -327,13 +599,14 @@ func (a *Client) DescribeBalloonReporting(params *DescribeBalloonReportingParams
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &DescribeBalloonReportingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -352,14 +625,32 @@ func (a *Client) DescribeBalloonReporting(params *DescribeBalloonReportingParams
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-DescribeBalloonStats returns the latest balloon device statistics only if enabled pre boot
-*/
+// DescribeBalloonStats returns the latest balloon device statistics only if enabled pre boot.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.DescribeBalloonStatsContext] instead.
 func (a *Client) DescribeBalloonStats(params *DescribeBalloonStatsParams, opts ...ClientOption) (*DescribeBalloonStatsOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.DescribeBalloonStatsContext(ctx, params, opts...)
+}
+
+// DescribeBalloonStatsContext returns the latest balloon device statistics only if enabled pre boot.
+//
+// Do not use the deprecated [DescribeBalloonStatsParams.Context] with this method: it would be ignored.
+func (a *Client) DescribeBalloonStatsContext(ctx context.Context, params *DescribeBalloonStatsParams, opts ...ClientOption) (*DescribeBalloonStatsOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewDescribeBalloonStatsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "describeBalloonStats",
 		Method:             "GET",
@@ -369,13 +660,14 @@ func (a *Client) DescribeBalloonStats(params *DescribeBalloonStatsParams, opts .
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &DescribeBalloonStatsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -394,14 +686,32 @@ func (a *Client) DescribeBalloonStats(params *DescribeBalloonStatsParams, opts .
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-DescribeInstance returns general information about an instance
-*/
+// DescribeInstance returns general information about an instance.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.DescribeInstanceContext] instead.
 func (a *Client) DescribeInstance(params *DescribeInstanceParams, opts ...ClientOption) (*DescribeInstanceOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.DescribeInstanceContext(ctx, params, opts...)
+}
+
+// DescribeInstanceContext returns general information about an instance.
+//
+// Do not use the deprecated [DescribeInstanceParams.Context] with this method: it would be ignored.
+func (a *Client) DescribeInstanceContext(ctx context.Context, params *DescribeInstanceParams, opts ...ClientOption) (*DescribeInstanceOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewDescribeInstanceParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "describeInstance",
 		Method:             "GET",
@@ -411,13 +721,14 @@ func (a *Client) DescribeInstance(params *DescribeInstanceParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &DescribeInstanceReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -436,16 +747,36 @@ func (a *Client) DescribeInstance(params *DescribeInstanceParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetDirtyMemory gets the dirty pages bitmap for guest memory
-
-Returns a bitmap of dirty pages (pages written to since write-protection was enabled). The bitmap is encoded as a vector of u64 values where each bit represents one guest page. Pages are ordered following the order of memory regions as reported by /memory/mappings. The microVM must be paused before calling this endpoint.
-*/
+// GetDirtyMemory gets the dirty pages bitmap for guest memory.
+//
+// Returns a bitmap of dirty pages (pages written to since write-protection was enabled). The bitmap is encoded as a vector of u64 values where each bit represents one guest page. Pages are ordered following the order of memory regions as reported by /memory/mappings. The microVM must be paused before calling this endpoint..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetDirtyMemoryContext] instead.
 func (a *Client) GetDirtyMemory(params *GetDirtyMemoryParams, opts ...ClientOption) (*GetDirtyMemoryOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetDirtyMemoryContext(ctx, params, opts...)
+}
+
+// GetDirtyMemoryContext gets the dirty pages bitmap for guest memory.
+//
+// Returns a bitmap of dirty pages (pages written to since write-protection was enabled). The bitmap is encoded as a vector of u64 values where each bit represents one guest page. Pages are ordered following the order of memory regions as reported by /memory/mappings. The microVM must be paused before calling this endpoint..
+//
+// Do not use the deprecated [GetDirtyMemoryParams.Context] with this method: it would be ignored.
+func (a *Client) GetDirtyMemoryContext(ctx context.Context, params *GetDirtyMemoryParams, opts ...ClientOption) (*GetDirtyMemoryOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetDirtyMemoryParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getDirtyMemory",
 		Method:             "GET",
@@ -455,13 +786,14 @@ func (a *Client) GetDirtyMemory(params *GetDirtyMemoryParams, opts ...ClientOpti
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetDirtyMemoryReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -480,16 +812,36 @@ func (a *Client) GetDirtyMemory(params *GetDirtyMemoryParams, opts ...ClientOpti
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetExportVMConfig gets the full VM configuration
-
-Gets configuration for all VM resources. If the VM is restored from a snapshot, the boot-source, machine-config.smt and machine-config.cpu_template will be empty.
-*/
+// GetExportVMConfig gets the full VM configuration.
+//
+// Gets configuration for all VM resources. If the VM is restored from a snapshot, the boot-source, machine-config.smt and machine-config.cpu_template will be empty..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetExportVMConfigContext] instead.
 func (a *Client) GetExportVMConfig(params *GetExportVMConfigParams, opts ...ClientOption) (*GetExportVMConfigOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetExportVMConfigContext(ctx, params, opts...)
+}
+
+// GetExportVMConfigContext gets the full VM configuration.
+//
+// Gets configuration for all VM resources. If the VM is restored from a snapshot, the boot-source, machine-config.smt and machine-config.cpu_template will be empty..
+//
+// Do not use the deprecated [GetExportVMConfigParams.Context] with this method: it would be ignored.
+func (a *Client) GetExportVMConfigContext(ctx context.Context, params *GetExportVMConfigParams, opts ...ClientOption) (*GetExportVMConfigOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetExportVMConfigParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getExportVmConfig",
 		Method:             "GET",
@@ -499,13 +851,14 @@ func (a *Client) GetExportVMConfig(params *GetExportVMConfigParams, opts ...Clie
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetExportVMConfigReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -524,14 +877,32 @@ func (a *Client) GetExportVMConfig(params *GetExportVMConfigParams, opts ...Clie
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetFirecrackerVersion gets the firecracker version
-*/
+// GetFirecrackerVersion gets the firecracker version.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetFirecrackerVersionContext] instead.
 func (a *Client) GetFirecrackerVersion(params *GetFirecrackerVersionParams, opts ...ClientOption) (*GetFirecrackerVersionOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetFirecrackerVersionContext(ctx, params, opts...)
+}
+
+// GetFirecrackerVersionContext gets the firecracker version.
+//
+// Do not use the deprecated [GetFirecrackerVersionParams.Context] with this method: it would be ignored.
+func (a *Client) GetFirecrackerVersionContext(ctx context.Context, params *GetFirecrackerVersionParams, opts ...ClientOption) (*GetFirecrackerVersionOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetFirecrackerVersionParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getFirecrackerVersion",
 		Method:             "GET",
@@ -541,13 +912,14 @@ func (a *Client) GetFirecrackerVersion(params *GetFirecrackerVersionParams, opts
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetFirecrackerVersionReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -566,16 +938,36 @@ func (a *Client) GetFirecrackerVersion(params *GetFirecrackerVersionParams, opts
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetMachineConfiguration gets the machine configuration of the VM
-
-Gets the machine configuration of the VM. When called before the PUT operation, it will return the default values for the vCPU count (=1), memory size (=128 MiB). By default SMT is disabled and there is no CPU Template.
-*/
+// GetMachineConfiguration gets the machine configuration of the VM.
+//
+// Gets the machine configuration of the VM. When called before the PUT operation, it will return the default values for the vCPU count (=1), memory size (=128 MiB). By default SMT is disabled and there is no CPU Template..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetMachineConfigurationContext] instead.
 func (a *Client) GetMachineConfiguration(params *GetMachineConfigurationParams, opts ...ClientOption) (*GetMachineConfigurationOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetMachineConfigurationContext(ctx, params, opts...)
+}
+
+// GetMachineConfigurationContext gets the machine configuration of the VM.
+//
+// Gets the machine configuration of the VM. When called before the PUT operation, it will return the default values for the vCPU count (=1), memory size (=128 MiB). By default SMT is disabled and there is no CPU Template..
+//
+// Do not use the deprecated [GetMachineConfigurationParams.Context] with this method: it would be ignored.
+func (a *Client) GetMachineConfigurationContext(ctx context.Context, params *GetMachineConfigurationParams, opts ...ClientOption) (*GetMachineConfigurationOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetMachineConfigurationParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getMachineConfiguration",
 		Method:             "GET",
@@ -585,13 +977,14 @@ func (a *Client) GetMachineConfiguration(params *GetMachineConfigurationParams, 
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetMachineConfigurationReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -610,16 +1003,36 @@ func (a *Client) GetMachineConfiguration(params *GetMachineConfigurationParams, 
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetMemory gets the memory info resident and empty pages
-
-Returns an object with resident and empty bitmaps. The resident bitmap marks all pages that are resident. The empty bitmap marks zero pages (subset of resident pages). This is checked at the pageSize of each region. All regions must have the same page size.
-*/
+// GetMemory gets the memory info resident and empty pages.
+//
+// Returns an object with resident and empty bitmaps. The resident bitmap marks all pages that are resident. The empty bitmap marks zero pages (subset of resident pages). This is checked at the pageSize of each region. All regions must have the same page size..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetMemoryContext] instead.
 func (a *Client) GetMemory(params *GetMemoryParams, opts ...ClientOption) (*GetMemoryOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetMemoryContext(ctx, params, opts...)
+}
+
+// GetMemoryContext gets the memory info resident and empty pages.
+//
+// Returns an object with resident and empty bitmaps. The resident bitmap marks all pages that are resident. The empty bitmap marks zero pages (subset of resident pages). This is checked at the pageSize of each region. All regions must have the same page size..
+//
+// Do not use the deprecated [GetMemoryParams.Context] with this method: it would be ignored.
+func (a *Client) GetMemoryContext(ctx context.Context, params *GetMemoryParams, opts ...ClientOption) (*GetMemoryOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetMemoryParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getMemory",
 		Method:             "GET",
@@ -629,13 +1042,14 @@ func (a *Client) GetMemory(params *GetMemoryParams, opts ...ClientOption) (*GetM
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetMemoryReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -654,16 +1068,36 @@ func (a *Client) GetMemory(params *GetMemoryParams, opts ...ClientOption) (*GetM
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetMemoryHotplug retrieves the status of the hotpluggable memory
-
-Reuturn the status of the hotpluggable memory. This can be used to follow the progress of the guest after a PATCH API.
-*/
+// GetMemoryHotplug retrieves the status of the hotpluggable memory.
+//
+// Reuturn the status of the hotpluggable memory. This can be used to follow the progress of the guest after a PATCH API..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetMemoryHotplugContext] instead.
 func (a *Client) GetMemoryHotplug(params *GetMemoryHotplugParams, opts ...ClientOption) (*GetMemoryHotplugOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetMemoryHotplugContext(ctx, params, opts...)
+}
+
+// GetMemoryHotplugContext retrieves the status of the hotpluggable memory.
+//
+// Reuturn the status of the hotpluggable memory. This can be used to follow the progress of the guest after a PATCH API..
+//
+// Do not use the deprecated [GetMemoryHotplugParams.Context] with this method: it would be ignored.
+func (a *Client) GetMemoryHotplugContext(ctx context.Context, params *GetMemoryHotplugParams, opts ...ClientOption) (*GetMemoryHotplugOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetMemoryHotplugParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getMemoryHotplug",
 		Method:             "GET",
@@ -673,13 +1107,14 @@ func (a *Client) GetMemoryHotplug(params *GetMemoryHotplugParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetMemoryHotplugReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -698,14 +1133,32 @@ func (a *Client) GetMemoryHotplug(params *GetMemoryHotplugParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetMemoryMappings gets the memory mappings with skippable pages bitmap
-*/
+// GetMemoryMappings gets the memory mappings with skippable pages bitmap.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetMemoryMappingsContext] instead.
 func (a *Client) GetMemoryMappings(params *GetMemoryMappingsParams, opts ...ClientOption) (*GetMemoryMappingsOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetMemoryMappingsContext(ctx, params, opts...)
+}
+
+// GetMemoryMappingsContext gets the memory mappings with skippable pages bitmap.
+//
+// Do not use the deprecated [GetMemoryMappingsParams.Context] with this method: it would be ignored.
+func (a *Client) GetMemoryMappingsContext(ctx context.Context, params *GetMemoryMappingsParams, opts ...ClientOption) (*GetMemoryMappingsOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetMemoryMappingsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getMemoryMappings",
 		Method:             "GET",
@@ -715,13 +1168,14 @@ func (a *Client) GetMemoryMappings(params *GetMemoryMappingsParams, opts ...Clie
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetMemoryMappingsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -740,14 +1194,32 @@ func (a *Client) GetMemoryMappings(params *GetMemoryMappingsParams, opts ...Clie
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-GetMmds gets the m m d s data store
-*/
+// GetMmds gets the m m d s data store.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.GetMmdsContext] instead.
 func (a *Client) GetMmds(params *GetMmdsParams, opts ...ClientOption) (*GetMmdsOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.GetMmdsContext(ctx, params, opts...)
+}
+
+// GetMmdsContext gets the m m d s data store.
+//
+// Do not use the deprecated [GetMmdsParams.Context] with this method: it would be ignored.
+func (a *Client) GetMmdsContext(ctx context.Context, params *GetMmdsParams, opts ...ClientOption) (*GetMmdsOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewGetMmdsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "getMmds",
 		Method:             "GET",
@@ -757,13 +1229,14 @@ func (a *Client) GetMmds(params *GetMmdsParams, opts ...ClientOption) (*GetMmdsO
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &GetMmdsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -782,16 +1255,36 @@ func (a *Client) GetMmds(params *GetMmdsParams, opts ...ClientOption) (*GetMmdsO
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-LoadSnapshot loads a snapshot pre boot only
-
-Loads the microVM state from a snapshot. Only accepted on a fresh Firecracker process (before configuring any resource other than the Logger and Metrics).
-*/
+// LoadSnapshot loads a snapshot pre boot only.
+//
+// Loads the microVM state from a snapshot. Only accepted on a fresh Firecracker process (before configuring any resource other than the Logger and Metrics)..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.LoadSnapshotContext] instead.
 func (a *Client) LoadSnapshot(params *LoadSnapshotParams, opts ...ClientOption) (*LoadSnapshotNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.LoadSnapshotContext(ctx, params, opts...)
+}
+
+// LoadSnapshotContext loads a snapshot pre boot only.
+//
+// Loads the microVM state from a snapshot. Only accepted on a fresh Firecracker process (before configuring any resource other than the Logger and Metrics)..
+//
+// Do not use the deprecated [LoadSnapshotParams.Context] with this method: it would be ignored.
+func (a *Client) LoadSnapshotContext(ctx context.Context, params *LoadSnapshotParams, opts ...ClientOption) (*LoadSnapshotNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewLoadSnapshotParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "loadSnapshot",
 		Method:             "PUT",
@@ -801,13 +1294,14 @@ func (a *Client) LoadSnapshot(params *LoadSnapshotParams, opts ...ClientOption) 
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &LoadSnapshotReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -826,16 +1320,36 @@ func (a *Client) LoadSnapshot(params *LoadSnapshotParams, opts ...ClientOption) 
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchBalloon updates a balloon device
-
-Updates an existing balloon device, before or after machine startup. Will fail if update is not possible.
-*/
+// PatchBalloon updates a balloon device.
+//
+// Updates an existing balloon device, before or after machine startup. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchBalloonContext] instead.
 func (a *Client) PatchBalloon(params *PatchBalloonParams, opts ...ClientOption) (*PatchBalloonNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchBalloonContext(ctx, params, opts...)
+}
+
+// PatchBalloonContext updates a balloon device.
+//
+// Updates an existing balloon device, before or after machine startup. Will fail if update is not possible..
+//
+// Do not use the deprecated [PatchBalloonParams.Context] with this method: it would be ignored.
+func (a *Client) PatchBalloonContext(ctx context.Context, params *PatchBalloonParams, opts ...ClientOption) (*PatchBalloonNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchBalloonParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchBalloon",
 		Method:             "PATCH",
@@ -845,13 +1359,14 @@ func (a *Client) PatchBalloon(params *PatchBalloonParams, opts ...ClientOption) 
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchBalloonReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -870,16 +1385,36 @@ func (a *Client) PatchBalloon(params *PatchBalloonParams, opts ...ClientOption) 
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchBalloonStatsInterval updates a balloon device statistics polling interval
-
-Updates an existing balloon device statistics interval, before or after machine startup. Will fail if update is not possible.
-*/
+// PatchBalloonStatsInterval updates a balloon device statistics polling interval.
+//
+// Updates an existing balloon device statistics interval, before or after machine startup. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchBalloonStatsIntervalContext] instead.
 func (a *Client) PatchBalloonStatsInterval(params *PatchBalloonStatsIntervalParams, opts ...ClientOption) (*PatchBalloonStatsIntervalNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchBalloonStatsIntervalContext(ctx, params, opts...)
+}
+
+// PatchBalloonStatsIntervalContext updates a balloon device statistics polling interval.
+//
+// Updates an existing balloon device statistics interval, before or after machine startup. Will fail if update is not possible..
+//
+// Do not use the deprecated [PatchBalloonStatsIntervalParams.Context] with this method: it would be ignored.
+func (a *Client) PatchBalloonStatsIntervalContext(ctx context.Context, params *PatchBalloonStatsIntervalParams, opts ...ClientOption) (*PatchBalloonStatsIntervalNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchBalloonStatsIntervalParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchBalloonStatsInterval",
 		Method:             "PATCH",
@@ -889,13 +1424,14 @@ func (a *Client) PatchBalloonStatsInterval(params *PatchBalloonStatsIntervalPara
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchBalloonStatsIntervalReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -914,16 +1450,36 @@ func (a *Client) PatchBalloonStatsInterval(params *PatchBalloonStatsIntervalPara
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchGuestDriveByID updates the properties of a drive post boot only
-
-Updates the properties of the drive with the ID specified by drive_id path parameter. Will fail if update is not possible.
-*/
+// PatchGuestDriveByID updates the properties of a drive post boot only.
+//
+// Updates the properties of the drive with the ID specified by drive_id path parameter. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchGuestDriveByIDContext] instead.
 func (a *Client) PatchGuestDriveByID(params *PatchGuestDriveByIDParams, opts ...ClientOption) (*PatchGuestDriveByIDNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchGuestDriveByIDContext(ctx, params, opts...)
+}
+
+// PatchGuestDriveByIDContext updates the properties of a drive post boot only.
+//
+// Updates the properties of the drive with the ID specified by drive_id path parameter. Will fail if update is not possible..
+//
+// Do not use the deprecated [PatchGuestDriveByIDParams.Context] with this method: it would be ignored.
+func (a *Client) PatchGuestDriveByIDContext(ctx context.Context, params *PatchGuestDriveByIDParams, opts ...ClientOption) (*PatchGuestDriveByIDNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchGuestDriveByIDParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchGuestDriveByID",
 		Method:             "PATCH",
@@ -933,13 +1489,14 @@ func (a *Client) PatchGuestDriveByID(params *PatchGuestDriveByIDParams, opts ...
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchGuestDriveByIDReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -958,16 +1515,36 @@ func (a *Client) PatchGuestDriveByID(params *PatchGuestDriveByIDParams, opts ...
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchGuestNetworkInterfaceByID updates the rate limiters applied to a network interface post boot only
-
-Updates the rate limiters applied to a network interface.
-*/
+// PatchGuestNetworkInterfaceByID updates the rate limiters applied to a network interface post boot only.
+//
+// Updates the rate limiters applied to a network interface..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchGuestNetworkInterfaceByIDContext] instead.
 func (a *Client) PatchGuestNetworkInterfaceByID(params *PatchGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PatchGuestNetworkInterfaceByIDNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchGuestNetworkInterfaceByIDContext(ctx, params, opts...)
+}
+
+// PatchGuestNetworkInterfaceByIDContext updates the rate limiters applied to a network interface post boot only.
+//
+// Updates the rate limiters applied to a network interface..
+//
+// Do not use the deprecated [PatchGuestNetworkInterfaceByIDParams.Context] with this method: it would be ignored.
+func (a *Client) PatchGuestNetworkInterfaceByIDContext(ctx context.Context, params *PatchGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PatchGuestNetworkInterfaceByIDNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchGuestNetworkInterfaceByIDParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchGuestNetworkInterfaceByID",
 		Method:             "PATCH",
@@ -977,13 +1554,14 @@ func (a *Client) PatchGuestNetworkInterfaceByID(params *PatchGuestNetworkInterfa
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchGuestNetworkInterfaceByIDReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1002,16 +1580,36 @@ func (a *Client) PatchGuestNetworkInterfaceByID(params *PatchGuestNetworkInterfa
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchMachineConfiguration partiallies updates the machine configuration of the VM pre boot only
-
-Partially updates the Virtual Machine Configuration with the specified input. If any of the parameters has an incorrect value, the whole update fails.
-*/
+// PatchMachineConfiguration partiallies updates the machine configuration of the VM pre boot only.
+//
+// Partially updates the Virtual Machine Configuration with the specified input. If any of the parameters has an incorrect value, the whole update fails..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchMachineConfigurationContext] instead.
 func (a *Client) PatchMachineConfiguration(params *PatchMachineConfigurationParams, opts ...ClientOption) (*PatchMachineConfigurationNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchMachineConfigurationContext(ctx, params, opts...)
+}
+
+// PatchMachineConfigurationContext partiallies updates the machine configuration of the VM pre boot only.
+//
+// Partially updates the Virtual Machine Configuration with the specified input. If any of the parameters has an incorrect value, the whole update fails..
+//
+// Do not use the deprecated [PatchMachineConfigurationParams.Context] with this method: it would be ignored.
+func (a *Client) PatchMachineConfigurationContext(ctx context.Context, params *PatchMachineConfigurationParams, opts ...ClientOption) (*PatchMachineConfigurationNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchMachineConfigurationParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchMachineConfiguration",
 		Method:             "PATCH",
@@ -1021,13 +1619,14 @@ func (a *Client) PatchMachineConfiguration(params *PatchMachineConfigurationPara
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchMachineConfigurationReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,16 +1645,36 @@ func (a *Client) PatchMachineConfiguration(params *PatchMachineConfigurationPara
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchMemoryHotplug updates the size of the hotpluggable memory region
-
-Updates the size of the hotpluggable memory region. The guest will plug and unplug memory to hit the requested memory.
-*/
+// PatchMemoryHotplug updates the size of the hotpluggable memory region.
+//
+// Updates the size of the hotpluggable memory region. The guest will plug and unplug memory to hit the requested memory..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchMemoryHotplugContext] instead.
 func (a *Client) PatchMemoryHotplug(params *PatchMemoryHotplugParams, opts ...ClientOption) (*PatchMemoryHotplugNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchMemoryHotplugContext(ctx, params, opts...)
+}
+
+// PatchMemoryHotplugContext updates the size of the hotpluggable memory region.
+//
+// Updates the size of the hotpluggable memory region. The guest will plug and unplug memory to hit the requested memory..
+//
+// Do not use the deprecated [PatchMemoryHotplugParams.Context] with this method: it would be ignored.
+func (a *Client) PatchMemoryHotplugContext(ctx context.Context, params *PatchMemoryHotplugParams, opts ...ClientOption) (*PatchMemoryHotplugNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchMemoryHotplugParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchMemoryHotplug",
 		Method:             "PATCH",
@@ -1065,13 +1684,14 @@ func (a *Client) PatchMemoryHotplug(params *PatchMemoryHotplugParams, opts ...Cl
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchMemoryHotplugReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1090,14 +1710,32 @@ func (a *Client) PatchMemoryHotplug(params *PatchMemoryHotplugParams, opts ...Cl
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchMmds updates the m m d s data store
-*/
+// PatchMmds updates the m m d s data store.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchMmdsContext] instead.
 func (a *Client) PatchMmds(params *PatchMmdsParams, opts ...ClientOption) (*PatchMmdsNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchMmdsContext(ctx, params, opts...)
+}
+
+// PatchMmdsContext updates the m m d s data store.
+//
+// Do not use the deprecated [PatchMmdsParams.Context] with this method: it would be ignored.
+func (a *Client) PatchMmdsContext(ctx context.Context, params *PatchMmdsParams, opts ...ClientOption) (*PatchMmdsNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchMmdsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchMmds",
 		Method:             "PATCH",
@@ -1107,13 +1745,14 @@ func (a *Client) PatchMmds(params *PatchMmdsParams, opts ...ClientOption) (*Patc
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchMmdsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,16 +1771,36 @@ func (a *Client) PatchMmds(params *PatchMmdsParams, opts ...ClientOption) (*Patc
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PatchVM updates the micro VM state
-
-Sets the desired state (Paused or Resumed) for the microVM.
-*/
+// PatchVM updates the micro VM state.
+//
+// Sets the desired state (Paused or Resumed) for the microVM..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PatchVMContext] instead.
 func (a *Client) PatchVM(params *PatchVMParams, opts ...ClientOption) (*PatchVMNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PatchVMContext(ctx, params, opts...)
+}
+
+// PatchVMContext updates the micro VM state.
+//
+// Sets the desired state (Paused or Resumed) for the microVM..
+//
+// Do not use the deprecated [PatchVMParams.Context] with this method: it would be ignored.
+func (a *Client) PatchVMContext(ctx context.Context, params *PatchVMParams, opts ...ClientOption) (*PatchVMNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPatchVMParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "patchVm",
 		Method:             "PATCH",
@@ -1151,13 +1810,14 @@ func (a *Client) PatchVM(params *PatchVMParams, opts ...ClientOption) (*PatchVMN
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PatchVMReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1176,16 +1836,36 @@ func (a *Client) PatchVM(params *PatchVMParams, opts ...ClientOption) (*PatchVMN
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PauseBalloonReporting pauses free page reporting only if enabled pre boot
-
-Defers all free-page-reporting discards until resumed. Reported pages stay queued in the reporting virtqueue, unacknowledged; the guest driver holds them isolated until the acknowledgement, so no guest memory is discarded while paused. Idempotent.
-*/
+// PauseBalloonReporting pauses free page reporting only if enabled pre boot.
+//
+// Defers all free-page-reporting discards until resumed. Reported pages stay queued in the reporting virtqueue, unacknowledged; the guest driver holds them isolated until the acknowledgement, so no guest memory is discarded while paused. Idempotent..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PauseBalloonReportingContext] instead.
 func (a *Client) PauseBalloonReporting(params *PauseBalloonReportingParams, opts ...ClientOption) (*PauseBalloonReportingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PauseBalloonReportingContext(ctx, params, opts...)
+}
+
+// PauseBalloonReportingContext pauses free page reporting only if enabled pre boot.
+//
+// Defers all free-page-reporting discards until resumed. Reported pages stay queued in the reporting virtqueue, unacknowledged; the guest driver holds them isolated until the acknowledgement, so no guest memory is discarded while paused. Idempotent..
+//
+// Do not use the deprecated [PauseBalloonReportingParams.Context] with this method: it would be ignored.
+func (a *Client) PauseBalloonReportingContext(ctx context.Context, params *PauseBalloonReportingParams, opts ...ClientOption) (*PauseBalloonReportingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPauseBalloonReportingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "pauseBalloonReporting",
 		Method:             "PATCH",
@@ -1195,13 +1875,14 @@ func (a *Client) PauseBalloonReporting(params *PauseBalloonReportingParams, opts
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PauseBalloonReportingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1220,16 +1901,36 @@ func (a *Client) PauseBalloonReporting(params *PauseBalloonReportingParams, opts
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutBalloon creates or updates a balloon device
-
-Creates a new balloon device if one does not already exist, otherwise updates it, before machine startup. This will fail after machine startup. Will fail if update is not possible.
-*/
+// PutBalloon creates or updates a balloon device.
+//
+// Creates a new balloon device if one does not already exist, otherwise updates it, before machine startup. This will fail after machine startup. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutBalloonContext] instead.
 func (a *Client) PutBalloon(params *PutBalloonParams, opts ...ClientOption) (*PutBalloonNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutBalloonContext(ctx, params, opts...)
+}
+
+// PutBalloonContext creates or updates a balloon device.
+//
+// Creates a new balloon device if one does not already exist, otherwise updates it, before machine startup. This will fail after machine startup. Will fail if update is not possible..
+//
+// Do not use the deprecated [PutBalloonParams.Context] with this method: it would be ignored.
+func (a *Client) PutBalloonContext(ctx context.Context, params *PutBalloonParams, opts ...ClientOption) (*PutBalloonNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutBalloonParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putBalloon",
 		Method:             "PUT",
@@ -1239,13 +1940,14 @@ func (a *Client) PutBalloon(params *PutBalloonParams, opts ...ClientOption) (*Pu
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutBalloonReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1264,16 +1966,36 @@ func (a *Client) PutBalloon(params *PutBalloonParams, opts ...ClientOption) (*Pu
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutCPUConfiguration configures CPU features flags for the v CPUs of the guest VM pre boot only
-
-Provides configuration to the Firecracker process to specify vCPU resource configuration prior to launching the guest machine.
-*/
+// PutCPUConfiguration configures CPU features flags for the v CPUs of the guest VM pre boot only.
+//
+// Provides configuration to the Firecracker process to specify vCPU resource configuration prior to launching the guest machine..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutCPUConfigurationContext] instead.
 func (a *Client) PutCPUConfiguration(params *PutCPUConfigurationParams, opts ...ClientOption) (*PutCPUConfigurationNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutCPUConfigurationContext(ctx, params, opts...)
+}
+
+// PutCPUConfigurationContext configures CPU features flags for the v CPUs of the guest VM pre boot only.
+//
+// Provides configuration to the Firecracker process to specify vCPU resource configuration prior to launching the guest machine..
+//
+// Do not use the deprecated [PutCPUConfigurationParams.Context] with this method: it would be ignored.
+func (a *Client) PutCPUConfigurationContext(ctx context.Context, params *PutCPUConfigurationParams, opts ...ClientOption) (*PutCPUConfigurationNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutCPUConfigurationParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putCpuConfiguration",
 		Method:             "PUT",
@@ -1283,13 +2005,14 @@ func (a *Client) PutCPUConfiguration(params *PutCPUConfigurationParams, opts ...
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutCPUConfigurationReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,16 +2031,36 @@ func (a *Client) PutCPUConfiguration(params *PutCPUConfigurationParams, opts ...
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutEntropyDevice creates an entropy device pre boot only
-
-Enables an entropy device that provides high-quality random data to the guest.
-*/
+// PutEntropyDevice creates an entropy device pre boot only.
+//
+// Enables an entropy device that provides high-quality random data to the guest..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutEntropyDeviceContext] instead.
 func (a *Client) PutEntropyDevice(params *PutEntropyDeviceParams, opts ...ClientOption) (*PutEntropyDeviceNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutEntropyDeviceContext(ctx, params, opts...)
+}
+
+// PutEntropyDeviceContext creates an entropy device pre boot only.
+//
+// Enables an entropy device that provides high-quality random data to the guest..
+//
+// Do not use the deprecated [PutEntropyDeviceParams.Context] with this method: it would be ignored.
+func (a *Client) PutEntropyDeviceContext(ctx context.Context, params *PutEntropyDeviceParams, opts ...ClientOption) (*PutEntropyDeviceNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutEntropyDeviceParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putEntropyDevice",
 		Method:             "PUT",
@@ -1327,13 +2070,14 @@ func (a *Client) PutEntropyDevice(params *PutEntropyDeviceParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutEntropyDeviceReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1352,16 +2096,36 @@ func (a *Client) PutEntropyDevice(params *PutEntropyDeviceParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutGuestBootSource creates or updates the boot source pre boot only
-
-Creates new boot source if one does not already exist, otherwise updates it. Will fail if update is not possible.
-*/
+// PutGuestBootSource creates or updates the boot source pre boot only.
+//
+// Creates new boot source if one does not already exist, otherwise updates it. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutGuestBootSourceContext] instead.
 func (a *Client) PutGuestBootSource(params *PutGuestBootSourceParams, opts ...ClientOption) (*PutGuestBootSourceNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutGuestBootSourceContext(ctx, params, opts...)
+}
+
+// PutGuestBootSourceContext creates or updates the boot source pre boot only.
+//
+// Creates new boot source if one does not already exist, otherwise updates it. Will fail if update is not possible..
+//
+// Do not use the deprecated [PutGuestBootSourceParams.Context] with this method: it would be ignored.
+func (a *Client) PutGuestBootSourceContext(ctx context.Context, params *PutGuestBootSourceParams, opts ...ClientOption) (*PutGuestBootSourceNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutGuestBootSourceParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putGuestBootSource",
 		Method:             "PUT",
@@ -1371,13 +2135,14 @@ func (a *Client) PutGuestBootSource(params *PutGuestBootSourceParams, opts ...Cl
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutGuestBootSourceReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1396,16 +2161,36 @@ func (a *Client) PutGuestBootSource(params *PutGuestBootSourceParams, opts ...Cl
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutGuestDriveByID creates or updates a drive pre boot only
-
-Creates new drive with ID specified by drive_id path parameter. If a drive with the specified ID already exists, updates its state based on new input. Will fail if update is not possible.
-*/
+// PutGuestDriveByID creates or updates a drive pre boot only.
+//
+// Creates new drive with ID specified by drive_id path parameter. If a drive with the specified ID already exists, updates its state based on new input. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutGuestDriveByIDContext] instead.
 func (a *Client) PutGuestDriveByID(params *PutGuestDriveByIDParams, opts ...ClientOption) (*PutGuestDriveByIDNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutGuestDriveByIDContext(ctx, params, opts...)
+}
+
+// PutGuestDriveByIDContext creates or updates a drive pre boot only.
+//
+// Creates new drive with ID specified by drive_id path parameter. If a drive with the specified ID already exists, updates its state based on new input. Will fail if update is not possible..
+//
+// Do not use the deprecated [PutGuestDriveByIDParams.Context] with this method: it would be ignored.
+func (a *Client) PutGuestDriveByIDContext(ctx context.Context, params *PutGuestDriveByIDParams, opts ...ClientOption) (*PutGuestDriveByIDNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutGuestDriveByIDParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putGuestDriveByID",
 		Method:             "PUT",
@@ -1415,13 +2200,14 @@ func (a *Client) PutGuestDriveByID(params *PutGuestDriveByIDParams, opts ...Clie
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutGuestDriveByIDReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1440,16 +2226,36 @@ func (a *Client) PutGuestDriveByID(params *PutGuestDriveByIDParams, opts ...Clie
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutGuestNetworkInterfaceByID creates a network interface pre boot only
-
-Creates new network interface with ID specified by iface_id path parameter.
-*/
+// PutGuestNetworkInterfaceByID creates a network interface pre boot only.
+//
+// Creates new network interface with ID specified by iface_id path parameter..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutGuestNetworkInterfaceByIDContext] instead.
 func (a *Client) PutGuestNetworkInterfaceByID(params *PutGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PutGuestNetworkInterfaceByIDNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutGuestNetworkInterfaceByIDContext(ctx, params, opts...)
+}
+
+// PutGuestNetworkInterfaceByIDContext creates a network interface pre boot only.
+//
+// Creates new network interface with ID specified by iface_id path parameter..
+//
+// Do not use the deprecated [PutGuestNetworkInterfaceByIDParams.Context] with this method: it would be ignored.
+func (a *Client) PutGuestNetworkInterfaceByIDContext(ctx context.Context, params *PutGuestNetworkInterfaceByIDParams, opts ...ClientOption) (*PutGuestNetworkInterfaceByIDNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutGuestNetworkInterfaceByIDParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putGuestNetworkInterfaceByID",
 		Method:             "PUT",
@@ -1459,13 +2265,14 @@ func (a *Client) PutGuestNetworkInterfaceByID(params *PutGuestNetworkInterfaceBy
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutGuestNetworkInterfaceByIDReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1484,16 +2291,36 @@ func (a *Client) PutGuestNetworkInterfaceByID(params *PutGuestNetworkInterfaceBy
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutGuestPmemByID creates or updates a pmem device pre boot only
-
-Creates new pmem device with ID specified by id parameter. If a pmem device with the specified ID already exists, updates its state based on new input. Will fail if update is not possible.
-*/
+// PutGuestPmemByID creates or updates a pmem device pre boot only.
+//
+// Creates new pmem device with ID specified by id parameter. If a pmem device with the specified ID already exists, updates its state based on new input. Will fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutGuestPmemByIDContext] instead.
 func (a *Client) PutGuestPmemByID(params *PutGuestPmemByIDParams, opts ...ClientOption) (*PutGuestPmemByIDNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutGuestPmemByIDContext(ctx, params, opts...)
+}
+
+// PutGuestPmemByIDContext creates or updates a pmem device pre boot only.
+//
+// Creates new pmem device with ID specified by id parameter. If a pmem device with the specified ID already exists, updates its state based on new input. Will fail if update is not possible..
+//
+// Do not use the deprecated [PutGuestPmemByIDParams.Context] with this method: it would be ignored.
+func (a *Client) PutGuestPmemByIDContext(ctx context.Context, params *PutGuestPmemByIDParams, opts ...ClientOption) (*PutGuestPmemByIDNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutGuestPmemByIDParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putGuestPmemByID",
 		Method:             "PUT",
@@ -1503,13 +2330,14 @@ func (a *Client) PutGuestPmemByID(params *PutGuestPmemByIDParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutGuestPmemByIDReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1528,16 +2356,36 @@ func (a *Client) PutGuestPmemByID(params *PutGuestPmemByIDParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutGuestVsock creates updates a vsock device pre boot only
-
-The first call creates the device with the configuration specified in body. Subsequent calls will update the device configuration. May fail if update is not possible.
-*/
+// PutGuestVsock creates updates a vsock device pre boot only.
+//
+// The first call creates the device with the configuration specified in body. Subsequent calls will update the device configuration. May fail if update is not possible..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutGuestVsockContext] instead.
 func (a *Client) PutGuestVsock(params *PutGuestVsockParams, opts ...ClientOption) (*PutGuestVsockNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutGuestVsockContext(ctx, params, opts...)
+}
+
+// PutGuestVsockContext creates updates a vsock device pre boot only.
+//
+// The first call creates the device with the configuration specified in body. Subsequent calls will update the device configuration. May fail if update is not possible..
+//
+// Do not use the deprecated [PutGuestVsockParams.Context] with this method: it would be ignored.
+func (a *Client) PutGuestVsockContext(ctx context.Context, params *PutGuestVsockParams, opts ...ClientOption) (*PutGuestVsockNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutGuestVsockParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putGuestVsock",
 		Method:             "PUT",
@@ -1547,13 +2395,14 @@ func (a *Client) PutGuestVsock(params *PutGuestVsockParams, opts ...ClientOption
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutGuestVsockReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1572,14 +2421,32 @@ func (a *Client) PutGuestVsock(params *PutGuestVsockParams, opts ...ClientOption
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutLogger initializes the logger by specifying a named pipe or a file for the logs output
-*/
+// PutLogger initializes the logger by specifying a named pipe or a file for the logs output.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutLoggerContext] instead.
 func (a *Client) PutLogger(params *PutLoggerParams, opts ...ClientOption) (*PutLoggerNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutLoggerContext(ctx, params, opts...)
+}
+
+// PutLoggerContext initializes the logger by specifying a named pipe or a file for the logs output.
+//
+// Do not use the deprecated [PutLoggerParams.Context] with this method: it would be ignored.
+func (a *Client) PutLoggerContext(ctx context.Context, params *PutLoggerParams, opts ...ClientOption) (*PutLoggerNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutLoggerParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putLogger",
 		Method:             "PUT",
@@ -1589,13 +2456,14 @@ func (a *Client) PutLogger(params *PutLoggerParams, opts ...ClientOption) (*PutL
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutLoggerReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1614,16 +2482,36 @@ func (a *Client) PutLogger(params *PutLoggerParams, opts ...ClientOption) (*PutL
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutMachineConfiguration updates the machine configuration of the VM pre boot only
-
-Updates the Virtual Machine Configuration with the specified input. Firecracker starts with default values for vCPU count (=1) and memory size (=128 MiB). The vCPU count is restricted to the [1, 32] range. With SMT enabled, the vCPU count is required to be either 1 or an even number in the range. otherwise there are no restrictions regarding the vCPU count. If 2M hugetlbfs pages are specified, then `mem_size_mib` must be a multiple of 2. If any of the parameters has an incorrect value, the whole update fails. All parameters that are optional and are not specified are set to their default values (smt = false, track_dirty_pages = false, cpu_template = None, huge_pages = None).
-*/
+// PutMachineConfiguration updates the machine configuration of the VM pre boot only.
+//
+// Updates the Virtual Machine Configuration with the specified input. Firecracker starts with default values for vCPU count (=1) and memory size (=128 MiB). The vCPU count is restricted to the [1, 32] range. With SMT enabled, the vCPU count is required to be either 1 or an even number in the range. otherwise there are no restrictions regarding the vCPU count. If 2M hugetlbfs pages are specified, then `mem_size_mib` must be a multiple of 2. If any of the parameters has an incorrect value, the whole update fails. All parameters that are optional and are not specified are set to their default values (smt = false, track_dirty_pages = false, cpu_template = None, huge_pages = None)..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutMachineConfigurationContext] instead.
 func (a *Client) PutMachineConfiguration(params *PutMachineConfigurationParams, opts ...ClientOption) (*PutMachineConfigurationNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutMachineConfigurationContext(ctx, params, opts...)
+}
+
+// PutMachineConfigurationContext updates the machine configuration of the VM pre boot only.
+//
+// Updates the Virtual Machine Configuration with the specified input. Firecracker starts with default values for vCPU count (=1) and memory size (=128 MiB). The vCPU count is restricted to the [1, 32] range. With SMT enabled, the vCPU count is required to be either 1 or an even number in the range. otherwise there are no restrictions regarding the vCPU count. If 2M hugetlbfs pages are specified, then `mem_size_mib` must be a multiple of 2. If any of the parameters has an incorrect value, the whole update fails. All parameters that are optional and are not specified are set to their default values (smt = false, track_dirty_pages = false, cpu_template = None, huge_pages = None)..
+//
+// Do not use the deprecated [PutMachineConfigurationParams.Context] with this method: it would be ignored.
+func (a *Client) PutMachineConfigurationContext(ctx context.Context, params *PutMachineConfigurationParams, opts ...ClientOption) (*PutMachineConfigurationNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutMachineConfigurationParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putMachineConfiguration",
 		Method:             "PUT",
@@ -1633,13 +2521,14 @@ func (a *Client) PutMachineConfiguration(params *PutMachineConfigurationParams, 
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutMachineConfigurationReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1658,16 +2547,36 @@ func (a *Client) PutMachineConfiguration(params *PutMachineConfigurationParams, 
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutMemoryHotplug configures the hotpluggable memory
-
-Configure the hotpluggable memory, which is a virtio-mem device, with an associated memory area that can be hot(un)plugged in the guest on demand using the PATCH API.
-*/
+// PutMemoryHotplug configures the hotpluggable memory.
+//
+// Configure the hotpluggable memory, which is a virtio-mem device, with an associated memory area that can be hot(un)plugged in the guest on demand using the PATCH API..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutMemoryHotplugContext] instead.
 func (a *Client) PutMemoryHotplug(params *PutMemoryHotplugParams, opts ...ClientOption) (*PutMemoryHotplugNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutMemoryHotplugContext(ctx, params, opts...)
+}
+
+// PutMemoryHotplugContext configures the hotpluggable memory.
+//
+// Configure the hotpluggable memory, which is a virtio-mem device, with an associated memory area that can be hot(un)plugged in the guest on demand using the PATCH API..
+//
+// Do not use the deprecated [PutMemoryHotplugParams.Context] with this method: it would be ignored.
+func (a *Client) PutMemoryHotplugContext(ctx context.Context, params *PutMemoryHotplugParams, opts ...ClientOption) (*PutMemoryHotplugNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutMemoryHotplugParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putMemoryHotplug",
 		Method:             "PUT",
@@ -1677,13 +2586,14 @@ func (a *Client) PutMemoryHotplug(params *PutMemoryHotplugParams, opts ...Client
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutMemoryHotplugReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1702,14 +2612,32 @@ func (a *Client) PutMemoryHotplug(params *PutMemoryHotplugParams, opts ...Client
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutMetrics initializes the metrics system by specifying a named pipe or a file for the metrics output
-*/
+// PutMetrics initializes the metrics system by specifying a named pipe or a file for the metrics output.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutMetricsContext] instead.
 func (a *Client) PutMetrics(params *PutMetricsParams, opts ...ClientOption) (*PutMetricsNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutMetricsContext(ctx, params, opts...)
+}
+
+// PutMetricsContext initializes the metrics system by specifying a named pipe or a file for the metrics output.
+//
+// Do not use the deprecated [PutMetricsParams.Context] with this method: it would be ignored.
+func (a *Client) PutMetricsContext(ctx context.Context, params *PutMetricsParams, opts ...ClientOption) (*PutMetricsNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutMetricsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putMetrics",
 		Method:             "PUT",
@@ -1719,13 +2647,14 @@ func (a *Client) PutMetrics(params *PutMetricsParams, opts ...ClientOption) (*Pu
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutMetricsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1744,14 +2673,32 @@ func (a *Client) PutMetrics(params *PutMetricsParams, opts ...ClientOption) (*Pu
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutMmds creates a m m d s microvm metadata service data store
-*/
+// PutMmds creates a m m d s microvm metadata service data store.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutMmdsContext] instead.
 func (a *Client) PutMmds(params *PutMmdsParams, opts ...ClientOption) (*PutMmdsNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutMmdsContext(ctx, params, opts...)
+}
+
+// PutMmdsContext creates a m m d s microvm metadata service data store.
+//
+// Do not use the deprecated [PutMmdsParams.Context] with this method: it would be ignored.
+func (a *Client) PutMmdsContext(ctx context.Context, params *PutMmdsParams, opts ...ClientOption) (*PutMmdsNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutMmdsParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putMmds",
 		Method:             "PUT",
@@ -1761,13 +2708,14 @@ func (a *Client) PutMmds(params *PutMmdsParams, opts ...ClientOption) (*PutMmdsN
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutMmdsReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1786,16 +2734,36 @@ func (a *Client) PutMmds(params *PutMmdsParams, opts ...ClientOption) (*PutMmdsN
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutMmdsConfig sets m m d s configuration pre boot only
-
-Configures MMDS version, IPv4 address used by the MMDS network stack and interfaces that allow MMDS requests.
-*/
+// PutMmdsConfig sets m m d s configuration pre boot only.
+//
+// Configures MMDS version, IPv4 address used by the MMDS network stack and interfaces that allow MMDS requests..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutMmdsConfigContext] instead.
 func (a *Client) PutMmdsConfig(params *PutMmdsConfigParams, opts ...ClientOption) (*PutMmdsConfigNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutMmdsConfigContext(ctx, params, opts...)
+}
+
+// PutMmdsConfigContext sets m m d s configuration pre boot only.
+//
+// Configures MMDS version, IPv4 address used by the MMDS network stack and interfaces that allow MMDS requests..
+//
+// Do not use the deprecated [PutMmdsConfigParams.Context] with this method: it would be ignored.
+func (a *Client) PutMmdsConfigContext(ctx context.Context, params *PutMmdsConfigParams, opts ...ClientOption) (*PutMmdsConfigNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutMmdsConfigParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putMmdsConfig",
 		Method:             "PUT",
@@ -1805,13 +2773,14 @@ func (a *Client) PutMmdsConfig(params *PutMmdsConfigParams, opts ...ClientOption
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutMmdsConfigReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1830,16 +2799,36 @@ func (a *Client) PutMmdsConfig(params *PutMmdsConfigParams, opts ...ClientOption
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-PutSerialDevice configures the serial console
-
-Configure the serial console, which the guest can write its kernel logs to. Has no effect if the serial console is not also enabled on the guest kernel command line
-*/
+// PutSerialDevice configures the serial console.
+//
+// Configure the serial console, which the guest can write its kernel logs to. Has no effect if the serial console is not also enabled on the guest kernel command line.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.PutSerialDeviceContext] instead.
 func (a *Client) PutSerialDevice(params *PutSerialDeviceParams, opts ...ClientOption) (*PutSerialDeviceNoContent, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.PutSerialDeviceContext(ctx, params, opts...)
+}
+
+// PutSerialDeviceContext configures the serial console.
+//
+// Configure the serial console, which the guest can write its kernel logs to. Has no effect if the serial console is not also enabled on the guest kernel command line.
+//
+// Do not use the deprecated [PutSerialDeviceParams.Context] with this method: it would be ignored.
+func (a *Client) PutSerialDeviceContext(ctx context.Context, params *PutSerialDeviceParams, opts ...ClientOption) (*PutSerialDeviceNoContent, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewPutSerialDeviceParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "putSerialDevice",
 		Method:             "PUT",
@@ -1849,13 +2838,14 @@ func (a *Client) PutSerialDevice(params *PutSerialDeviceParams, opts ...ClientOp
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &PutSerialDeviceReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1874,16 +2864,36 @@ func (a *Client) PutSerialDevice(params *PutSerialDeviceParams, opts ...ClientOp
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-ResumeBalloonReporting resumes free page reporting only if enabled pre boot
-
-Re-enables free-page-reporting discards and immediately processes any reports deferred while paused. Idempotent.
-*/
+// ResumeBalloonReporting resumes free page reporting only if enabled pre boot.
+//
+// Re-enables free-page-reporting discards and immediately processes any reports deferred while paused. Idempotent..
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.ResumeBalloonReportingContext] instead.
 func (a *Client) ResumeBalloonReporting(params *ResumeBalloonReportingParams, opts ...ClientOption) (*ResumeBalloonReportingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.ResumeBalloonReportingContext(ctx, params, opts...)
+}
+
+// ResumeBalloonReportingContext resumes free page reporting only if enabled pre boot.
+//
+// Re-enables free-page-reporting discards and immediately processes any reports deferred while paused. Idempotent..
+//
+// Do not use the deprecated [ResumeBalloonReportingParams.Context] with this method: it would be ignored.
+func (a *Client) ResumeBalloonReportingContext(ctx context.Context, params *ResumeBalloonReportingParams, opts ...ClientOption) (*ResumeBalloonReportingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewResumeBalloonReportingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "resumeBalloonReporting",
 		Method:             "PATCH",
@@ -1893,13 +2903,14 @@ func (a *Client) ResumeBalloonReporting(params *ResumeBalloonReportingParams, op
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &ResumeBalloonReportingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1918,14 +2929,32 @@ func (a *Client) ResumeBalloonReporting(params *ResumeBalloonReportingParams, op
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-StartBalloonHinting starts a free page hinting run only if enabled pre boot
-*/
+// StartBalloonHinting starts a free page hinting run only if enabled pre boot.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.StartBalloonHintingContext] instead.
 func (a *Client) StartBalloonHinting(params *StartBalloonHintingParams, opts ...ClientOption) (*StartBalloonHintingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.StartBalloonHintingContext(ctx, params, opts...)
+}
+
+// StartBalloonHintingContext starts a free page hinting run only if enabled pre boot.
+//
+// Do not use the deprecated [StartBalloonHintingParams.Context] with this method: it would be ignored.
+func (a *Client) StartBalloonHintingContext(ctx context.Context, params *StartBalloonHintingParams, opts ...ClientOption) (*StartBalloonHintingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewStartBalloonHintingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "startBalloonHinting",
 		Method:             "PATCH",
@@ -1935,13 +2964,14 @@ func (a *Client) StartBalloonHinting(params *StartBalloonHintingParams, opts ...
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &StartBalloonHintingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -1960,14 +2990,32 @@ func (a *Client) StartBalloonHinting(params *StartBalloonHintingParams, opts ...
 	return nil, runtime.NewAPIError("unexpected success response: content available as default response in error", unexpectedSuccess, unexpectedSuccess.Code())
 }
 
-/*
-StopBalloonHinting stops a free page hinting run only if enabled pre boot
-*/
+// StopBalloonHinting stops a free page hinting run only if enabled pre boot.
+//
+// This method does not support injected context.
+// However, timeout and opentracing contexts are honored whenever enabled.
+//
+// If you need to pass a specific context, use [Client.StopBalloonHintingContext] instead.
 func (a *Client) StopBalloonHinting(params *StopBalloonHintingParams, opts ...ClientOption) (*StopBalloonHintingOK, error) {
+	var ctx context.Context
+	if params != nil && params.inner.ctx != nil {
+		ctx = params.inner.ctx
+	} else {
+		ctx = context.Background()
+	}
+
+	return a.StopBalloonHintingContext(ctx, params, opts...)
+}
+
+// StopBalloonHintingContext stops a free page hinting run only if enabled pre boot.
+//
+// Do not use the deprecated [StopBalloonHintingParams.Context] with this method: it would be ignored.
+func (a *Client) StopBalloonHintingContext(ctx context.Context, params *StopBalloonHintingParams, opts ...ClientOption) (*StopBalloonHintingOK, error) {
 	// NOTE: parameters are not validated before sending
 	if params == nil {
 		params = NewStopBalloonHintingParams()
 	}
+
 	op := &runtime.ClientOperation{
 		ID:                 "stopBalloonHinting",
 		Method:             "PATCH",
@@ -1977,13 +3025,14 @@ func (a *Client) StopBalloonHinting(params *StopBalloonHintingParams, opts ...Cl
 		Schemes:            []string{"http"},
 		Params:             params,
 		Reader:             &StopBalloonHintingReader{formats: a.formats},
-		Context:            params.Context,
 		Client:             params.HTTPClient,
 	}
+
 	for _, opt := range opts {
 		opt(op)
 	}
-	result, err := a.transport.Submit(op)
+
+	result, err := a.transport.SubmitContext(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -2003,6 +3052,14 @@ func (a *Client) StopBalloonHinting(params *StopBalloonHintingParams, opts ...Cl
 }
 
 // SetTransport changes the transport on the client
-func (a *Client) SetTransport(transport runtime.ClientTransport) {
+func (a *Client) SetTransport(transport runtime.ContextualTransport) {
 	a.transport = transport
+}
+
+// innerParams captures internal fields so they don't conflict with user-supplied parameters.
+type innerParams struct {
+	timeout time.Duration
+
+	// Deprecated: use the operation call with context to pass the context instead of [OperationsParams].
+	ctx context.Context
 }

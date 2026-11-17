@@ -10,6 +10,7 @@ import (
 
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	templatemanagergrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -27,7 +28,7 @@ func TestSetTemplateSource_FromTemplateUsesResolvedBuild(t *testing.T) {
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 	testutils.CreateTestTemplateAliasWithName(t, db, templateID, "base-template", &teamSlug)
 
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "v1")
 
 	cache := templatecache.NewTemplateCache(db.SqlcClient, redis)
@@ -114,7 +115,7 @@ func TestSetTemplateSource_FromTemplateMissingBuildReturnsNotFound(t *testing.T)
 			setTemplatePublic(t, db, templateID, tt.public)
 			testutils.CreateTestTemplateAliasWithName(t, db, templateID, "base-template-missing", &ownerTeamSlug)
 
-			buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "ready")
+			buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 			testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, id.DefaultTag)
 
 			cache := templatecache.NewTemplateCache(db.SqlcClient, redis)

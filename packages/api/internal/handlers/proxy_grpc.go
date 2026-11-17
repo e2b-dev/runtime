@@ -22,6 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
@@ -118,26 +119,11 @@ func denyResumePermission() error {
 
 const autoResumeTransitionWaitBudget = time.Minute
 
-func (s *SandboxService) getAutoResumeSnapshot(ctx context.Context, sandboxID string) (*snapshotcache.SnapshotInfo, *dbtypes.SandboxAutoResumeConfig, error) {
-	snap, err := s.api.snapshotCache.Get(ctx, sandboxID)
-	if err != nil {
-		if errors.Is(err, snapshotcache.ErrSnapshotNotFound) {
-			return nil, nil, status.Error(codes.NotFound, "snapshot not found")
-		}
-
-		return nil, nil, status.Errorf(codes.Internal, "failed to get snapshot: %v", err)
-	}
-
-	var autoResume *dbtypes.SandboxAutoResumeConfig
-	if snap.Snapshot.Config != nil {
-		autoResume = snap.Snapshot.Config.AutoResume
-	}
-	if autoResume == nil || autoResume.Policy != dbtypes.SandboxAutoResumeAny {
-		return nil, nil, status.Error(codes.NotFound, "sandbox auto-resume disabled")
-	}
-
-	return snap, autoResume, nil
-}
+// errSnapshotNotFound answers a sandbox that does not exist and, for an edge
+// caller, one on a cluster its org does not own alike: PermissionDenied would
+// tell client-proxy the sandbox is here, and any other difference would tell
+// it that another org's sandbox exists.
+var errSnapshotNotFound = status.Error(codes.NotFound, "snapshot not found")
 
 func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.SandboxResumeRequest) (*proxygrpc.SandboxResumeResponse, error) {
 	incomingMetadata := metadataFromIncomingContext(ctx)
@@ -159,32 +145,39 @@ func (s *SandboxService) ResumeSandbox(ctx context.Context, req *proxygrpc.Sandb
 		return nil, status.Error(codes.InvalidArgument, "invalid sandbox ID")
 	}
 
-	snap, autoResume, err := s.getAutoResumeSnapshot(ctx, sandboxID)
+	// Until the edge caller's org is checked, every answer that depends on
+	// the sandbox is errSnapshotNotFound.
+	snap, err := s.api.snapshotCache.Get(ctx, sandboxID)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, snapshotcache.ErrSnapshotNotFound) {
+			return nil, errSnapshotNotFound
+		}
+
+		return nil, status.Errorf(codes.Internal, "failed to get snapshot: %v", err)
 	}
 
 	teamID := snap.Snapshot.TeamID
 
 	team, err := s.api.authService.GetTeamByID(ctx, teamID)
 	if err != nil {
+		// A deleted or banned team's sandboxes cannot be resumed.
+		if dberrors.IsNotFoundError(err) || errors.As(err, new(*auth.TeamForbiddenError)) {
+			return nil, errSnapshotNotFound
+		}
+
 		return nil, status.Errorf(codes.Internal, "failed to get team: %v", err)
 	}
 
-	if s.requireEdgeClientProxyAuth {
-		var authOrgID string
-		if team.ClusterID != nil {
-			cluster, found := s.api.clusters.GetClusterById(*team.ClusterID)
-			if !found {
-				return nil, status.Errorf(codes.Internal, "cluster with ID '%s' not found", *team.ClusterID)
-			}
+	if s.requireEdgeClientProxyAuth && !s.orgOwnsCluster(clientProxyClaims, team.ClusterID) {
+		return nil, errSnapshotNotFound
+	}
 
-			authOrgID = cluster.AuthOrgID
-		}
-
-		if err := oauth.RequireOrgClaims(clientProxyClaims, authOrgID); err != nil {
-			return nil, err
-		}
+	var autoResume *dbtypes.SandboxAutoResumeConfig
+	if snap.Snapshot.Config != nil {
+		autoResume = snap.Snapshot.Config.AutoResume
+	}
+	if autoResume == nil || autoResume.Policy != dbtypes.SandboxAutoResumeAny {
+		return nil, status.Error(codes.NotFound, "sandbox auto-resume disabled")
 	}
 
 	if err := auth.CheckTeamBlocked(team); err != nil {
@@ -345,4 +338,15 @@ func resumeStatusError(ctx context.Context, apiErr *api.APIError) error {
 	}
 
 	return withCode.Err()
+}
+
+// orgOwnsCluster reports whether the edge caller's org owns the cluster: never
+// the main cluster (nil), which no org owns, nor one this API does not know.
+func (s *SandboxService) orgOwnsCluster(claims oauth.Claims, clusterID *uuid.UUID) bool {
+	if clusterID == nil {
+		return false
+	}
+	cluster, found := s.api.clusters.GetClusterById(*clusterID)
+
+	return found && oauth.RequireOrgClaims(claims, cluster.AuthOrgID) == nil
 }

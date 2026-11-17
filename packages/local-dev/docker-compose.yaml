@@ -27,12 +27,12 @@ services:
       - "53000:3000"
 
   loki:
-    image: grafana/loki:3.4.1
+    image: grafana/loki:3.7.9
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
     healthcheck:
-      test: wget --quiet --tries=1 --output-document=- http://localhost:3100/ready | grep -q -w ready || exit 1
+      test: ["CMD", "/usr/bin/loki", "-health"]
       start_period: 20s
       interval: 10s
       timeout: 1s
@@ -54,7 +54,7 @@ services:
       - ./mimir.yaml:/etc/mimir/mimir.yaml:z
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.163.2
+    image: otel/opentelemetry-collector-contrib:0.164.0
     volumes:
       - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:z
     ports:
@@ -89,7 +89,7 @@ services:
       - "1080:1080"
 
   tempo:
-    image: grafana/tempo:2.8.2
+    image: grafana/tempo:2.10.10
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./tempo.yaml:/etc/tempo.yaml:z

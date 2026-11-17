@@ -105,6 +105,8 @@ type Result struct {
 	SchedulingMetadata *orchestratorgrpc.SchedulingMetadata
 	// VcpuCount is the final template VM's vCPU count, as its metadata records.
 	VcpuCount int64
+	// MemoryHotplugMB is the final template VM's hotplug region, as its metadata records.
+	MemoryHotplugMB int64
 }
 
 // Build builds the template, uploads it to storage and returns the result metadata.
@@ -146,8 +148,12 @@ func (b *Builder) Build(ctx context.Context, paths storage.Paths, cfg config.Tem
 		b.metrics.RecordBuildDuration(ctx, cfg.TeamID, duration, success)
 
 		resultType := ClassifyBuildResult(r, e)
-		b.metrics.RecordBuildResult(ctx, cfg.TeamID, resultType,
-			config.VcpuSizing(cfg.VCpuCount, cfg.MaxVCpuCount), builtVcpuSizing(r, e, cfg.VCpuCount))
+		b.metrics.RecordBuildResult(ctx, cfg.TeamID, resultType, metrics.BuildSizing{
+			VcpuSizing:   config.VcpuSizing(cfg.VCpuCount, cfg.MaxVCpuCount),
+			VcpuBuilt:    builtVcpuSizing(r, e, cfg.VCpuCount),
+			MemorySizing: config.MemorySizing(cfg.MemoryMB, cfg.MaxMemoryMB),
+			MemoryBuilt:  builtMemorySizing(r, e),
+		})
 		if success {
 			b.metrics.RecordRootfsSize(ctx, cfg.TeamID, units.MBToBytes(r.RootfsSizeMB))
 		}
@@ -474,6 +480,7 @@ func runBuild(
 		RootfsSizeMB:       units.BytesToMB(int64(rootfsSize)),
 		SchedulingMetadata: templateSchedulingMetadata(ctx, builder.templateCache, lastLayerResult.Metadata.Template.BuildID),
 		VcpuCount:          lastLayerResult.Metadata.VcpuCount,
+		MemoryHotplugMB:    lastLayerResult.Metadata.MemoryHotplugMB,
 	}, nil
 }
 

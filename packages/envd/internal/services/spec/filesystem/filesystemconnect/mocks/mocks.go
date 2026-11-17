@@ -18,10 +18,19 @@ func NewMockFilesystemHandler(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFilesystemHandler {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFilesystemHandler{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -75,7 +84,7 @@ type MockFilesystemHandler_CreateWatcher_Call struct {
 // CreateWatcher is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.CreateWatcherRequest]
-func (_e *MockFilesystemHandler_Expecter) CreateWatcher(context1 interface{}, request interface{}) *MockFilesystemHandler_CreateWatcher_Call {
+func (_e *MockFilesystemHandler_Expecter) CreateWatcher(context1 any, request any) *MockFilesystemHandler_CreateWatcher_Call {
 	return &MockFilesystemHandler_CreateWatcher_Call{Call: _e.mock.On("CreateWatcher", context1, request)}
 }
 
@@ -143,7 +152,7 @@ type MockFilesystemHandler_GetWatcherEvents_Call struct {
 // GetWatcherEvents is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.GetWatcherEventsRequest]
-func (_e *MockFilesystemHandler_Expecter) GetWatcherEvents(context1 interface{}, request interface{}) *MockFilesystemHandler_GetWatcherEvents_Call {
+func (_e *MockFilesystemHandler_Expecter) GetWatcherEvents(context1 any, request any) *MockFilesystemHandler_GetWatcherEvents_Call {
 	return &MockFilesystemHandler_GetWatcherEvents_Call{Call: _e.mock.On("GetWatcherEvents", context1, request)}
 }
 
@@ -211,7 +220,7 @@ type MockFilesystemHandler_ListDir_Call struct {
 // ListDir is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.ListDirRequest]
-func (_e *MockFilesystemHandler_Expecter) ListDir(context1 interface{}, request interface{}) *MockFilesystemHandler_ListDir_Call {
+func (_e *MockFilesystemHandler_Expecter) ListDir(context1 any, request any) *MockFilesystemHandler_ListDir_Call {
 	return &MockFilesystemHandler_ListDir_Call{Call: _e.mock.On("ListDir", context1, request)}
 }
 
@@ -279,7 +288,7 @@ type MockFilesystemHandler_MakeDir_Call struct {
 // MakeDir is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.MakeDirRequest]
-func (_e *MockFilesystemHandler_Expecter) MakeDir(context1 interface{}, request interface{}) *MockFilesystemHandler_MakeDir_Call {
+func (_e *MockFilesystemHandler_Expecter) MakeDir(context1 any, request any) *MockFilesystemHandler_MakeDir_Call {
 	return &MockFilesystemHandler_MakeDir_Call{Call: _e.mock.On("MakeDir", context1, request)}
 }
 
@@ -347,7 +356,7 @@ type MockFilesystemHandler_Move_Call struct {
 // Move is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.MoveRequest]
-func (_e *MockFilesystemHandler_Expecter) Move(context1 interface{}, request interface{}) *MockFilesystemHandler_Move_Call {
+func (_e *MockFilesystemHandler_Expecter) Move(context1 any, request any) *MockFilesystemHandler_Move_Call {
 	return &MockFilesystemHandler_Move_Call{Call: _e.mock.On("Move", context1, request)}
 }
 
@@ -415,7 +424,7 @@ type MockFilesystemHandler_Remove_Call struct {
 // Remove is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.RemoveRequest]
-func (_e *MockFilesystemHandler_Expecter) Remove(context1 interface{}, request interface{}) *MockFilesystemHandler_Remove_Call {
+func (_e *MockFilesystemHandler_Expecter) Remove(context1 any, request any) *MockFilesystemHandler_Remove_Call {
 	return &MockFilesystemHandler_Remove_Call{Call: _e.mock.On("Remove", context1, request)}
 }
 
@@ -483,7 +492,7 @@ type MockFilesystemHandler_RemoveWatcher_Call struct {
 // RemoveWatcher is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.RemoveWatcherRequest]
-func (_e *MockFilesystemHandler_Expecter) RemoveWatcher(context1 interface{}, request interface{}) *MockFilesystemHandler_RemoveWatcher_Call {
+func (_e *MockFilesystemHandler_Expecter) RemoveWatcher(context1 any, request any) *MockFilesystemHandler_RemoveWatcher_Call {
 	return &MockFilesystemHandler_RemoveWatcher_Call{Call: _e.mock.On("RemoveWatcher", context1, request)}
 }
 
@@ -551,7 +560,7 @@ type MockFilesystemHandler_Stat_Call struct {
 // Stat is a helper method to define mock.On call
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.StatRequest]
-func (_e *MockFilesystemHandler_Expecter) Stat(context1 interface{}, request interface{}) *MockFilesystemHandler_Stat_Call {
+func (_e *MockFilesystemHandler_Expecter) Stat(context1 any, request any) *MockFilesystemHandler_Stat_Call {
 	return &MockFilesystemHandler_Stat_Call{Call: _e.mock.On("Stat", context1, request)}
 }
 
@@ -609,7 +618,7 @@ type MockFilesystemHandler_WatchDir_Call struct {
 //   - context1 context.Context
 //   - request *connect.Request[filesystem.WatchDirRequest]
 //   - serverStream *connect.ServerStream[filesystem.WatchDirResponse]
-func (_e *MockFilesystemHandler_Expecter) WatchDir(context1 interface{}, request interface{}, serverStream interface{}) *MockFilesystemHandler_WatchDir_Call {
+func (_e *MockFilesystemHandler_Expecter) WatchDir(context1 any, request any, serverStream any) *MockFilesystemHandler_WatchDir_Call {
 	return &MockFilesystemHandler_WatchDir_Call{Call: _e.mock.On("WatchDir", context1, request, serverStream)}
 }
 

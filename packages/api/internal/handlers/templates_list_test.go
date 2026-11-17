@@ -12,6 +12,9 @@ import (
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
@@ -21,6 +24,7 @@ import (
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 func newTemplateListStore(t *testing.T, db *testutils.Database, capped bool) *APIStore {
@@ -35,7 +39,32 @@ func newTemplateListStore(t *testing.T, db *testutils.Database, capped bool) *AP
 	posthogClient, err := analyticscollector.NewPosthogClient(t.Context(), "")
 	require.NoError(t, err)
 
-	return &APIStore{sqlcDB: db.SqlcClient, posthog: posthogClient, featureFlags: ff}
+	return &APIStore{sqlcDB: db.SqlcClient, posthog: posthogClient, featureFlags: ff, templateListCapHits: noop.Int64Counter{}}
+}
+
+// collectTemplateListCapHits returns the cap counter's hits by team ID.
+func collectTemplateListCapHits(t *testing.T, reader sdkmetric.Reader) map[string]int64 {
+	t.Helper()
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+
+	hits := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok || m.Name != string(telemetry.ApiTemplateListCapExceeded) {
+				continue
+			}
+
+			for _, p := range sum.DataPoints {
+				team, _ := p.Attributes.Value("team.id")
+				hits[team.AsString()] += p.Value
+			}
+		}
+	}
+
+	return hits
 }
 
 // The CLI lists templates with an API key and the configured project as the
@@ -105,6 +134,10 @@ func TestGetTemplatesCap(t *testing.T) {
 				teamID, tc.templates,
 			))
 			store := newTemplateListStore(t, db, tc.capped)
+			reader := sdkmetric.NewManualReader()
+			capHits, err := telemetry.GetCounter(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/handlers"), telemetry.ApiTemplateListCapExceeded)
+			require.NoError(t, err)
+			store.templateListCapHits = capHits
 
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
@@ -118,6 +151,9 @@ func TestGetTemplatesCap(t *testing.T) {
 				var templates []api.Template
 				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &templates))
 				assert.Len(t, templates, tc.templates)
+				assert.Empty(t, collectTemplateListCapHits(t, reader))
+			} else {
+				assert.Equal(t, map[string]int64{teamID.String(): 1}, collectTemplateListCapHits(t, reader))
 			}
 		})
 	}

@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutMmdsParams creates a new PutMmdsParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutMmdsParams() *PutMmdsParams {
-	return &PutMmdsParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutMmdsParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutMmdsParamsWithTimeout creates a new PutMmdsParams object
 // with the ability to set a timeout on a request.
 func NewPutMmdsParamsWithTimeout(timeout time.Duration) *PutMmdsParams {
 	return &PutMmdsParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutMmdsParamsWithContext creates a new PutMmdsParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsParams].
 func NewPutMmdsParamsWithContext(ctx context.Context) *PutMmdsParams {
 	return &PutMmdsParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutMmdsParams contains all the parameters to send to the API endpoint
 */
 type PutMmdsParams struct {
 
-	/* Body.
-
-	   The MMDS data store as JSON.
-	*/
+	// Body.
+	//
+	// The MMDS data store as JSON.
 	Body models.MmdsContentsObject
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put mmds params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutMmdsParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put mmds params
+// WithTimeout adds the timeout to the put mmds params.
 func (o *PutMmdsParams) WithTimeout(timeout time.Duration) *PutMmdsParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put mmds params
+// SetTimeout adds the timeout to the put mmds params.
 func (o *PutMmdsParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put mmds params
+// WithContext adds the context to the put mmds params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsParams].
 func (o *PutMmdsParams) WithContext(ctx context.Context) *PutMmdsParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put mmds params
+// SetContext adds the context to the put mmds params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsParams].
 func (o *PutMmdsParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put mmds params
+// WithHTTPClient adds the HTTPClient to the put mmds params.
 func (o *PutMmdsParams) WithHTTPClient(client *http.Client) *PutMmdsParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put mmds params
+// SetHTTPClient adds the HTTPClient to the put mmds params.
 func (o *PutMmdsParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put mmds params
+// WithBody adds the body to the put mmds params.
 func (o *PutMmdsParams) WithBody(body models.MmdsContentsObject) *PutMmdsParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put mmds params
+// SetBody adds the body to the put mmds params.
 func (o *PutMmdsParams) SetBody(body models.MmdsContentsObject) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutMmdsParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

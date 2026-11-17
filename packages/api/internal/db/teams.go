@@ -23,8 +23,10 @@ func GetTeamsByUser(ctx context.Context, db *authdb.Client, userID uuid.UUID) ([
 		if team.DeletedAt != nil {
 			continue
 		}
+		resolved := types.NewTeam(teamRow(team))
+		resolved.Role = team.Role
 		teamsWithLimits = append(teamsWithLimits, &types.TeamWithDefault{
-			Team:      types.NewTeam(teamRow(team)),
+			Team:      resolved,
 			IsDefault: team.IsDefault,
 		})
 	}
@@ -32,7 +34,7 @@ func GetTeamsByUser(ctx context.Context, db *authdb.Client, userID uuid.UUID) ([
 	return teamsWithLimits, nil
 }
 
-// teamRow drops is_default, the one column a single-team lookup lacks.
+// teamRow drops is_default and role, the columns a single-team lookup lacks.
 // TestTeamRowCopiesEveryColumn fails when a column is left behind.
 func teamRow(row authqueries.GetUserTeamsWithLimitsRow) authqueries.GetTeamByTeamIDRow {
 	return authqueries.GetTeamByTeamIDRow{

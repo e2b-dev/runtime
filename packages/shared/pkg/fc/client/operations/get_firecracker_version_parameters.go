@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetFirecrackerVersionParams() *GetFirecrackerVersionParams {
-	return &GetFirecrackerVersionParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetFirecrackerVersionParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetFirecrackerVersionParamsWithTimeout creates a new GetFirecrackerVersionParams object
 // with the ability to set a timeout on a request.
 func NewGetFirecrackerVersionParamsWithTimeout(timeout time.Duration) *GetFirecrackerVersionParams {
 	return &GetFirecrackerVersionParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetFirecrackerVersionParamsWithContext creates a new GetFirecrackerVersionParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetFirecrackerVersionParams].
 func NewGetFirecrackerVersionParamsWithContext(ctx context.Context) *GetFirecrackerVersionParams {
 	return &GetFirecrackerVersionParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetFirecrackerVersionParams contains all the parameters to send to the API endpo
 	Typically these are written to a http.Request.
 */
 type GetFirecrackerVersionParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get firecracker version params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetFirecrackerVersionParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get firecracker version params
+// WithTimeout adds the timeout to the get firecracker version params.
 func (o *GetFirecrackerVersionParams) WithTimeout(timeout time.Duration) *GetFirecrackerVersionParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get firecracker version params
+// SetTimeout adds the timeout to the get firecracker version params.
 func (o *GetFirecrackerVersionParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get firecracker version params
+// WithContext adds the context to the get firecracker version params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetFirecrackerVersionParams].
 func (o *GetFirecrackerVersionParams) WithContext(ctx context.Context) *GetFirecrackerVersionParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get firecracker version params
+// SetContext adds the context to the get firecracker version params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetFirecrackerVersionParams].
 func (o *GetFirecrackerVersionParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get firecracker version params
+// WithHTTPClient adds the HTTPClient to the get firecracker version params.
 func (o *GetFirecrackerVersionParams) WithHTTPClient(client *http.Client) *GetFirecrackerVersionParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get firecracker version params
+// SetHTTPClient adds the HTTPClient to the get firecracker version params.
 func (o *GetFirecrackerVersionParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetFirecrackerVersionParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

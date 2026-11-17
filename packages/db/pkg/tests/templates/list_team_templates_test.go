@@ -20,8 +20,8 @@ func createReadyBuildWithAssignment(t *testing.T, ctx context.Context, db *testu
 
 	err := db.SqlcClient.TestsRawSQL(ctx,
 		`INSERT INTO public.env_builds
-		(id, env_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, created_at, updated_at)
-		VALUES ($1, $2, 'uploaded', $3, $4, 512, '6.1.0', '1.4.0', NOW(), NOW())`,
+		(id, env_id, status_group, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, created_at, updated_at)
+		VALUES ($1, $2, 'ready', $3, $4, 512, '6.1.0', '1.4.0', NOW(), NOW())`,
 		buildID, templateID, vcpu, ramMb,
 	)
 	require.NoError(t, err, "Failed to create ready build")

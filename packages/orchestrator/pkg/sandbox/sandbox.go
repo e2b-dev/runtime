@@ -141,6 +141,10 @@ type Config struct {
 	// ConfiguredVmVcpus is the requested or inherited VM capacity; 0 means unspecified.
 	// On a memory resume, the snapshot's recorded capacity takes precedence.
 	ConfiguredVmVcpus int64
+	// MemoryHotplugMB is the virtio-mem hotplug region, in MiB above RamMB, a cold boot
+	// configures with nothing plugged; 0 is none. A memory resume ignores it and keeps the
+	// region its snapshot recorded.
+	MemoryHotplugMB int64
 
 	// TotalDiskSizeMB optional, now used only for metrics.
 	TotalDiskSizeMB   int64
@@ -525,8 +529,13 @@ type Sandbox struct {
 	balloonMode atomic.Uint32
 	// resolvedVmVcpus is the capacity recorded on pause; inferred for legacy snapshots.
 	resolvedVmVcpus int64
+	// memoryHotplugMB is the hotplug region this VM has: the one a cold boot configured, or
+	// the one its snapshot recorded. Pause records it.
+	memoryHotplugMB int64
 	// readBalloonCaps replaces the device read in tests; nil means the process.
 	readBalloonCaps func(context.Context) (fc.BalloonCaps, error)
+	// readPluggedMemory replaces the hotplug status read in tests; nil means the process.
+	readPluggedMemory func(context.Context) (int64, error)
 	// balloonReadRetryAt (unix ns) holds off the checkpoint-time device read
 	// after a failure, so an unreadable balloon does not cost every checkpoint
 	// the full read bound.
@@ -765,6 +774,12 @@ func networkModeOf(placement *orchestrator.SandboxNetworkPlacement) catalog.Netw
 // as the snapshot's vcpu_count. 0 when unknown (a legacy snapshot that never recorded it).
 func (s *Sandbox) MachineVcpus() int64 {
 	return s.resolvedVmVcpus
+}
+
+// MemoryHotplugMB is the virtio-mem hotplug region the Firecracker VM has above its boot RAM,
+// in MiB; 0 is none. Pause records it as the snapshot's memory_hotplug_mb.
+func (s *Sandbox) MemoryHotplugMB() int64 {
+	return s.memoryHotplugMB
 }
 
 func (s *Sandbox) LoggerMetadata() sbxlogger.SandboxMetadata {
@@ -1301,6 +1316,10 @@ func (f *Factory) CreateSandbox(
 	if err := refuseColdBootVcpus(config); err != nil {
 		return nil, err
 	}
+	processOptions, err := coldBootMemoryHotplug(config, processOptions)
+	if err != nil {
+		return nil, err
+	}
 
 	createOpts := createOptions{networkAssignReason: NetworkAssignReasonCreate}
 	for _, opt := range opts {
@@ -1535,6 +1554,7 @@ func (f *Factory) CreateSandbox(
 	// resume configures none.
 	sbx.StampBalloonMode(balloonModeOf(bootBalloonCaps(config, freePageHinting)))
 	sbx.resolvedVmVcpus = max(config.Vcpu, config.ConfiguredVmVcpus)
+	sbx.memoryHotplugMB = processOptions.MemoryHotplugMB
 
 	processOptions.ACPIPowerOff = acpiPowerOffFor(ctx, f.featureFlags, runtime, config)
 	err = fcHandle.Create(
@@ -1677,6 +1697,9 @@ type resumeOptions struct {
 	// lifecycleID, when set, is the lifecycle the resume starts. See
 	// WithLifecycleID.
 	lifecycleID string
+	// guestMemoryReserved runs once the guest memory file is mapped. See
+	// WithGuestMemoryReserved.
+	guestMemoryReserved func()
 }
 
 // describesCustomerStart reports whether this resume's start-path telemetry describes a
@@ -1789,6 +1812,23 @@ func WithInheritedEnvdVersion(v string) ResumeOption {
 	return func(o *resumeOptions) { o.inheritedEnvdVersion = v }
 }
 
+// WithGuestMemoryReserved runs f once the resume has mapped the guest memory
+// file: the mapping reserves a hugepage guest's pages, so the pool shows them
+// from then on. f does not run for a restore that maps no guest memory file,
+// nor for a resume that may boot its guest again (WithRebootOnGuestReset):
+// that boot takes its memory without reserving it.
+func WithGuestMemoryReserved(f func()) ResumeOption {
+	return func(o *resumeOptions) { o.guestMemoryReserved = f }
+}
+
+// reportGuestMemoryReserved runs the WithGuestMemoryReserved callback if
+// memory holds the mapped guest memory file and no boot can follow.
+func (o *resumeOptions) reportGuestMemoryReserved(ctx context.Context, memory uffd.MemoryBackend) {
+	if o.guestMemoryReserved != nil && o.rebootOnReset == nil && memory.PeekMemfd(ctx) != nil {
+		o.guestMemoryReserved()
+	}
+}
+
 // ErrVcpuExceedsSnapshot is fc.ErrVcpuExceedsSnapshot, so a refusal before and after the snapshot loads match.
 var ErrVcpuExceedsSnapshot = fc.ErrVcpuExceedsSnapshot
 
@@ -1875,6 +1915,9 @@ func (f *Factory) ResumeSandbox(
 	if err := refuseEnvdTokenReplacement(meta, config.Envd.AccessToken, !config.SkipEnvdWait); err != nil {
 		return nil, err
 	}
+	if err := config.FirecrackerConfig.RefuseMemoryHotplugRestore(meta.MemoryHotplugMB); err != nil {
+		return nil, err
+	}
 
 	lifecycleID := ropts.lifecycleID
 	if lifecycleID == "" {
@@ -1923,6 +1966,10 @@ func (f *Factory) ResumeSandbox(
 	//
 	// Register as PRIORITY so teardown cancels the fetch before normal cleanup.
 	prefetchCtx, cancelPrefetch := context.WithCancel(execCtx)
+	if ropts.vmPaused {
+		// Keep prefetch in the paused restore trace while the sandbox owns cancellation.
+		prefetchCtx = trace.ContextWithSpanContext(prefetchCtx, trace.SpanContextFromContext(ctx))
+	}
 	cleanup.AddPriority(ctx, func(context.Context) error {
 		cancelPrefetch()
 
@@ -2014,6 +2061,7 @@ func (f *Factory) ResumeSandbox(
 			// last-cycle fetch begins.
 			if initMapping != nil {
 				p := prefetch.New(sbxLogger, memfile, fcUffd, initMapping, f.featureFlags)
+				p.RestorePaused = ropts.vmPaused
 				if err := p.Start(prefetchCtx); err != nil {
 					sbxLogger.Error(ctx, "failed to start init prefetcher", zap.Error(err))
 				}
@@ -2022,6 +2070,7 @@ func (f *Factory) ResumeSandbox(
 			// Last-cycle diff, fetch-only.
 			if lastCycleMapping != nil {
 				p := prefetch.New(sbxLogger, memfile, fcUffd, lastCycleMapping, f.featureFlags)
+				p.RestorePaused = ropts.vmPaused
 				p.Prefault = false
 				if err := p.Start(prefetchCtx); err != nil {
 					sbxLogger.Error(ctx, "failed to start last-cycle prefetcher", zap.Error(err))
@@ -2259,6 +2308,7 @@ func (f *Factory) ResumeSandbox(
 		// of the per-resume KPI histograms (see WaitForEnvd).
 		skipStartupMetrics: !ropts.describesCustomerStart(),
 		resolvedVmVcpus:    resolvedVmVcpus,
+		memoryHotplugMB:    meta.MemoryHotplugMB,
 
 		skipThaw:             ropts.skipThaw,
 		inheritedEnvdVersion: resumeGateEnvdVersion(ropts.inheritedEnvdVersion, meta.RunningEnvdVersion),
@@ -2357,7 +2407,7 @@ func (f *Factory) ResumeSandbox(
 	go func() {
 		uffdWaitErr := fcUffd.Exit().Wait()
 
-		cancelUffdStartCtx(fmt.Errorf("uffd process exited: %w", errors.Join(uffdWaitErr, context.Cause(uffdStartCtx))))
+		cancelUffdStartCtx(fc.UffdExitError{Err: errors.Join(uffdWaitErr, context.Cause(uffdStartCtx))})
 	}()
 	fcMetadata := sbxlogger.SandboxMetadata{
 		SandboxID:  runtime.SandboxID,
@@ -2392,6 +2442,9 @@ func (f *Factory) ResumeSandbox(
 	if fcStartErr != nil {
 		return nil, fmt.Errorf("failed to start FC: %w", fcStartErr)
 	}
+	// The handshake mapped the guest memory file, if Firecracker passed one,
+	// before the restore returned.
+	ropts.reportGuestMemoryReserved(ctx, fcUffd)
 	// For a snapshot that never recorded its size, the loaded VM's count is what the next pause records.
 	if n := fcHandle.VmVcpus(); n > 0 {
 		sbx.resolvedVmVcpus = n
@@ -3053,6 +3106,9 @@ func (s *Sandbox) Pause(
 	if s.resolvedVmVcpus > 0 {
 		m = m.WithVcpuCount(s.resolvedVmVcpus)
 	}
+	// Device truth over lineage, like the balloon: a cold boot that configured no region
+	// records none, whatever its template was built with.
+	m = m.WithMemoryHotplugMB(s.memoryHotplugMB)
 	// The device names the memory image bakes are the ones this VM was loaded with;
 	// a snapshot this runtime made has none and stays as it was.
 	m = m.WithDeviceNames(s.Config.FirecrackerConfig.RootfsDriveID, s.Config.FirecrackerConfig.NetIfaceID, s.Config.FirecrackerConfig.RootfsFile)

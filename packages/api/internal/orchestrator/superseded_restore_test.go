@@ -60,7 +60,7 @@ func TestRemoveSandbox_SupersededRestoreInformsWaiters(t *testing.T) {
 				select {
 				case <-ready:
 				case <-ctx.Done():
-					t.Fatal("waiter did not read the transition token")
+					require.Fail(t, "waiter did not read the transition token")
 				}
 			}}
 			node.SetSandboxClient(stub)
@@ -81,7 +81,7 @@ func TestRemoveSandbox_SupersededRestoreInformsWaiters(t *testing.T) {
 					assert.Equal(t, tc.action.TargetState, got.transition.Sandbox.State)
 				}
 			case <-ctx.Done():
-				t.Fatal("waiter did not finish")
+				require.Fail(t, "waiter did not finish")
 			}
 			stored, err := f.o.sandboxStore.Get(ctx, resumed.TeamID, resumed.SandboxID)
 			require.NoError(t, err)

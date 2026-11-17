@@ -71,10 +71,8 @@ const getAdminTeam = `-- name: GetAdminTeam :one
 SELECT
     t.id, t.email, t.name, t.slug, t.created_at,
     t.is_blocked, t.is_banned, t.blocked_reason,
-    t.sandbox_scheduling_labels, t.cluster_id,
-    c.name AS cluster_name
+    t.sandbox_scheduling_labels, t.cluster_id
 FROM public.teams t
-LEFT JOIN public.clusters c ON c.id = t.cluster_id
 WHERE t.id = $1::uuid
 `
 
@@ -89,7 +87,6 @@ type GetAdminTeamRow struct {
 	BlockedReason           *string
 	SandboxSchedulingLabels []string
 	ClusterID               *uuid.UUID
-	ClusterName             *string
 }
 
 func (q *Queries) GetAdminTeam(ctx context.Context, teamID uuid.UUID) (GetAdminTeamRow, error) {
@@ -106,7 +103,6 @@ func (q *Queries) GetAdminTeam(ctx context.Context, teamID uuid.UUID) (GetAdminT
 		&i.BlockedReason,
 		&i.SandboxSchedulingLabels,
 		&i.ClusterID,
-		&i.ClusterName,
 	)
 	return i, err
 }

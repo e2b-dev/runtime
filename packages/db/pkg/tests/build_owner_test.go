@@ -40,7 +40,7 @@ func TestBuildInsertsSetEnvAndTeam(t *testing.T) {
 	require.NoError(t, db.SqlcClient.CreateTemplateBuild(ctx, queries.CreateTemplateBuildParams{
 		BuildID:            buildID,
 		TemplateID:         templateID,
-		Status:             types.BuildStatusWaiting,
+		StatusGroup:        types.BuildStatusGroupPending,
 		RamMb:              512,
 		Vcpu:               1,
 		KernelVersion:      "6.1.0",

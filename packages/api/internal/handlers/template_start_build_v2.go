@@ -239,6 +239,7 @@ func (a *APIStore) startTemplateBuildV2(c *gin.Context, templateID api.TemplateI
 		logger.ContextWithFields(ctx, logger.WithTeamID(team.ID.String()), logger.WithTemplateID(templateID), logger.WithBuildID(buildID)),
 		clusterID,
 		minVersion,
+		build.Vcpu,
 	)
 	if err != nil {
 		if errors.Is(err, apiclusters.ErrTemplateBuilderVersionTooOld) {

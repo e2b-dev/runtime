@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
@@ -94,7 +95,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 		select {
 		case <-storage.started:
 		default:
-			t.Fatal("serial producer did not enter Storage.Acquire")
+			require.Fail(t, "serial producer did not enter Storage.Acquire")
 		}
 
 		sandboxes := NewSandboxesMap()
@@ -129,7 +130,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 		synctest.Wait()
 		select {
 		case <-getPromise.Done():
-			t.Fatal("create gate completed before a slot was published")
+			require.Fail(t, "create gate completed before a slot was published")
 		default:
 		}
 		// NewPool starts with both queues empty. Populate is live but blocked
@@ -146,7 +147,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 		case releasedSandbox := <-releaseEvents.released:
 			require.Same(t, donorSandbox, releasedSandbox)
 		default:
-			t.Fatal("normal release callback did not notify the mapped donor")
+			require.Fail(t, "normal release callback did not notify the mapped donor")
 		}
 		_, err = sandboxes.GetByHostPort(net.JoinHostPort(donor.HostIPString(), "80"))
 		require.Error(t, err, "successful release must remove the donor's network map entry")
@@ -164,7 +165,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 		default:
 		}
 		if getErr != nil || got == nil || got.Idx != donorIndex {
-			t.Errorf("%s%s; caller slot=%v donor=%d err=%v", poolWaitAssertionFailureMarker, poolWaitAssertion, slotIndex(got), donorIndex, getErr)
+			assert.Failf(t, poolWaitAssertionFailureMarker+poolWaitAssertion, "caller slot=%v donor=%d err=%v", slotIndex(got), donorIndex, getErr)
 		}
 		if got != nil {
 			require.Same(t, donor, got, "real pool reuse must return the exact same slot pointer")
@@ -180,7 +181,7 @@ func TestGetNetworkSlotUsesReturnedSlotBeforeProducerPublishes(t *testing.T) { /
 			require.Same(t, replacement, mapped)
 			select {
 			case <-releaseEvents.released:
-				t.Error("completed old callback must not notify the real pool successor")
+				assert.Fail(t, "completed old callback must not notify the real pool successor")
 			default:
 			}
 		}

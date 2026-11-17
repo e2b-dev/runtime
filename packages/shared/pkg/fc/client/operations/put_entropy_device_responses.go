@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutEntropyDeviceReader is a Reader for the PutEntropyDevice structure.
@@ -45,11 +44,9 @@ func NewPutEntropyDeviceNoContent() *PutEntropyDeviceNoContent {
 	return &PutEntropyDeviceNoContent{}
 }
 
-/*
-PutEntropyDeviceNoContent describes a response with status code 204, with default header values.
-
-Entropy device created
-*/
+// PutEntropyDeviceNoContent describes a response with status code 204, with default header values.
+//
+// Entropy device created
 type PutEntropyDeviceNoContent struct {
 }
 
@@ -103,11 +100,9 @@ func NewPutEntropyDeviceDefault(code int) *PutEntropyDeviceDefault {
 	}
 }
 
-/*
-PutEntropyDeviceDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutEntropyDeviceDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutEntropyDeviceDefault struct {
 	_statusCode int
 

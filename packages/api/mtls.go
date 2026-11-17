@@ -1,6 +1,11 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+
 	"google.golang.org/grpc/credentials"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
@@ -28,11 +33,12 @@ type serviceTLS struct {
 	http, internalGRPC, publicGRPC mtls.ServerConfig
 	httpHealthPaths                []string
 	hops                           handlers.Hops
+	scheduling                     credentials.TransportCredentials
 }
 
 // newServiceTLS builds the api's listeners and hops from the chart's
 // settings; no wildcard is admitted on its ports.
-func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool) (serviceTLS, error) {
+func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop, schedulingHop bool) (serviceTLS, error) {
 	var s serviceTLS
 	var err error
 	if s.http, err = proc.Listener("http", httpModeFlag, c.HTTP, mtls.WithoutWildcards()); err != nil {
@@ -71,7 +77,67 @@ func newServiceTLS(proc *mtls.Process, c cfg.TLSConfig, analyticsHop bool) (serv
 		return serviceTLS{}, err
 	}
 
+	if schedulingHop {
+		settings := c.Scheduling
+		if settings.Mode == "" {
+			settings.Mode = "on"
+		}
+		if settings.Mode != "on" && settings.Mode != "off" {
+			return serviceTLS{}, errors.New("E2B_TLS_SCHEDULING_CLIENT_MODE must be on or off")
+		}
+		hopConfig, err := proc.Hop("scheduling", "", settings)
+		if err != nil {
+			return serviceTLS{}, err
+		}
+		if settings.Mode != "off" && hopConfig.Files.Bundle() == nil {
+			return serviceTLS{}, errors.New("scheduling TLS certificate files are unavailable")
+		}
+		s.scheduling = mtls.NewClientCredentials(hopConfig)
+	}
+
 	return s, nil
+}
+
+const clusterServiceHop = "cluster_service"
+
+// newClusterServiceHop builds the hop to the cluster service, which hands its
+// callers each cluster's edge token. A blank mode is on. Off dials plaintext,
+// so it is refused outside local development unless the address is loopback,
+// where the token never leaves the machine. The hop itself refuses on without
+// certificates or an expected server name.
+func newClusterServiceHop(proc *mtls.Process, settings mtls.HopSettings, address string, local bool) (credentials.TransportCredentials, error) {
+	prefix := mtls.EnvPrefix(clusterServiceHop)
+	if strings.TrimSpace(settings.Mode) == "" {
+		settings.Mode = "on"
+	}
+	mode, err := mtls.ParseClientMode(settings.Mode)
+	if err != nil {
+		return nil, fmt.Errorf("%sCLIENT_MODE: %w", prefix, err)
+	}
+	if mode == mtls.ClientOff && !local && !isLoopbackAddress(address) {
+		return nil, fmt.Errorf("%sCLIENT_MODE may be off only in local development or for a loopback address", prefix)
+	}
+	hop, err := proc.Hop(clusterServiceHop, "", settings)
+	if err != nil {
+		return nil, err
+	}
+
+	return mtls.NewClientCredentials(hop), nil
+}
+
+// isLoopbackAddress reports whether a host:port target names this machine. A
+// schemed target such as dns:///name:port is not.
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }
 
 // grpcTLSOptions puts a gRPC port behind its listener's credentials and

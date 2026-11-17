@@ -25,8 +25,12 @@ type createRetryReservations struct {
 	err error
 }
 
-func (r createRetryReservations) Reserve(context.Context, uuid.UUID, string, int) (func(sandbox.Sandbox, error), func(context.Context) (sandbox.Sandbox, error), error) {
-	return func(sandbox.Sandbox, error) {}, nil, r.err
+func (r createRetryReservations) Reserve(context.Context, uuid.UUID, string, int) (bool, error) {
+	return true, r.err
+}
+
+func (createRetryReservations) FinishStart(context.Context, uuid.UUID, string, []byte) error {
+	return nil
 }
 
 type createRetryStorage struct {
@@ -86,7 +90,7 @@ func TestCreateSandboxRetryBeforeAndAfterCreation(t *testing.T) {
 				select {
 				case <-client.cleanupDone:
 				case <-time.After(5 * time.Second):
-					t.Fatal("sandbox cleanup did not start")
+					require.Fail(t, "sandbox cleanup did not start")
 				}
 			}
 		})

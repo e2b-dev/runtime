@@ -96,7 +96,7 @@ func TestMultipartUploader_PartUploaderContract(t *testing.T) {
 					recorder.aborted = true
 					w.WriteHeader(http.StatusNoContent)
 				default:
-					t.Fatalf("unexpected GCP multipart request: %s %s", r.Method, r.URL.String())
+					assert.Failf(t, "unexpected GCP multipart request", "%s %s", r.Method, r.URL.String())
 				}
 			})
 		},
@@ -120,7 +120,7 @@ func abortRecordingUploader(t *testing.T, uploadID string, aborted *atomic.Bool)
 			aborted.Store(true)
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			t.Errorf("unexpected GCP multipart request: %s %s", r.Method, r.URL.String())
+			assert.Failf(t, "unexpected GCP multipart request", "%s %s", r.Method, r.URL.String())
 		}
 	}, fastRetryConfig())
 }
@@ -161,14 +161,10 @@ func TestMultipartUploaderUploadPartsZeroConcurrencyDoesNotDeadlock(t *testing.T
 	t.Cleanup(func() { require.NoError(t, input.Close()) })
 
 	uploader := createTestMultipartUploader(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("unexpected request method: %s", r.Method)
-
+		if !assert.Equal(t, http.MethodPut, r.Method, "unexpected request method") {
 			return
 		}
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
-			t.Errorf("read request body: %v", err)
-
+		if _, err := io.Copy(io.Discard, r.Body); !assert.NoError(t, err, "read request body") {
 			return
 		}
 		w.Header().Set("ETag", `"etag"`)
@@ -185,7 +181,7 @@ func TestMultipartUploaderUploadPartsZeroConcurrencyDoesNotDeadlock(t *testing.T
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("zero upload concurrency blocked part admission")
+		require.Fail(t, "zero upload concurrency blocked part admission")
 	}
 }
 
@@ -984,7 +980,7 @@ func TestMultipartUploader_BoundaryConditions_ExactChunkSize(t *testing.T) {
 func TestMultipartUploader_FileNotFound_Error(t *testing.T) {
 	t.Parallel()
 	uploader := createTestMultipartUploader(t, func(http.ResponseWriter, *http.Request) {
-		t.Error("Should not make any HTTP requests for missing file")
+		assert.Fail(t, "Should not make any HTTP requests for missing file")
 	})
 
 	_, err := uploader.UploadFileInParallel(t.Context(), "/nonexistent/file.txt", 5, nil)
@@ -1282,7 +1278,7 @@ func newCompleteErrorUploader(t *testing.T, completeAttempts *atomic.Int32, comp
 			completeAttempts.Add(1)
 			complete(w, r)
 		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			assert.Failf(t, "unexpected request", "%s %s", r.Method, r.URL)
 		}
 	}))
 	t.Cleanup(server.Close)

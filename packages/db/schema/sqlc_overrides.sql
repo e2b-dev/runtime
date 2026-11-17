@@ -17,3 +17,7 @@ CREATE TABLE IF NOT EXISTS billing.sandbox_logs (
     created_at TIMESTAMPTZ NOT NULL,
     team_id UUID NOT NULL
 );
+
+-- trg_compute_status_group fills env_builds.status from status_group until the
+-- column is dropped, so no query names it.
+ALTER TABLE public.env_builds DROP COLUMN status;

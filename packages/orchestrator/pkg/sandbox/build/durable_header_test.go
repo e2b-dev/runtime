@@ -46,7 +46,7 @@ func TestFile_DurableHeaderPrefersDurableFuture(t *testing.T) {
 
 	select {
 	case <-ch:
-		t.Fatal("DurableHeader returned before the durable future resolved")
+		require.Fail(t, "DurableHeader returned before the durable future resolved")
 	case <-time.After(50 * time.Millisecond):
 	}
 

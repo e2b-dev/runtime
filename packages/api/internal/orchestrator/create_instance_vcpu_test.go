@@ -87,7 +87,7 @@ func TestCreateSandboxCPUOverrideRefusesJoin(t *testing.T) {
 	now := time.Now()
 	_, apiErr := o.CreateSandbox(ctx, sandboxID, uuid.NewString(), team,
 		func(context.Context) (SandboxMetadata, *api.APIError) {
-			t.Error("a joined request must not fetch or change the snapshot")
+			assert.Fail(t, "a joined request must not fetch or change the snapshot")
 
 			return SandboxMetadata{}, nil
 		}, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{}, WithCPUCount(new(int32(4))))
@@ -114,7 +114,7 @@ func TestCreateSandboxCPUOverrideDisabledBeforeJoin(t *testing.T) {
 	now := time.Now()
 	_, apiErr := o.CreateSandbox(ctx, sandboxID, uuid.NewString(), team,
 		func(context.Context) (SandboxMetadata, *api.APIError) {
-			t.Error("a refused request must not fetch the snapshot")
+			assert.Fail(t, "a refused request must not fetch the snapshot")
 
 			return SandboxMetadata{}, nil
 		}, now, now.Add(time.Hour), time.Hour, true, false, sandbox.CreationMetadata{}, WithCPUCount(new(int32(4))))

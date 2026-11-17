@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewDescribeBalloonHintingParams() *DescribeBalloonHintingParams {
-	return &DescribeBalloonHintingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewDescribeBalloonHintingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewDescribeBalloonHintingParamsWithTimeout creates a new DescribeBalloonHintingParams object
 // with the ability to set a timeout on a request.
 func NewDescribeBalloonHintingParamsWithTimeout(timeout time.Duration) *DescribeBalloonHintingParams {
 	return &DescribeBalloonHintingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewDescribeBalloonHintingParamsWithContext creates a new DescribeBalloonHintingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonHintingParams].
 func NewDescribeBalloonHintingParamsWithContext(ctx context.Context) *DescribeBalloonHintingParams {
 	return &DescribeBalloonHintingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ DescribeBalloonHintingParams contains all the parameters to send to the API endp
 	Typically these are written to a http.Request.
 */
 type DescribeBalloonHintingParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the describe balloon hinting params (not the query body).
@@ -77,43 +81,46 @@ func (o *DescribeBalloonHintingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the describe balloon hinting params
+// WithTimeout adds the timeout to the describe balloon hinting params.
 func (o *DescribeBalloonHintingParams) WithTimeout(timeout time.Duration) *DescribeBalloonHintingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the describe balloon hinting params
+// SetTimeout adds the timeout to the describe balloon hinting params.
 func (o *DescribeBalloonHintingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the describe balloon hinting params
+// WithContext adds the context to the describe balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonHintingParams].
 func (o *DescribeBalloonHintingParams) WithContext(ctx context.Context) *DescribeBalloonHintingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the describe balloon hinting params
+// SetContext adds the context to the describe balloon hinting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonHintingParams].
 func (o *DescribeBalloonHintingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the describe balloon hinting params
+// WithHTTPClient adds the HTTPClient to the describe balloon hinting params.
 func (o *DescribeBalloonHintingParams) WithHTTPClient(client *http.Client) *DescribeBalloonHintingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the describe balloon hinting params
+// SetHTTPClient adds the HTTPClient to the describe balloon hinting params.
 func (o *DescribeBalloonHintingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *DescribeBalloonHintingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

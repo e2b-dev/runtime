@@ -40,3 +40,16 @@ func builtVcpuSizing(r *Result, err error, vcpus int64) string {
 		return "not_resizable"
 	}
 }
+
+// builtMemorySizing is the `memory_built` label on template_build_result_total: resizable when
+// the final VM has a hotplug region, not_resizable otherwise, and none when the build failed.
+func builtMemorySizing(r *Result, err error) string {
+	switch {
+	case err != nil || r == nil:
+		return "none"
+	case r.MemoryHotplugMB > 0:
+		return "resizable"
+	default:
+		return "not_resizable"
+	}
+}

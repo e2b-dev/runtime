@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
@@ -18,10 +19,10 @@ func TestGetConcurrentTemplateBuilds_ReturnsBuildWithSameTag(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
-	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v1")
 
-	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v1")
 
 	results, err := db.SqlcClient.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
@@ -42,10 +43,10 @@ func TestGetConcurrentTemplateBuilds_DoesNotReturnBuildWithDifferentTag(t *testi
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
-	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v1")
 
-	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v2")
 
 	results, err := db.SqlcClient.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
@@ -66,17 +67,17 @@ func TestGetConcurrentTemplateBuilds_ReturnsBuildsWithOverlappingTags(t *testing
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Build A has tags: v1, v2
-	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v1")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v2")
 
 	// Build B has tags: v2, v3 (overlaps on v2)
-	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v2")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v3")
 
 	// Build C has tags: v3 only (no overlap with A)
-	buildC := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildC := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildC, "v3")
 
 	results, err := db.SqlcClient.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
@@ -98,11 +99,11 @@ func TestGetConcurrentTemplateBuilds_DoesNotReturnBuildsFromOtherTemplates(t *te
 	template1 := testutils.CreateTestTemplate(t, db, teamID)
 	template2 := testutils.CreateTestTemplate(t, db, teamID)
 
-	buildA := testutils.CreateTestBuild(t, ctx, db, template1, "building")
+	buildA := testutils.CreateTestBuild(t, ctx, db, template1, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template1, buildA, "v1")
 
 	// Same tag, different template
-	buildB := testutils.CreateTestBuild(t, ctx, db, template2, "building")
+	buildB := testutils.CreateTestBuild(t, ctx, db, template2, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, template2, buildB, "v1")
 
 	results, err := db.SqlcClient.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
@@ -122,19 +123,19 @@ func TestGetConcurrentTemplateBuilds_OnlyReturnsPendingAndInProgressBuilds(t *te
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
-	currentBuild := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	currentBuild := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, currentBuild, "v1")
 
-	pendingBuild := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	pendingBuild := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, pendingBuild, "v1")
 
-	inProgressBuild := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	inProgressBuild := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, inProgressBuild, "v1")
 
-	readyBuild := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	readyBuild := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, readyBuild, "v1")
 
-	failedBuild := testutils.CreateTestBuild(t, ctx, db, templateID, "failed")
+	failedBuild := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupFailed)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, failedBuild, "v1")
 
 	results, err := db.SqlcClient.GetConcurrentTemplateBuilds(ctx, queries.GetConcurrentTemplateBuildsParams{
@@ -164,11 +165,11 @@ func TestGetConcurrentTemplateBuilds_NoDuplicatesWithMultipleOverlappingTags(t *
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Both builds share two tags — should still return only one result
-	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildA := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v1")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildA, "v2")
 
-	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildB := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v1")
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildB, "v2")
 

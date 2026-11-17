@@ -43,7 +43,7 @@ func requireHeld(t *testing.T, released <-chan struct{}) {
 
 	select {
 	case <-released:
-		t.Fatal("released before a kill or a pause")
+		require.Fail(t, "released before a kill or a pause")
 	default:
 	}
 }
@@ -237,7 +237,7 @@ func TestPausePoweredOffRefusesAMaintainedCapture(t *testing.T) {
 	assert.True(t, s.GuestPoweredOff(), "the hold stays")
 	select {
 	case <-released:
-		t.Fatal("the refusal released the hold")
+		require.Fail(t, "the refusal released the hold")
 	default:
 	}
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -131,5 +132,59 @@ func TestAuthStoreLoadsProjectedSettings(t *testing.T) {
 		byMember, err := store.GetTeamByIDAndUserID(ctx, userID, teamID.String())
 		require.NoError(t, err)
 		require.Equal(t, value, byMember.ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic)
+	}
+}
+
+// Only a lookup made for a user carries a role: the role belongs to the
+// membership, and a key or a team ID names no member.
+func TestAuthStoreLoadsTheMemberRole(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+	store := newAuthStore(db.AuthDB)
+	teamID := testutils.CreateTestTeam(t, db)
+	userID := uuid.New()
+	require.NoError(t, db.AuthDB.UpsertPublicUser(ctx, userID))
+	require.NoError(t, db.AuthDB.CreateTeamMembership(ctx, authqueries.CreateTeamMembershipParams{
+		UserID: userID, TeamID: teamID,
+	}))
+
+	byMember, err := store.GetTeamByIDAndUserID(ctx, userID, teamID.String())
+	require.NoError(t, err)
+	assert.Equal(t, "member", byMember.Role)
+
+	require.NoError(t, db.AuthDB.TestsRawSQL(ctx,
+		"UPDATE public.users_teams SET role = 'owner' WHERE team_id = $1 AND user_id = $2", teamID, userID))
+	byMember, err = store.GetTeamByIDAndUserID(ctx, userID, teamID.String())
+	require.NoError(t, err)
+	assert.Equal(t, "owner", byMember.Role)
+
+	byID, err := store.GetTeamByID(ctx, teamID)
+	require.NoError(t, err)
+	assert.Empty(t, byID.Role)
+}
+
+func TestMemberTeamRowCopiesEveryColumn(t *testing.T) {
+	t.Parallel()
+
+	columns := reflect.TypeFor[authqueries.GetTeamByTeamAndUserRow]()
+	for field := range reflect.TypeFor[authqueries.GetTeamByTeamIDRow]().Fields() {
+		_, ok := columns.FieldByName(field.Name)
+		assert.True(t, ok, "GetTeamByTeamAndUserRow has no %s", field.Name)
+	}
+
+	for column := range columns.Fields() {
+		var source authqueries.GetTeamByTeamAndUserRow
+		testutils.SetNonZero(t, reflect.ValueOf(&source).Elem().FieldByIndex(column.Index))
+
+		copied := reflect.ValueOf(memberTeamRow(source))
+		for field := range copied.Type().Fields() {
+			want := reflect.Zero(field.Type)
+			if field.Name == column.Name {
+				want = reflect.ValueOf(source).FieldByIndex(column.Index)
+			}
+			assert.Equal(t, want.Interface(), copied.FieldByIndex(field.Index).Interface(), "%s after setting %s", field.Name, column.Name)
+		}
 	}
 }

@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchMemoryHotplugReader is a Reader for the PatchMemoryHotplug structure.
@@ -45,11 +44,9 @@ func NewPatchMemoryHotplugNoContent() *PatchMemoryHotplugNoContent {
 	return &PatchMemoryHotplugNoContent{}
 }
 
-/*
-PatchMemoryHotplugNoContent describes a response with status code 204, with default header values.
-
-Hotpluggable memory configured
-*/
+// PatchMemoryHotplugNoContent describes a response with status code 204, with default header values.
+//
+// Hotpluggable memory configured
 type PatchMemoryHotplugNoContent struct {
 }
 
@@ -103,11 +100,9 @@ func NewPatchMemoryHotplugDefault(code int) *PatchMemoryHotplugDefault {
 	}
 }
 
-/*
-PatchMemoryHotplugDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchMemoryHotplugDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchMemoryHotplugDefault struct {
 	_statusCode int
 

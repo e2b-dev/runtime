@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewDescribeInstanceParams() *DescribeInstanceParams {
-	return &DescribeInstanceParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewDescribeInstanceParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewDescribeInstanceParamsWithTimeout creates a new DescribeInstanceParams object
 // with the ability to set a timeout on a request.
 func NewDescribeInstanceParamsWithTimeout(timeout time.Duration) *DescribeInstanceParams {
 	return &DescribeInstanceParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewDescribeInstanceParamsWithContext creates a new DescribeInstanceParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeInstanceParams].
 func NewDescribeInstanceParamsWithContext(ctx context.Context) *DescribeInstanceParams {
 	return &DescribeInstanceParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ DescribeInstanceParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type DescribeInstanceParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the describe instance params (not the query body).
@@ -77,43 +81,46 @@ func (o *DescribeInstanceParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the describe instance params
+// WithTimeout adds the timeout to the describe instance params.
 func (o *DescribeInstanceParams) WithTimeout(timeout time.Duration) *DescribeInstanceParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the describe instance params
+// SetTimeout adds the timeout to the describe instance params.
 func (o *DescribeInstanceParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the describe instance params
+// WithContext adds the context to the describe instance params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeInstanceParams].
 func (o *DescribeInstanceParams) WithContext(ctx context.Context) *DescribeInstanceParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the describe instance params
+// SetContext adds the context to the describe instance params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeInstanceParams].
 func (o *DescribeInstanceParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the describe instance params
+// WithHTTPClient adds the HTTPClient to the describe instance params.
 func (o *DescribeInstanceParams) WithHTTPClient(client *http.Client) *DescribeInstanceParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the describe instance params
+// SetHTTPClient adds the HTTPClient to the describe instance params.
 func (o *DescribeInstanceParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *DescribeInstanceParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

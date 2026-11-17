@@ -8,7 +8,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 )
 
 // RateLimiter Defines an IO rate limiter with independent bytes/s and ops/s limits. Limits are defined by configuring each of the _bandwidth_ and _ops_ token buckets. This field is optional for virtio-block config and should be omitted for vhost-user-block configuration.
@@ -42,7 +43,7 @@ func (m *RateLimiter) Validate(formats strfmt.Registry) error {
 }
 
 func (m *RateLimiter) validateBandwidth(formats strfmt.Registry) error {
-	if swag.IsZero(m.Bandwidth) { // not required
+	if typeutils.IsZero(m.Bandwidth) { // not required
 		return nil
 	}
 
@@ -65,7 +66,7 @@ func (m *RateLimiter) validateBandwidth(formats strfmt.Registry) error {
 }
 
 func (m *RateLimiter) validateOps(formats strfmt.Registry) error {
-	if swag.IsZero(m.Ops) { // not required
+	if typeutils.IsZero(m.Ops) { // not required
 		return nil
 	}
 
@@ -109,7 +110,7 @@ func (m *RateLimiter) contextValidateBandwidth(ctx context.Context, formats strf
 
 	if m.Bandwidth != nil {
 
-		if swag.IsZero(m.Bandwidth) { // not required
+		if typeutils.IsZero(m.Bandwidth) { // not required
 			return nil
 		}
 
@@ -134,7 +135,7 @@ func (m *RateLimiter) contextValidateOps(ctx context.Context, formats strfmt.Reg
 
 	if m.Ops != nil {
 
-		if swag.IsZero(m.Ops) { // not required
+		if typeutils.IsZero(m.Ops) { // not required
 			return nil
 		}
 
@@ -160,13 +161,13 @@ func (m *RateLimiter) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *RateLimiter) UnmarshalBinary(b []byte) error {
 	var res RateLimiter
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

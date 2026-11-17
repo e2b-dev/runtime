@@ -95,7 +95,8 @@ func (s *authStoreImpl) GetTeamByIDAndUserID(ctx context.Context, userID uuid.UU
 		return nil, fmt.Errorf("failed to get team from teamID and userID key: %w", err)
 	}
 
-	team := types.NewTeam(authqueries.GetTeamByTeamIDRow(result))
+	team := types.NewTeam(memberTeamRow(result))
+	team.Role = result.Role
 	if err := internalauthteam.CheckTeamBanned(*team.Team); err != nil {
 		return nil, err
 	}
@@ -105,6 +106,40 @@ func (s *authStoreImpl) GetTeamByIDAndUserID(ctx context.Context, userID uuid.UU
 	}
 
 	return team, nil
+}
+
+// memberTeamRow drops role, the one column a single-team lookup lacks.
+// TestMemberTeamRowCopiesEveryColumn fails when a column is left behind.
+func memberTeamRow(row authqueries.GetTeamByTeamAndUserRow) authqueries.GetTeamByTeamIDRow {
+	return authqueries.GetTeamByTeamIDRow{
+		ID:                               row.ID,
+		CreatedAt:                        row.CreatedAt,
+		IsBlocked:                        row.IsBlocked,
+		Name:                             row.Name,
+		Email:                            row.Email,
+		IsBanned:                         row.IsBanned,
+		BlockedReason:                    row.BlockedReason,
+		ClusterID:                        row.ClusterID,
+		SandboxSchedulingLabels:          row.SandboxSchedulingLabels,
+		SsoOrganizationID:                row.SsoOrganizationID,
+		SsoAutoJoin:                      row.SsoAutoJoin,
+		DeletedAt:                        row.DeletedAt,
+		Slug:                             row.Slug,
+		SandboxDefaultAllowPublicTraffic: row.SandboxDefaultAllowPublicTraffic,
+		MaxLengthHours:                   row.MaxLengthHours,
+		ConcurrentSandboxes:              row.ConcurrentSandboxes,
+		ConcurrentTemplateBuilds:         row.ConcurrentTemplateBuilds,
+		MaxVcpu:                          row.MaxVcpu,
+		MaxRamMb:                         row.MaxRamMb,
+		DiskMb:                           row.DiskMb,
+		EventsTtlDays:                    row.EventsTtlDays,
+		DefaultFreeDiskSizeMb:            row.DefaultFreeDiskSizeMb,
+		MaxDiskSizeMb:                    row.MaxDiskSizeMb,
+		MaxFreeDiskSizeMb:                row.MaxFreeDiskSizeMb,
+		ApiTeamRpsList:                   row.ApiTeamRpsList,
+		ApiTeamRpsDelete:                 row.ApiTeamRpsDelete,
+		MaxSecrets:                       row.MaxSecrets,
+	}
 }
 
 func (s *authStoreImpl) GetTeamAPIKeyHashes(ctx context.Context, teamID uuid.UUID) ([]string, error) {

@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
+
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 )
 
 // A uffd handler that exits after Firecracker loaded the snapshot ends the
@@ -26,9 +27,7 @@ import (
 func TestLoadSnapshotKeepsUffdExitCause(t *testing.T) {
 	t.Parallel()
 
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)

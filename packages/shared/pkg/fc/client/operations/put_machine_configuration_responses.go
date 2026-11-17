@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutMachineConfigurationReader is a Reader for the PutMachineConfiguration structure.
@@ -51,11 +50,9 @@ func NewPutMachineConfigurationNoContent() *PutMachineConfigurationNoContent {
 	return &PutMachineConfigurationNoContent{}
 }
 
-/*
-PutMachineConfigurationNoContent describes a response with status code 204, with default header values.
-
-Machine Configuration created/updated
-*/
+// PutMachineConfigurationNoContent describes a response with status code 204, with default header values.
+//
+// Machine Configuration created/updated
 type PutMachineConfigurationNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutMachineConfigurationBadRequest() *PutMachineConfigurationBadRequest {
 	return &PutMachineConfigurationBadRequest{}
 }
 
-/*
-PutMachineConfigurationBadRequest describes a response with status code 400, with default header values.
-
-Machine Configuration cannot be updated due to bad input
-*/
+// PutMachineConfigurationBadRequest describes a response with status code 400, with default header values.
+//
+// Machine Configuration cannot be updated due to bad input
 type PutMachineConfigurationBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutMachineConfigurationDefault(code int) *PutMachineConfigurationDefault
 	}
 }
 
-/*
-PutMachineConfigurationDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutMachineConfigurationDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutMachineConfigurationDefault struct {
 	_statusCode int
 

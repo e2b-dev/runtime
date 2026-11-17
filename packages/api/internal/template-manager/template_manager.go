@@ -120,7 +120,7 @@ func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 				go func(b queries.GetInProgressTemplateBuildsRow) {
 					err := tm.BuildStatusSync(ctx, b.EnvBuild.ID, b.ActiveEnv.ID, clustersshared.WithClusterFallback(b.ActiveEnv.ClusterID), b.EnvBuild.ClusterNodeID)
 					if err != nil {
-						logger.L().Error(ctx, "Error syncing build status", zap.Error(err), zap.String("buildID", b.EnvBuild.ID.String()))
+						logger.L().Error(ctx, "Error syncing build status", zap.Error(err), logger.WithBuildID(b.EnvBuild.ID.String()))
 					}
 				}(b)
 			}
@@ -132,8 +132,10 @@ func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 
 // GetAvailableBuildClient picks a builder in the cluster. A non-nil minVersion
 // restricts the choice to builders at or above it; see
-// clusters.ErrTemplateBuilderVersionTooOld.
-func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterID uuid.UUID, minVersion *semver.Version) (*clusters.Instance, error) {
+// clusters.ErrTemplateBuilderVersionTooOld. vcpus is the vCPU count of the
+// build being placed, 0 when not starting a build; see
+// Cluster.GetAvailableTemplateBuilder.
+func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterID uuid.UUID, minVersion *semver.Version, vcpus int64) (*clusters.Instance, error) {
 	cluster, ok := tm.clusters.GetClusterById(clusterID)
 	if !ok {
 		return nil, fmt.Errorf("cluster with ID '%s' not found", clusterID)
@@ -144,21 +146,21 @@ func (tm *TemplateManager) GetAvailableBuildClient(ctx context.Context, clusterI
 
 	nodeInfoJSON := tm.featureFlags.JSONFlag(ctx, featureflags.BuildNodeInfo)
 	nodeInfo := machineinfo.FromLDValue(ctx, nodeInfoJSON)
-	builder, err := cluster.GetAvailableTemplateBuilder(ctx, nodeInfo, minVersion)
+	builder, err := cluster.GetAvailableTemplateBuilder(ctx, nodeInfo, minVersion, vcpus)
 	switch {
 	case errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && nodeInfo.CPUArchitecture != "":
 		logger.L().Warn(ctx, "No template builder with the pinned machine info is at the required version, falling back to any builder at that version",
-			zap.Error(err), zap.String("requiredVersion", minVersion.String()), zap.String("clusterID", clusterID.String()))
+			zap.Error(err), zap.String("required_version", minVersion.String()), logger.WithClusterID(clusterID))
 		if tm.builderPinFallback != nil {
 			tm.builderPinFallback.Add(ctx, 1, metric.WithAttributes(attribute.String("cluster_id", clusterID.String())))
 		}
 
-		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion)
+		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion, vcpus)
 	case errors.Is(err, clusters.ErrAvailableTemplateBuilderNotFound):
 		// Fallback to any template builder
-		logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.Error(err), zap.String("clusterID", clusterID.String()))
+		logger.L().Warn(ctx, "No available template builder found with the specified machine info, falling back to any available template builder", zap.Error(err), logger.WithClusterID(clusterID))
 
-		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion)
+		builder, err = cluster.GetAvailableTemplateBuilder(ctx, machineinfo.MachineInfo{}, minVersion, vcpus)
 	}
 
 	if errors.Is(err, clusters.ErrTemplateBuilderVersionTooOld) && tm.builderVersionRejected != nil {
@@ -239,13 +241,13 @@ func (tm *TemplateManager) DeleteBuild(ctx context.Context, buildID uuid.UUID, t
 		// nodeID can be an orchestrator ID, if the build corresponds to a snapshot.
 		// We may want to improve this later by adding the Delete method to Orchestrator as well.
 		// This way we can remove the build (snapshot) from cache as well
-		node, err := tm.GetAvailableBuildClient(ctx, clusterID, nil)
+		node, err := tm.GetAvailableBuildClient(ctx, clusterID, nil, 0)
 		if err != nil {
 			return fmt.Errorf("failed to get any available node in the cluster: %w", err)
 		}
 		nodeID = node.NodeID
 
-		logger.L().Info(ctx, "Fallback to available node", zap.String("nodeID", nodeID), zap.String("clusterID", clusterID.String()))
+		logger.L().Info(ctx, "Fallback to available node", logger.WithNodeID(nodeID), logger.WithClusterID(clusterID))
 		client, err = tm.GetClusterBuildClient(clusterID, nodeID)
 		if err != nil {
 			return fmt.Errorf("failed to get builder client: %w", err)

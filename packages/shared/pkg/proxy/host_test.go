@@ -260,8 +260,10 @@ func TestGetTargetFromRequest(t *testing.T) {
 			gotID, gotPort, err := getTargetFromRequest(req)
 
 			// Compare error presence and, when present, the concrete type.
-			if (err != nil) != (tt.wantErrIs != nil || tt.wantErrAs != nil) {
-				t.Fatalf("ParseHost(%q) error = %v, wantErr %v", tt.host, err, tt.wantErrIs)
+			if tt.wantErrIs != nil || tt.wantErrAs != nil {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
 
 			if tt.wantErrIs != nil {
@@ -277,13 +279,8 @@ func TestGetTargetFromRequest(t *testing.T) {
 				return // no further checks when an error was expected
 			}
 
-			if gotID != tt.wantID {
-				t.Errorf("ParseHost(%q) sandboxID = %q, want %q", tt.host, gotID, tt.wantID)
-			}
-
-			if gotPort != tt.wantPort {
-				t.Errorf("ParseHost(%q) port = %d, want %d", tt.host, gotPort, tt.wantPort)
-			}
+			assert.Equal(t, tt.wantID, gotID)
+			assert.Equal(t, tt.wantPort, gotPort)
 		})
 	}
 }

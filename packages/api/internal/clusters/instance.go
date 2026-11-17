@@ -2,6 +2,7 @@ package clusters
 
 import (
 	"context"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -50,6 +51,13 @@ type Instance struct {
 	roles           []infogrpc.ServiceInfoRole
 	isBuilder       bool
 	isOrchestrator  bool
+
+	// Host CPU as last reported, read by builder placement.
+	cpuPercent   uint32
+	cpuCount     uint32
+	cpuAllocated uint32
+	// Builds this API placed here recently, which the reports may not show yet.
+	reservations []buildReservation
 
 	syncFailCount int
 
@@ -162,6 +170,10 @@ func (i *Instance) Sync(ctx context.Context) error {
 	i.serviceVersion = info.GetServiceVersion()
 	i.serviceVersionCommit = info.GetServiceCommit()
 
+	i.cpuPercent = info.GetMetricCpuPercent()
+	i.cpuCount = info.GetMetricCpuCount()
+	i.cpuAllocated = info.GetMetricCpuAllocated()
+
 	// We don't want to check array every time,
 	// this is why we are caching value during instance sync.
 	i.isBuilder = slices.Contains(i.roles, infogrpc.ServiceInfoRole_TemplateBuilder)
@@ -190,6 +202,53 @@ func (i *Instance) GetInfo() InstanceInfo {
 		IsOrchestrator:       i.isOrchestrator,
 		IsBuilder:            i.isBuilder,
 	}
+}
+
+// buildReservationTTL is how long a build placed on a builder counts toward
+// its load. The builder reports every instance sync, but a build's VM, and so
+// its vCPUs, appear only once the builder has pulled and unpacked its image.
+// Expiry rather than an explicit release keeps a build that never starts from
+// holding capacity.
+const buildReservationTTL = time.Minute
+
+type buildReservation struct {
+	vcpus   int64
+	expires time.Time
+}
+
+// reserveBuild counts vcpus against this instance for buildReservationTTL.
+func (i *Instance) reserveBuild(vcpus int64) {
+	if vcpus <= 0 {
+		return
+	}
+
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
+	i.reservations = append(i.reservations, buildReservation{vcpus: vcpus, expires: time.Now().Add(buildReservationTTL)})
+}
+
+// cpuLoad is the host's CPU demand per core: vCPUs allocated to its VMs and
+// reserved by recent builds, plus cores busy right now, over its core count.
+// An instance that has not reported a core count scores +Inf, so any instance
+// reporting load is preferred to it.
+func (i *Instance) cpuLoad() float64 {
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
+	if i.cpuCount == 0 {
+		return math.Inf(1)
+	}
+
+	now := time.Now()
+	i.reservations = slices.DeleteFunc(i.reservations, func(r buildReservation) bool { return now.After(r.expires) })
+
+	reserved := int64(0)
+	for _, r := range i.reservations {
+		reserved += r.vcpus
+	}
+
+	return (float64(i.cpuAllocated)+float64(reserved))/float64(i.cpuCount) + float64(i.cpuPercent)/100
 }
 
 func (i *Instance) GetClient() *GRPCClient {

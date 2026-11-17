@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -67,7 +68,7 @@ func (m *SnapshotLoadParams) Validate(formats strfmt.Registry) error {
 }
 
 func (m *SnapshotLoadParams) validateMemBackend(formats strfmt.Registry) error {
-	if swag.IsZero(m.MemBackend) { // not required
+	if typeutils.IsZero(m.MemBackend) { // not required
 		return nil
 	}
 
@@ -90,12 +91,12 @@ func (m *SnapshotLoadParams) validateMemBackend(formats strfmt.Registry) error {
 }
 
 func (m *SnapshotLoadParams) validateNetworkOverrides(formats strfmt.Registry) error {
-	if swag.IsZero(m.NetworkOverrides) { // not required
+	if typeutils.IsZero(m.NetworkOverrides) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.NetworkOverrides); i++ {
-		if swag.IsZero(m.NetworkOverrides[i]) { // not required
+		if typeutils.IsZero(m.NetworkOverrides[i]) { // not required
 			continue
 		}
 
@@ -150,7 +151,7 @@ func (m *SnapshotLoadParams) contextValidateMemBackend(ctx context.Context, form
 
 	if m.MemBackend != nil {
 
-		if swag.IsZero(m.MemBackend) { // not required
+		if typeutils.IsZero(m.MemBackend) { // not required
 			return nil
 		}
 
@@ -177,8 +178,8 @@ func (m *SnapshotLoadParams) contextValidateNetworkOverrides(ctx context.Context
 
 		if m.NetworkOverrides[i] != nil {
 
-			if swag.IsZero(m.NetworkOverrides[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.NetworkOverrides[i]) { // not required
+				continue
 			}
 
 			if err := m.NetworkOverrides[i].ContextValidate(ctx, formats); err != nil {
@@ -205,13 +206,13 @@ func (m *SnapshotLoadParams) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *SnapshotLoadParams) UnmarshalBinary(b []byte) error {
 	var res SnapshotLoadParams
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

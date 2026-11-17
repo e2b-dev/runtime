@@ -104,7 +104,7 @@ Verify: `docker compose -f packages/local-dev/docker-compose.yaml ps` — all se
    ```bash
    make -C packages/local-dev seed-database
    ```
-   This creates a user (`user@e2b-dev.local`), a team (`local-dev team`), and the API tokens shown in [Client configuration](#client-configuration) below.
+   This creates a local dev user, a team (`local-dev team`), and the API tokens shown in [Client configuration](#client-configuration) below.
 
 ## Run the application locally
 

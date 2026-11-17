@@ -2,6 +2,9 @@ package utils
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsGTEVersion(t *testing.T) {
@@ -148,18 +151,12 @@ func TestIsGTEVersion(t *testing.T) {
 			result, err := IsGTEVersion(tt.curVersion, tt.minVersion)
 
 			if tt.expectError {
-				if err == nil {
-					t.Errorf("IsGTEVersion() expected error but got none")
-				}
+				require.Error(t, err)
 			} else {
-				if err != nil {
-					t.Errorf("IsGTEVersion() unexpected error: %v", err)
-				}
+				require.NoError(t, err)
 			}
 
-			if result != tt.expected {
-				t.Errorf("IsGTEVersion() = %v, want %v", result, tt.expected)
-			}
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -254,16 +251,11 @@ func TestIsGTEVersionWithTimestamp(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			result, err := IsGTEVersionWithTimestamp(tt.curVersion, tt.minVersion)
-			if err != nil {
-				t.Fatalf("IsGTEVersionWithTimestamp() unexpected error: %v", err)
-			}
-			if result != tt.expected {
-				t.Errorf("IsGTEVersionWithTimestamp() = %v, want %v", result, tt.expected)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 
-	if _, err := IsGTEVersionWithTimestamp("", "0.10.2"); err == nil {
-		t.Error("IsGTEVersionWithTimestamp() expected error for an empty version")
-	}
+	_, err := IsGTEVersionWithTimestamp("", "0.10.2")
+	assert.Error(t, err, "expected error for an empty version")
 }

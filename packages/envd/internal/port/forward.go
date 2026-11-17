@@ -77,16 +77,16 @@ func NewForwarder(
 	scanner *Scanner,
 	freezer *cgroups.WorkloadFreezer,
 ) *Forwarder {
-	return newForwarder(logger, scanner, freezer, forwardingAvailable())
+	return newForwarder(logger, scanner, freezer, checkForwarding())
 }
 
-// newForwarder builds the forwarder; unavailable is why this build cannot
+// newForwarder builds the forwarder; forwardingErr is why this build cannot
 // forward ports, nil where it can.
 func newForwarder(
 	logger *zerolog.Logger,
 	scanner *Scanner,
 	freezer *cgroups.WorkloadFreezer,
-	unavailable error,
+	forwardingErr error,
 ) *Forwarder {
 	f := &Forwarder{
 		logger:   logger,
@@ -96,8 +96,8 @@ func newForwarder(
 	}
 	// Where forwarding is unavailable nothing would receive the scan results,
 	// so the forwarder does not subscribe.
-	if unavailable != nil {
-		logger.Warn().Err(unavailable).Msg("port forwarding disabled")
+	if forwardingErr != nil {
+		logger.Warn().Err(forwardingErr).Msg("port forwarding disabled")
 	} else {
 		f.scannerSubscriber = scanner.AddSubscriber(
 			"port-forwarder",

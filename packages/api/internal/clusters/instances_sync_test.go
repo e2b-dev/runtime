@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -204,7 +203,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 			probeCanceled <- request.Context().Err()
 		}))
 		t.Cleanup(server.Close)
-		target := queries.Cluster{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
+		target := Record{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
 		startResult := make(chan error, 1)
 		go func() { startResult <- pool.startInitialRemoteCluster(lifecycleCtx, lifecycleCtx, target) }()
 
@@ -213,7 +212,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		select {
 		case <-probeStarted:
 		case <-completionCtx.Done():
-			t.Fatal("startup probe did not reach its cancellation barrier")
+			require.Fail(t, "startup probe did not reach its cancellation barrier")
 		}
 
 		closeFinished := make(chan struct{})
@@ -224,24 +223,24 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		select {
 		case <-pool.lifecycleDone:
 		case <-completionCtx.Done():
-			t.Fatal("Pool.Close did not cancel the lifecycle context")
+			require.Fail(t, "Pool.Close did not cancel the lifecycle context")
 		}
 		select {
 		case err := <-probeCanceled:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-completionCtx.Done():
-			t.Fatal("in-flight startup probe did not observe Pool.Close cancellation")
+			require.Fail(t, "in-flight startup probe did not observe Pool.Close cancellation")
 		}
 		select {
 		case err := <-startResult:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-completionCtx.Done():
-			t.Fatal("in-flight startup probe did not return after Pool.Close")
+			require.Fail(t, "in-flight startup probe did not return after Pool.Close")
 		}
 		select {
 		case <-closeFinished:
 		case <-completionCtx.Done():
-			t.Fatal("Pool.Close did not finish after canceling the startup probe")
+			require.Fail(t, "Pool.Close did not finish after canceling the startup probe")
 		}
 
 		pool.finishStartup(lifecycleCtx)
@@ -249,7 +248,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		assert.Equal(t, 0, pool.clusters.Count(), "Pool.Close must prevent late insertion and background startup")
 		select {
 		case <-pool.StartupReady():
-			t.Fatal("Pool.Close must prevent late readiness")
+			require.Fail(t, "Pool.Close must prevent late readiness")
 		default:
 		}
 	})
@@ -273,7 +272,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		}
 		insertionDone := make(chan struct{})
 		go func() {
-			pool.store.PoolInsert(lifecycleCtx, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+			pool.store.PoolInsert(lifecycleCtx, Record{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
 			close(insertionDone)
 		}()
 
@@ -282,32 +281,32 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		select {
 		case <-startEntered:
 		case <-completionCtx.Done():
-			t.Fatal("synchronization insertion did not reach its start barrier")
+			require.Fail(t, "synchronization insertion did not reach its start barrier")
 		}
 		cancel()
 		select {
 		case <-pool.lifecycleDone:
 		case <-completionCtx.Done():
-			t.Fatal("parent cancellation did not reach the staged insertion")
+			require.Fail(t, "parent cancellation did not reach the staged insertion")
 		}
 		close(releaseStart)
 		select {
 		case err := <-startResult:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-completionCtx.Done():
-			t.Fatal("staged insertion did not observe parent cancellation")
+			require.Fail(t, "staged insertion did not observe parent cancellation")
 		}
 		select {
 		case <-insertionDone:
 		case <-completionCtx.Done():
-			t.Fatal("staged insertion did not complete after cancellation")
+			require.Fail(t, "staged insertion did not complete after cancellation")
 		}
 		pool.finishStartup(lifecycleCtx)
 
 		assert.Equal(t, 0, pool.clusters.Count(), "parent cancellation must prevent late insertion and background startup")
 		select {
 		case <-pool.StartupReady():
-			t.Fatal("parent cancellation must prevent readiness")
+			require.Fail(t, "parent cancellation must prevent readiness")
 		default:
 		}
 	})
@@ -317,7 +316,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 
 		lifecycleCtx, cancel := context.WithCancel(t.Context())
 		pool := newLifecycleTestPool(lifecycleCtx, cancel)
-		remote, err := newRemoteCluster(nil, nil, queries.Cluster{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
+		remote, err := newRemoteCluster(nil, nil, Record{ID: uuid.New(), Endpoint: "127.0.0.1:1"})
 		require.NoError(t, err)
 		require.NoError(t, pool.activateCluster(lifecycleCtx, remote, syncOnNextTick))
 		require.Equal(t, 1, pool.clusters.Count(), "an open pool must accept startup insertion")
@@ -326,7 +325,7 @@ func TestPoolCloseAndParentCancellationPreventLateStartupMutation(t *testing.T) 
 		select {
 		case <-pool.StartupReady():
 		case <-t.Context().Done():
-			t.Fatal("open pool did not become ready")
+			require.Fail(t, "open pool did not become ready")
 		}
 		pool.Close(t.Context())
 	})
@@ -400,11 +399,11 @@ func TestPoolLocalInstanceJoinedCoalescesAndKeepsTheToken(t *testing.T) {
 	select {
 	case <-pool.LocalInstanceJoined():
 	default:
-		t.Fatal("a join sent before anyone received must be kept")
+		require.Fail(t, "a join sent before anyone received must be kept")
 	}
 	select {
 	case <-pool.LocalInstanceJoined():
-		t.Fatal("joins must coalesce into one token")
+		require.Fail(t, "joins must coalesce into one token")
 	default:
 	}
 }
@@ -459,7 +458,7 @@ func TestPoolReportsTheLocalClusterFirstInstance(t *testing.T) {
 	select {
 	case <-pool.LocalInstanceJoined():
 	case <-time.After(instancesSyncTimeout + instancesSyncInterval):
-		t.Fatal("the local cluster's first instance did not report a join")
+		require.Fail(t, "the local cluster's first instance did not report a join")
 	}
 
 	_, found := pool.GetClusterById(local.ID)

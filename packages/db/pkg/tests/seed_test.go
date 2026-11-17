@@ -20,17 +20,3 @@ func seedTeam(t *testing.T, sqlDB *sql.DB, slug string) uuid.UUID {
 
 	return teamID
 }
-
-func seedAddon(t *testing.T, sqlDB *sql.DB, teamID uuid.UUID) {
-	t.Helper()
-
-	_, err := sqlDB.ExecContext(t.Context(), `
-		INSERT INTO public.addons (
-			team_id, name, extra_concurrent_sandboxes, extra_concurrent_template_builds,
-			extra_max_vcpu, extra_max_ram_mb, extra_disk_mb, extra_events_ttl_days,
-			valid_from, added_by
-		) VALUES ($1, 'test-addon', 5, 6, 7, 8, 9, 10, now() - interval '1 hour',
-		          '00000000-0000-0000-0000-000000000000')
-	`, teamID)
-	require.NoError(t, err)
-}

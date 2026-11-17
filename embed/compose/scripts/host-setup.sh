@@ -62,6 +62,23 @@ clamp_mss() {
   esac
 }
 
+# The content of /etc/sysctl.d/90-e2b.conf. The kernel's neighbour table holds
+# 1024 entries by default, which overflows near 350 sandboxes and shows up as
+# sandboxes that time out while the host is idle.
+sysctl_conf() {
+  cat <<EOF
+vm.nr_hugepages=${HUGEPAGES}
+net.ipv4.tcp_max_syn_backlog=65535
+vm.max_map_count=1048576
+net.ipv4.neigh.default.gc_thresh1=8192
+net.ipv4.neigh.default.gc_thresh2=32768
+net.ipv4.neigh.default.gc_thresh3=65536
+net.ipv6.neigh.default.gc_thresh1=8192
+net.ipv6.neigh.default.gc_thresh2=32768
+net.ipv6.neigh.default.gc_thresh3=65536
+EOF
+}
+
 # Tests source this file with HS_NO_MAIN=1 to reach the functions above.
 # shellcheck disable=SC2317  # `return` only succeeds when sourced; `exit` is the executed-script fallback
 if [ -n "${HS_NO_MAIN:-}" ]; then return 0 2>/dev/null || exit 0; fi
@@ -97,14 +114,11 @@ EOF
   die "cannot write /etc/udev/rules.d/97-nbd-device.rules" "$ETC_FIX"
 if command -v udevadm >/dev/null 2>&1; then { udevadm control --reload && udevadm trigger; } || true; fi
 
-# 3. sysctls, persisted and applied.
-cat > /etc/sysctl.d/90-e2b.conf <<EOF ||
-vm.nr_hugepages=${HUGEPAGES}
-net.ipv4.tcp_max_syn_backlog=65535
-vm.max_map_count=1048576
-EOF
+# 3. sysctls, persisted and applied. -e skips a key this kernel does not have:
+#    the IPv6 thresholds on a host booted with IPv6 disabled.
+sysctl_conf > /etc/sysctl.d/90-e2b.conf ||
   die "cannot write /etc/sysctl.d/90-e2b.conf" "$ETC_FIX"
-sysctl -q -p /etc/sysctl.d/90-e2b.conf ||
+sysctl -q -e -p /etc/sysctl.d/90-e2b.conf ||
   die "sysctl -p /etc/sysctl.d/90-e2b.conf failed" "apply the file by hand and check dmesg on the host"
 have_hp="$(cat /proc/sys/vm/nr_hugepages)" ||
   die "cannot read /proc/sys/vm/nr_hugepages although sysctl -p succeeded" "check that /proc is mounted on the host, then start the stack again"

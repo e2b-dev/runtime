@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PauseBalloonReportingReader is a Reader for the PauseBalloonReporting structure.
@@ -51,11 +50,9 @@ func NewPauseBalloonReportingOK() *PauseBalloonReportingOK {
 	return &PauseBalloonReportingOK{}
 }
 
-/*
-PauseBalloonReportingOK describes a response with status code 200, with default header values.
-
-Free page reporting paused.
-*/
+// PauseBalloonReportingOK describes a response with status code 200, with default header values.
+//
+// Free page reporting paused.
 type PauseBalloonReportingOK struct {
 }
 
@@ -107,11 +104,9 @@ func NewPauseBalloonReportingBadRequest() *PauseBalloonReportingBadRequest {
 	return &PauseBalloonReportingBadRequest{}
 }
 
-/*
-PauseBalloonReportingBadRequest describes a response with status code 400, with default header values.
-
-Free page reporting was not enabled when the device was configured.
-*/
+// PauseBalloonReportingBadRequest describes a response with status code 400, with default header values.
+//
+// Free page reporting was not enabled when the device was configured.
 type PauseBalloonReportingBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPauseBalloonReportingDefault(code int) *PauseBalloonReportingDefault {
 	}
 }
 
-/*
-PauseBalloonReportingDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// PauseBalloonReportingDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type PauseBalloonReportingDefault struct {
 	_statusCode int
 

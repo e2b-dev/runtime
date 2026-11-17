@@ -26,8 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
@@ -35,6 +34,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 
@@ -171,12 +172,13 @@ func resolveRequest(hold *placementpb.ExecutionHold, action placementpb.Resoluti
 	return placementpb.ResolveExecutionHoldRequest_builder{Hold: hold, Action: action, TargetNodeId: target}.Build()
 }
 
-// A move through the service: the placement read admits the target, the
-// hold refuses ordinary lifecycle, and the move settles the record on the
-// target. Every call survives a lost reply by being repeated.
+// A move off a shutting-down node admits a ready target, holds the execution
+// against ordinary lifecycle changes, and settles placement on the target.
+// Repeating a call after a lost reply is safe.
 func TestPlacementMove(t *testing.T) {
 	t.Parallel()
 	h, service := localPlacementHarness(t)
+	h.source = h.node(h.source.ID, api.NodeStatusShuttingDown, nodemanager.WithServiceInstanceID(uuid.NewString()))
 	sbx := h.running(t)
 	var lose atomic.Bool
 	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, &lose)
@@ -187,6 +189,8 @@ func TestPlacementMove(t *testing.T) {
 	assert.Equal(t, h.source.Metadata().ServiceInstanceID, placement.GetSource().GetServiceInstanceId())
 	assert.Equal(t, h.target.IPAddress, placement.GetTarget().GetIpAddress())
 	assert.Equal(t, sbx.NetworkPlacement.GetRouterId(), placement.GetRouterId())
+	assert.True(t, placement.HasVolumesAttached(), "an API that knows the field always reports it")
+	assert.False(t, placement.GetVolumesAttached())
 
 	hold := executionHoldOf(sbx)
 	lose.Store(true)
@@ -367,6 +371,21 @@ func TestPlacementCaller(t *testing.T) {
 	}
 }
 
+// The placement reports attached volumes from the stored record and leaves
+// the decision to the caller.
+func TestPlacementReportsVolumeMounts(t *testing.T) {
+	t.Parallel()
+	h, service := localPlacementHarness(t)
+	sbx := h.runningWith(t, func(s *sandbox.Sandbox) {
+		s.VolumeMounts = []*types.SandboxVolumeMountConfig{{ID: uuid.NewString(), Type: "persistent", Name: "data", Path: "/data"}}
+	})
+	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, nil)
+
+	placement, err := client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: sbx.TeamID.String(), SandboxId: sbx.SandboxID, ExpectedExecutionId: sbx.ExecutionID, ExpectedSourceNodeId: sbx.NodeID, TargetNodeId: h.target.ID}.Build())
+	require.NoError(t, err)
+	assert.True(t, placement.GetVolumesAttached())
+}
+
 // Every refusal names its reason: the caller shows it to the operator.
 func TestPlacementRefusals(t *testing.T) {
 	t.Parallel()
@@ -374,12 +393,14 @@ func TestPlacementRefusals(t *testing.T) {
 		code    codes.Code
 		message string
 	}{
-		"source":    {codes.FailedPrecondition, "placement changed"},
-		"execution": {codes.FailedPrecondition, "placement changed"},
-		"remote":    {codes.FailedPrecondition, "local cluster"},
-		"unknown":   {codes.NotFound, "unknown"},
-		"target":    {codes.FailedPrecondition, "is draining"},
-		"cpu":       {codes.FailedPrecondition, "CPU differs"},
+		"source":               {codes.FailedPrecondition, "placement changed"},
+		"execution":            {codes.FailedPrecondition, "placement changed"},
+		"remote":               {codes.FailedPrecondition, "local cluster"},
+		"unknown":              {codes.NotFound, "unknown"},
+		"unhealthy source":     {codes.FailedPrecondition, "is unhealthy"},
+		"draining target":      {codes.FailedPrecondition, "is draining"},
+		"shutting down target": {codes.FailedPrecondition, "is shutting_down"},
+		"cpu":                  {codes.FailedPrecondition, "CPU differs"},
 	} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
@@ -397,8 +418,12 @@ func TestPlacementRefusals(t *testing.T) {
 				req.SetExpectedExecutionId(uuid.NewString())
 			case "unknown":
 				req.SetTargetNodeId("node-" + uuid.NewString())
-			case "target":
-				h.target = h.node("node-b", api.NodeStatusDraining, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "unhealthy source":
+				h.node(h.source.ID, api.NodeStatusUnhealthy, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "draining target":
+				h.node(h.target.ID, api.NodeStatusDraining, nodemanager.WithServiceInstanceID(uuid.NewString()))
+			case "shutting down target":
+				h.node(h.target.ID, api.NodeStatusShuttingDown, nodemanager.WithServiceInstanceID(uuid.NewString()))
 			case "cpu":
 				h.target = h.node("node-b", api.NodeStatusReady, nodemanager.WithCPUInfo("x86_64", "6", "999"), nodemanager.WithServiceInstanceID(uuid.NewString()))
 			}
@@ -433,10 +458,14 @@ func TestAdminNodeSandboxes(t *testing.T) {
 	ended := h.running(t)
 	elsewhere := h.runningWith(t, func(s *sandbox.Sandbox) { s.NodeID = h.target.ID })
 	held := h.running(t)
+	volume := h.runningWith(t, func(s *sandbox.Sandbox) {
+		s.VolumeMounts = []*types.SandboxVolumeMountConfig{{ID: uuid.NewString(), Type: "persistent", Name: "data", Path: "/data"}}
+	})
+	legacy := h.runningWith(t, func(s *sandbox.Sandbox) { s.NetworkPlacement = nil })
 	until := time.Now().Add(time.Minute).Truncate(time.Millisecond)
 	require.NoError(t, h.store.HoldExecution(ctx, sandbox.Hold{TeamID: held.TeamID, SandboxID: held.SandboxID, ExecutionID: held.ExecutionID, SourceNodeID: held.NodeID, ID: uuid.NewString()}, until))
 	w := &placementWorker{}
-	for _, s := range []sandbox.Sandbox{sbx, stale, ended, elsewhere, held} {
+	for _, s := range []sandbox.Sandbox{sbx, stale, ended, elsewhere, held, volume, legacy} {
 		w.items = append(w.items, &workerpb.RunningSandbox{SandboxId: s.SandboxID, TeamId: s.TeamID.String(), ExecutionId: s.ExecutionID})
 	}
 	w.items[1].ExecutionId = uuid.NewString()
@@ -459,10 +488,17 @@ func TestAdminNodeSandboxes(t *testing.T) {
 	listed, err := h.o.AdminNodeSandboxes(ctx, consts.LocalClusterID, h.source.ID)
 	require.NoError(t, err)
 	assert.Equal(t, h.source.ID, listed.NodeID)
-	require.Len(t, listed.Items, 2)
-	assert.Equal(t, api.NodeSandbox{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: uuid.MustParse(sbx.ExecutionID)}, listed.Items[0])
+	require.Len(t, listed.Items, 4)
+	assert.Equal(t, api.NodeSandbox{
+		TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: uuid.MustParse(sbx.ExecutionID),
+		NetworkMode: sbx.NetworkPlacement.GetNetworkMode(), VolumesAttached: false,
+	}, listed.Items[0])
 	assert.Equal(t, held.SandboxID, listed.Items[1].SandboxID)
 	assert.Equal(t, until.UnixMilli(), listed.Items[1].LifecycleHoldUntil.UnixMilli())
+	assert.Equal(t, volume.SandboxID, listed.Items[2].SandboxID)
+	assert.True(t, listed.Items[2].VolumesAttached)
+	assert.Equal(t, legacy.SandboxID, listed.Items[3].SandboxID)
+	assert.Equal(t, "legacy", listed.Items[3].NetworkMode, "a record without a Router placement runs on the legacy network")
 	server.Stop()
 	_, err = h.o.AdminNodeSandboxes(ctx, consts.LocalClusterID, h.source.ID)
 	require.Error(t, err)

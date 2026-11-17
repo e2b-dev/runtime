@@ -39,6 +39,12 @@ var errParentNeedsMemory = errors.New("building from this template needs a paren
 // size is then unknown, and the build would advertise a size it may not have.
 var errParentVcpusUnknown = errors.New("building from this template needs a parent that records its vCPU count; pause the base again with a runtime that records it")
 
+// errNoMemoryHotplug refuses a build with a memory maximum FROM a template whose guest profile
+// cannot carry a hotplug region: one that resumes the parent, whose snapshot fixes the memory
+// layout at the parent's first boot, or one that boots without a kernel command line, which
+// cannot be told how to online plugged memory.
+var errNoMemoryHotplug = errors.New("templates of this guest cannot grow their memory, so the build cannot have a maximum memory size above its memory size")
+
 // parentMemorySize reports the memory size in MiB of a parent build's memory
 // image, from its memfile in the template cache.
 type parentMemorySize func(ctx context.Context, buildID string) (int64, error)
@@ -110,6 +116,10 @@ func adoptParentMachine(
 	bc.Config.Guest = profile
 
 	tb := profile.Template()
+	if bc.Config.MemoryHotplugMB() > 0 && (tb.AlwaysResume || profile.Boot().NoKernelArgs) {
+		return bc, phases.NewPhaseBuildError(basePhase, fmt.Errorf(
+			"%w: requested memory_mb=%d and max_memory_mb=%d", errNoMemoryHotplug, bc.Config.MemoryMB, bc.Config.MaxMemoryMB))
+	}
 	if !tb.AlwaysResume {
 		return bc, refuseFirecracker(ctx, bc, profile)
 	}
@@ -127,6 +137,8 @@ func adoptParentMachine(
 	if err != nil {
 		return bc, fmt.Errorf("size the parent's memory image: %w", err)
 	}
+	// The memfile holds boot RAM and, after it, any hotplug region; the machine is the boot RAM.
+	memoryMB -= parent.MemoryHotplugMB
 
 	// The build row keeps the request's size and every sandbox is placed by it,
 	// so it must be the machine the snapshot really is.
@@ -169,6 +181,8 @@ func adoptParentMachine(
 	cfg.VCpuCount = parent.VcpuCount
 	// A resumed snapshot has the vCPUs it was paused with; nothing to hotplug.
 	cfg.MaxVCpuCount = 0
+	// The parent's memory layout is fixed, and refused above if it was asked to grow.
+	cfg.MaxMemoryMB = 0
 	// Nothing boots a kernel here: the snapshot keeps its own command line, CPU template and balloon.
 	cfg.CmdlineArgs = nil
 	cfg.CPUTemplate = nil

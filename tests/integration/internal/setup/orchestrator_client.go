@@ -2,9 +2,9 @@ package setup
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -15,11 +15,7 @@ func GetOrchestratorClient(tb testing.TB, ctx context.Context) orchestrator.Sand
 	tb.Helper()
 
 	conn, err := grpc.NewClient(OrchestratorHost, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		tb.Fatal(fmt.Errorf("failed to establish GRPC connection: %w", err))
-
-		return nil
-	}
+	require.NoError(tb, err, "failed to establish GRPC connection")
 
 	go func() {
 		<-ctx.Done()

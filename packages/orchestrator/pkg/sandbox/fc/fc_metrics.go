@@ -557,7 +557,7 @@ func (p *Process) startMetricsFIFOReader(ctx context.Context) {
 		if err := scanner.Err(); err != nil {
 			if errors.Is(err, bufio.ErrTooLong) {
 				logger.L().Error(ctx, "fc metrics line exceeded buffer size, metrics reader stopped",
-					zap.Int("bufferSizeBytes", metricsReaderBufSize),
+					zap.Int("buffer_size_bytes", metricsReaderBufSize),
 					logger.WithSandboxID(sandboxID),
 				)
 			} else {

@@ -108,7 +108,7 @@ func TestResume_CPUCountRefusedBeforeTheStartIsReserved(t *testing.T) {
 				FirecrackerVersion: "1.4.0",
 				EnvdVersion:        &envdVersion,
 				OriginNodeID:       "test-node",
-				Status:             dbtypes.BuildStatusSuccess,
+				StatusGroup:        dbtypes.BuildStatusGroupReady,
 				Config:             &dbtypes.PausedSandboxConfig{},
 			})
 			require.NoError(t, err)

@@ -60,20 +60,22 @@ the hub is [`../README.md`](../README.md).
   a smaller host the first signal is `host-setup` failing with `FIX: give the
   host more memory (12 GiB recommended) or lower HUGEPAGES`. Lower
   `HUGEPAGES` rather than assuming 8 GiB is always enough. Size it by the
-  sandboxes you will run at once: every sandbox takes its guest memory from
-  this reservation as it touches pages, up to its full size (256 of the 2 MiB
-  pages for a 512 MiB `base` sandbox, about 90 while idle), so the default
-  carries eight sandboxes at full memory or about twenty idle ones. Past
-  that the stack stays healthy and each create fails with `500: Failed to
-  place sandbox: this node cannot map 512 MiB of guest memory: its memory
-  pool is too small or in use by running sandboxes`, with the sandbox's own
-  size in the message, while `docker compose logs orchestrator` shows
-  `create refused: guest memory not mappable`. Set a larger `HUGEPAGES` in
+  sandboxes you will run at once: a sandbox reserves its whole guest memory
+  in this pool when it starts, idle or not (256 of the 2 MiB pages for a
+  512 MiB `base` sandbox), so the pool carries `HUGEPAGES` times 2 MiB
+  divided by the sandbox's memory: eight `base` sandboxes by default. Past
+  that the stack stays healthy and each create is refused before it starts
+  (`CREATE_HUGEPAGE_ADMISSION`) with `500: Failed to place sandbox: this node
+  cannot allocate 512 MiB of guest memory in hugepages`, with the sandbox's
+  own size in the message, while `docker compose logs orchestrator` shows
+  `Insufficient hugepages for sandbox start`. Set a larger `HUGEPAGES` in
   `.env` and run `up` again: `host-setup` re-applies the sysctl on every
   start and the orchestrator needs no restart. A killed sandbox gives its
   pages back a few hundred milliseconds after the kill returns; a create
   sent in that window is retried on this host until they are back
-  (`CREATE_MEMORY_REFUSAL`) instead of failing.
+  (`CREATE_MEMORY_REFUSAL`) instead of failing. A snapshot of a running
+  sandbox needs that sandbox's memory a second time while it is taken, so
+  leave one sandbox's memory spare if you take them.
 - Outbound HTTPS to Docker Hub, `us-docker.pkg.dev`, `storage.googleapis.com`,
   `github.com` and `raw.githubusercontent.com`. No account and no token:
   every image and binary the stack pulls is public.
@@ -183,7 +185,8 @@ before the first `up`, or with the stack down: once `ls /sys/block/nbd*/pid`
 prints nothing, `modprobe -r nbd` on the host and `up` again; `host-setup`
 stops with a `FIX:` line when the loaded module has fewer devices than asked.
 The orchestrator also refuses the 201st running sandbox (`max number of
-running sandboxes on node reached (200)`), a limit this stack cannot raise.
+running sandboxes on node reached (200)`), a limit `MAX_SANDBOXES_PER_NODE`
+moves ([Limits](#limits)).
 `NBD_POOL_SIZE` (32) is the orchestrator's warm buffer of claimed devices,
 not a ceiling, and stays below `NBDS_MAX` on purpose: at parity the pool's
 refill loop spins and logs `no free slots` every few seconds on an idle host.
@@ -191,13 +194,83 @@ refill loop spins and logs `no free slots` every few seconds on an idle host.
 same two places, forces `base-template` to rebuild even when a `base` row
 already shows `ready`, for a stale or broken template. `TEAM_API_KEY`,
 `ADMIN_TOKEN` and `SANDBOX_ACCESS_TOKEN_HASH_SEED` are under Secrets below,
-and `E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` under Telemetry.
+`E2B_OTEL_COLLECTOR_GRPC_ENDPOINT` under Telemetry, and
+`MAX_SANDBOXES_PER_NODE`, `MAX_STARTING_INSTANCES_PER_NODE` and
+`NETWORK_REUSED_SLOTS_POOL_SIZE` under Limits.
 
 An optional, git-ignored `env/api.local.env` can add api variables. Create
 the `env/` directory next to `compose.yaml` yourself, since the two-file
 install does not ship one. It cannot override a key already set in the api
 `environment:` block, because Compose gives `environment:` precedence over
 `env_file`, so change those in `compose.yaml`.
+
+### Limits
+
+The defaults fit a small host. A larger one meets these limits, roughly in
+this order; the last applies at any size:
+
+| Limit | Default | What you see when you reach it | To change it |
+|-------|---------|--------------------------------|--------------|
+| Sandboxes the memory pool holds | `HUGEPAGES` times 2 MiB divided by the sandbox's memory: 8 of `base` | a `500: Failed to place sandbox` that names the sandbox's size ([Requirements](#requirements)) | `HUGEPAGES` in `.env` |
+| Sandboxes the team runs at once | 10 | a 429 whose message says `you have reached the maximum number of concurrent E2B sandboxes (10)` | the database rows below |
+| Sandbox lifetime | 1 hour | `400: Timeout cannot be greater than 1 hours`; a timeout extended later is cut at one hour from the start, without an error | the database rows below |
+| NBD devices | `NBDS_MAX`, 64 | a create waits for a device, then fails ([Everyday commands](#everyday-commands)) | `NBDS_MAX` in `.env`, before the module loads |
+| Network slots kept ready | 132 | creating more than about 130 sandboxes within seconds of killing as many slows down | `NETWORK_REUSED_SLOTS_POOL_SIZE` in `.env`; unset, it follows `MAX_SANDBOXES_PER_NODE` |
+| Sandboxes on the node | 200 | the create is retried for 70 seconds, then `503: Failed to place sandbox: not enough capacity` | `MAX_SANDBOXES_PER_NODE` in `.env` |
+| Sandboxes starting at once | 3 | the creates past three are retried until one of the three finishes, for up to 70 seconds, then the same 503 | `MAX_STARTING_INSTANCES_PER_NODE` in `.env` |
+
+The JavaScript SDK stops waiting after 60 seconds by default
+(`requestTimeoutMs`), so it reports a timeout in place of those two 503s.
+
+The team's two limits have no setting. They are in the stack's own Postgres:
+one row of defaults, and, on an install upgraded from an early release, a row
+of the team's own that wins over it. This changes both; the second statement
+matches nothing on a newer install. The api applies the change within five
+minutes, and a new lifetime reaches only sandboxes created after it:
+
+```bash
+docker compose exec postgres psql -U postgres \
+  -c "UPDATE public.default_limits SET concurrent_sandboxes = 100, max_length_hours = 24" \
+  -c "UPDATE public.project_limits SET concurrent_sandboxes = 100, max_length_hours = 24"
+```
+
+The network slots are the orchestrator's pool of prepared network namespaces:
+32 new ones and up to 100 returned by sandboxes that ended.
+`NETWORK_REUSED_SLOTS_POOL_SIZE` sets the second number, and while it is unset
+the pool takes the value of `MAX_SANDBOXES_PER_NODE`, so raising the sandbox
+limit raises the pool with it. A returned slot the pool has no room for is
+torn down, and new slots are made one at a time, so a workload that kills and
+recreates more sandboxes at once than the pool holds waits on that.
+
+The three node settings are whole numbers, above zero for the two sandbox
+limits; a pool size of 0 means its default of 100. The orchestrator's launcher
+refuses a value that is not such a number: the orchestrator does not start,
+and `docker compose logs orchestrator` ends in a `FIX:` line that names the
+setting. It refuses a pool size above the 32,766 network slots a node has the
+same way, which a sandbox limit above that number also sets while the pool
+follows it. After a change, `docker compose up -d --wait` recreates the
+orchestrator, which ends the sandboxes running on it, and this prints the
+three in effect:
+
+```bash
+docker compose logs orchestrator | grep "node limits"
+```
+
+A pool above 100 changes how the orchestrator stops. It tears slots down one
+at a time, those in the pool and those still on their way back to it, and
+stops doing so 20 seconds into its 30-second shutdown budget; if slots are
+left it exits non-zero, and the next start removes them before it serves,
+which took 103 seconds for 1,014 slots on a test VM. A pool of 100 or less
+has no such stop, and at any size a slot the pool has no room for is torn
+down outside it. So stopping the stack while several hundred more sandboxes
+are running than the pool has room for can take the orchestrator past that
+budget, with the same outcome.
+
+For hosts that run several hundred sandboxes, `host-setup` raises the
+kernel's neighbour-table thresholds, whose default ceiling of 1024 entries
+overflows near 350 sandboxes and shows up as sandboxes that time out on an
+idle host, and the `clickhouse` service runs with an open-file limit of
+1,048,576.
 
 ### What runs where
 
@@ -208,7 +281,8 @@ or VM: on every `up`, `host-setup`
 - loads the `nbd` (with `nbds_max=NBDS_MAX`), `tun` and `kvm` kernel modules;
 - writes `/etc/modules-load.d/e2b.conf`, `/etc/modprobe.d/e2b-nbd.conf`,
   `/etc/udev/rules.d/97-nbd-device.rules` and `/etc/sysctl.d/90-e2b.conf`,
-  which also raises `net.ipv4.tcp_max_syn_backlog` and `vm.max_map_count`;
+  which also raises `net.ipv4.tcp_max_syn_backlog`, `vm.max_map_count` and
+  the kernel's neighbour-table thresholds;
 - adds one iptables mangle rule, the TCP MSS clamp;
 - reserves the hugepages;
 - creates `/var/lib/e2b`, `/fc-*`, `/orchestrator` and `/var/run/netns`.
@@ -219,9 +293,11 @@ and the iptables rule, and unloads `nbd` when no device is still connected
 `host-setup` was the one that added it: a host that already had an identical
 TCP MSS clamp keeps its own firewall configuration, and the purge says
 `MSS clamp: not added by host-setup, kept`. `kvm` and `tun` are left loaded
-on purpose, because other software on the host may need them, and the two
-extra sysctls stay at their raised values; all of that reverts on the next
-reboot.
+on purpose, because other software on the host may need them, and the other
+sysctls stay at their raised values; all of that reverts on the next reboot.
+Network slots an orchestrator left behind when it stopped stay as well, under
+`/var/run/netns` as `ns-` and a slot number: the next start finds them there
+and removes them with their firewall rules.
 
 After a host reboot, run `docker compose up -d --wait` once. The long-running
 services return on their own (`restart: unless-stopped`), but the TCP MSS

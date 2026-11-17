@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -205,7 +206,7 @@ func TestExecutorRequiresRequestDeadline(t *testing.T) {
 	r.Use(middleware(nil, flags))
 	r.POST("/v2/sandboxes", func(c *gin.Context) {
 		Execute(c, nil, func() *apierrors.APIError {
-			t.Error("executed without a request deadline")
+			assert.Fail(t, "executed without a request deadline")
 
 			return nil
 		})

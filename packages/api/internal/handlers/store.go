@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/riverqueue/river"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"k8s.io/client-go/kubernetes"
@@ -47,6 +48,7 @@ import (
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
@@ -247,6 +249,7 @@ type APIStore struct {
 	snapshotUpsertSem         *sharedutils.AdjustableSemaphore
 	sandboxListSem            *sharedutils.AdjustableSemaphore
 	snapshotBuildQuerySem     *sharedutils.AdjustableSemaphore
+	templateListCapHits       metric.Int64Counter
 
 	// secretsConn and secretsManagement are nil when no secrets store backend
 	// address is configured. The routes stay registered either way and answer
@@ -259,6 +262,10 @@ type APIStore struct {
 	webhooksConn      *grpc.ClientConn
 	webhookManagement webhookmanagement.WebhookManagementServiceClient
 	sandboxEvents     webhookevents.SandboxEventsServiceClient
+
+	// clusterService is nil when no cluster service address is configured.
+	clusterServiceConn *grpc.ClientConn
+	clusterService     clustersgrpc.ClusterServiceClient
 }
 
 const (
@@ -344,7 +351,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		clusterLogsReader = sandboxLogsReader
 	}
 
-	posthogClient, posthogErr := analyticscollector.NewPosthogClient(ctx, config.PosthogAPIKey)
+	posthogClient, posthogErr := analyticscollector.NewPosthogClient(ctx, config.PosthogAPIKey, analyticscollector.WithCluster(config.DeploymentEnvironment))
 	if posthogErr != nil {
 		logger.L().Fatal(ctx, "Initializing Posthog client", zap.Error(posthogErr))
 	}
@@ -370,7 +377,27 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		}
 	}
 
-	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config, hops.Orchestrator)
+	// An unset address leaves the local cluster as the only one, and the
+	// cluster admin and management routes answering 503.
+	var (
+		clusterServiceConn *grpc.ClientConn
+		clusterService     clustersgrpc.ClusterServiceClient
+	)
+	if config.ClusterServiceGrpcAddress != "" {
+		clusterServiceConn, err = newReadinessBalancedClient(config.ClusterServiceGrpcAddress, hops.ClusterService, clustersgrpc.ClusterService_ServiceDesc.ServiceName, "cluster service")
+		if err != nil {
+			logger.L().Fatal(ctx, "Initializing cluster service client", zap.Error(err))
+		}
+
+		clusterService = clustersgrpc.NewClusterServiceClient(clusterServiceConn)
+	} else {
+		if err := refuseLocalOnlyWithRemoteClusters(ctx, sqlcDB); err != nil {
+			logger.L().Fatal(ctx, "CLUSTER_SERVICE_GRPC_ADDRESS is required", zap.Error(err))
+		}
+		logger.L().Warn(ctx, "CLUSTER_SERVICE_GRPC_ADDRESS is not set: only the local cluster is available")
+	}
+
+	clusters, err := clusters.NewPool(ctx, tel, sqlcDB, clusterService, sd.templateBuilders, clickhouseStore, queryLogsProvider, clusterLogsReader, featureFlags, config, hops.Orchestrator)
 	if err != nil {
 		logger.L().Fatal(ctx, "initializing edge clusters pool failed", zap.Error(err))
 	}
@@ -404,6 +431,11 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	pauseLimiter, err := pauselimit.New(redisClient, featureFlags, tel.MeterProvider)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing pause rate limiter", zap.Error(err))
+	}
+
+	templateListCapHits, err := telemetry.GetCounter(tel.MeterProvider.Meter("github.com/e2b-dev/infra/packages/api/internal/handlers"), telemetry.ApiTemplateListCapExceeded)
+	if err != nil {
+		logger.L().Fatal(ctx, "Initializing template list cap counter", zap.Error(err))
 	}
 
 	authClient := &http.Client{
@@ -483,11 +515,14 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		snapshotUpsertSem:     snapshotUpsertSem,
 		sandboxListSem:        sandboxListSem,
 		snapshotBuildQuerySem: snapshotBuildQuerySem,
+		templateListCapHits:   templateListCapHits,
 		secretsConn:           secretsConn,
 		webhooksConn:          webhooksConn,
 		webhookManagement:     webhookManagement,
 		sandboxEvents:         sandboxEvents,
 		secretsManagement:     secretsManagement,
+		clusterServiceConn:    clusterServiceConn,
+		clusterService:        clusterService,
 	}
 
 	go a.updateDBThrottleLimits(ctx)
@@ -613,6 +648,12 @@ func (a *APIStore) Close(ctx context.Context) error {
 	if a.webhooksConn != nil {
 		if err := a.webhooksConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing webhooks backend client: %w", err))
+		}
+	}
+
+	if a.clusterServiceConn != nil {
+		if err := a.clusterServiceConn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing cluster service client: %w", err))
 		}
 	}
 

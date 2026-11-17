@@ -2,6 +2,7 @@ package analyticscollector
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +39,11 @@ const (
 	// duplicates the team group key: PostHog is not promoting $groups.team to $group_0
 	teamIDKey = "team_id"
 
+	// clusterKey names the cluster an event came from, so PostHog can count
+	// starts per cluster. The value is the api's DEPLOYMENT_ENVIRONMENT
+	// setting.
+	clusterKey = "cluster"
+
 	// teamIdentifyTTL bounds how long IdentifyAnalyticsTeam suppresses an
 	// unchanged identify for a team. PostHog persists group properties, so
 	// re-sending an identical $groupidentify only adds ingestion volume; the
@@ -56,6 +62,9 @@ const (
 type PosthogClient struct {
 	client posthog.Client
 
+	// cluster is set on every captured event when not empty.
+	cluster string
+
 	// posthog-go closes its message channel in Close; closed keeps Enqueue
 	// from sending once Close has started.
 	mu     sync.RWMutex
@@ -69,14 +78,23 @@ type PosthogClient struct {
 	identifying sync.Map
 }
 
-func NewPosthogClient(ctx context.Context, posthogAPIKey string) (*PosthogClient, error) {
-	posthogLogger := posthog.StdLogger(log.New(os.Stderr, "posthog ", log.LstdFlags))
+// Option configures a PosthogClient.
+type Option func(*PosthogClient)
+
+// WithCluster tags every captured event with the cluster the API runs in.
+// An empty value adds no property.
+func WithCluster(cluster string) Option {
+	return func(p *PosthogClient) { p.cluster = cluster }
+}
+
+func NewPosthogClient(ctx context.Context, posthogAPIKey string, opts ...Option) (*PosthogClient, error) {
+	posthogLogger := posthog.StdLogger(log.New(os.Stderr, "posthog ", log.LstdFlags), false)
 
 	if strings.TrimSpace(posthogAPIKey) == "" {
 		logger.L().Info(ctx, "No Posthog API key provided, silencing logs")
 
 		writer := &utils.NoOpWriter{}
-		posthogLogger = posthog.StdLogger(log.New(writer, "posthog ", log.LstdFlags))
+		posthogLogger = posthog.StdLogger(log.New(writer, "posthog ", log.LstdFlags), false)
 	}
 
 	identifiedTeams := newIdentifiedTeams(teamIdentifyTTL)
@@ -92,10 +110,15 @@ func NewPosthogClient(ctx context.Context, posthogAPIKey string) (*PosthogClient
 		logger.L().Fatal(ctx, "error initializing Posthog client", zap.Error(err))
 	}
 
-	return &PosthogClient{
+	p := &PosthogClient{
 		client:          client,
 		identifiedTeams: identifiedTeams,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p, nil
 }
 
 // newPosthogClient wraps an enqueuing client. Tests inject a recording client
@@ -149,7 +172,7 @@ func (p *PosthogClient) Close() error {
 	p.closed = true
 	p.mu.Unlock()
 
-	return p.client.Close()
+	return ignoreDisabled(p.client.Close())
 }
 
 // enqueue drops the message once Close has started.
@@ -161,7 +184,17 @@ func (p *PosthogClient) enqueue(msg posthog.Message) error {
 		return nil
 	}
 
-	return p.client.Enqueue(msg)
+	return ignoreDisabled(p.client.Enqueue(msg))
+}
+
+// posthog-go fails every call with ErrSDKDisabled when built without an API
+// key. Analytics being off is not an error.
+func ignoreDisabled(err error) error {
+	if errors.Is(err, posthog.ErrSDKDisabled) {
+		return nil
+	}
+
+	return err
 }
 
 // IdentifyAnalyticsTeam sets the team group's properties in PostHog. Handlers
@@ -223,6 +256,10 @@ func (p *PosthogClient) CreateAnalyticsSandboxEvent(ctx context.Context, teamID,
 }
 
 func (p *PosthogClient) createAnalyticsEvent(ctx context.Context, distinctID, teamID, event string, properties posthog.Properties) {
+	if p.cluster != "" {
+		properties = properties.Set(clusterKey, p.cluster)
+	}
+
 	err := p.enqueue(posthog.Capture{
 		DistinctId: distinctID,
 		Event:      event,

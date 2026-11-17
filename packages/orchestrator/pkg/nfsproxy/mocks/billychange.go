@@ -17,10 +17,19 @@ func NewMockChange(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockChange {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockChange{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -63,7 +72,7 @@ type MockChange_Chmod_Call struct {
 // Chmod is a helper method to define mock.On call
 //   - name string
 //   - mode os.FileMode
-func (_e *MockChange_Expecter) Chmod(name interface{}, mode interface{}) *MockChange_Chmod_Call {
+func (_e *MockChange_Expecter) Chmod(name any, mode any) *MockChange_Chmod_Call {
 	return &MockChange_Chmod_Call{Call: _e.mock.On("Chmod", name, mode)}
 }
 
@@ -121,7 +130,7 @@ type MockChange_Chown_Call struct {
 //   - name string
 //   - uid int
 //   - gid int
-func (_e *MockChange_Expecter) Chown(name interface{}, uid interface{}, gid interface{}) *MockChange_Chown_Call {
+func (_e *MockChange_Expecter) Chown(name any, uid any, gid any) *MockChange_Chown_Call {
 	return &MockChange_Chown_Call{Call: _e.mock.On("Chown", name, uid, gid)}
 }
 
@@ -184,7 +193,7 @@ type MockChange_Chtimes_Call struct {
 //   - name string
 //   - atime time.Time
 //   - mtime time.Time
-func (_e *MockChange_Expecter) Chtimes(name interface{}, atime interface{}, mtime interface{}) *MockChange_Chtimes_Call {
+func (_e *MockChange_Expecter) Chtimes(name any, atime any, mtime any) *MockChange_Chtimes_Call {
 	return &MockChange_Chtimes_Call{Call: _e.mock.On("Chtimes", name, atime, mtime)}
 }
 
@@ -247,7 +256,7 @@ type MockChange_Lchown_Call struct {
 //   - name string
 //   - uid int
 //   - gid int
-func (_e *MockChange_Expecter) Lchown(name interface{}, uid interface{}, gid interface{}) *MockChange_Lchown_Call {
+func (_e *MockChange_Expecter) Lchown(name any, uid any, gid any) *MockChange_Lchown_Call {
 	return &MockChange_Lchown_Call{Call: _e.mock.On("Lchown", name, uid, gid)}
 }
 

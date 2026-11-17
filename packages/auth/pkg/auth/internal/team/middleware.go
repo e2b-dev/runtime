@@ -55,6 +55,51 @@ func CheckTeamAccess(c *gin.Context, team *types.Team, allowlist BlockedTeamAllo
 	return CheckBlockedTeamForRoute(c, team, allowlist)
 }
 
+// ReadOnlyDeniedReads maps HTTP method to gin route patterns (c.FullPath())
+// that a read-only member may NOT reach although the method is a read: the
+// route hands out something that writes.
+type ReadOnlyDeniedReads map[string]map[string]struct{}
+
+// CheckReadOnlyMemberForRoute returns *ForbiddenError if the user's role on
+// team is read-only and the matched route changes something. Every method but
+// GET, HEAD and OPTIONS does, and so do the routes in deniedReads.
+func CheckReadOnlyMemberForRoute(c *gin.Context, team *types.Team, deniedReads ReadOnlyDeniedReads) error {
+	if team == nil || !team.ReadOnly() {
+		return nil
+	}
+
+	switch c.Request.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		if _, denied := deniedReads[c.Request.Method][c.FullPath()]; !denied {
+			return nil
+		}
+	}
+
+	return &ForbiddenError{Message: "your role on this team is read-only"}
+}
+
+// EnforceReadOnlyMember returns a gin middleware that denies a read-only
+// member with 403 on every route that changes something. Must run after auth.
+func EnforceReadOnlyMember(deniedReads ReadOnlyDeniedReads) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		team, ok := authcontext.GetTeamInfo(c)
+		if !ok {
+			c.Next()
+
+			return
+		}
+
+		if err := CheckReadOnlyMemberForRoute(c, team, deniedReads); err != nil {
+			apierrors.SendAPIStoreError(c, http.StatusForbidden, err.Error())
+			c.Abort()
+
+			return
+		}
+
+		c.Next()
+	}
+}
+
 // EnforceBlockedTeam returns a gin middleware that denies blocked teams
 // with 403 unless the matched route is in allowlist. Must run after auth.
 func EnforceBlockedTeam(allowlist BlockedTeamAllowlist) gin.HandlerFunc {

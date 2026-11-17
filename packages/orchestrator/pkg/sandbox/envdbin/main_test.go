@@ -3,6 +3,7 @@ package envdbin
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -33,9 +34,7 @@ func warmsByResult(t *testing.T) map[string]int64 {
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
-	if err := testMetricReader.Collect(t.Context(), &rm); err != nil {
-		t.Fatalf("collect metrics: %v", err)
-	}
+	require.NoError(t, testMetricReader.Collect(t.Context(), &rm), "collect metrics")
 
 	out := map[string]int64{}
 	for _, sm := range rm.ScopeMetrics {
@@ -44,14 +43,10 @@ func warmsByResult(t *testing.T) map[string]int64 {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok {
-				t.Fatalf("%s is not an int64 sum", m.Name)
-			}
+			require.True(t, ok, "%s is not an int64 sum", m.Name)
 			for _, dp := range sum.DataPoints {
 				v, ok := dp.Attributes.Value(attribute.Key("result"))
-				if !ok {
-					t.Fatalf("%s point carries no result attribute", m.Name)
-				}
+				require.True(t, ok, "%s point carries no result attribute", m.Name)
 				out[v.AsString()] += dp.Value
 			}
 		}
@@ -66,9 +61,7 @@ func readsByCause(t *testing.T, op Op) map[string]int64 {
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
-	if err := testMetricReader.Collect(t.Context(), &rm); err != nil {
-		t.Fatalf("collect metrics: %v", err)
-	}
+	require.NoError(t, testMetricReader.Collect(t.Context(), &rm), "collect metrics")
 
 	out := map[string]int64{}
 	for _, sm := range rm.ScopeMetrics {
@@ -77,9 +70,7 @@ func readsByCause(t *testing.T, op Op) map[string]int64 {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok {
-				t.Fatalf("%s is not an int64 sum", m.Name)
-			}
+			require.True(t, ok, "%s is not an int64 sum", m.Name)
 			for _, dp := range sum.DataPoints {
 				if v, _ := dp.Attributes.Value(attribute.Key("op")); v.AsString() != string(op) {
 					continue

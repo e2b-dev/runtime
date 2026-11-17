@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutMmdsReader is a Reader for the PutMmds structure.
@@ -51,11 +50,9 @@ func NewPutMmdsNoContent() *PutMmdsNoContent {
 	return &PutMmdsNoContent{}
 }
 
-/*
-PutMmdsNoContent describes a response with status code 204, with default header values.
-
-MMDS data store created/updated.
-*/
+// PutMmdsNoContent describes a response with status code 204, with default header values.
+//
+// MMDS data store created/updated.
 type PutMmdsNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutMmdsBadRequest() *PutMmdsBadRequest {
 	return &PutMmdsBadRequest{}
 }
 
-/*
-PutMmdsBadRequest describes a response with status code 400, with default header values.
-
-MMDS data store cannot be created due to bad input.
-*/
+// PutMmdsBadRequest describes a response with status code 400, with default header values.
+//
+// MMDS data store cannot be created due to bad input.
 type PutMmdsBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutMmdsDefault(code int) *PutMmdsDefault {
 	}
 }
 
-/*
-PutMmdsDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutMmdsDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutMmdsDefault struct {
 	_statusCode int
 

@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetMmdsParams() *GetMmdsParams {
-	return &GetMmdsParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetMmdsParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetMmdsParamsWithTimeout creates a new GetMmdsParams object
 // with the ability to set a timeout on a request.
 func NewGetMmdsParamsWithTimeout(timeout time.Duration) *GetMmdsParams {
 	return &GetMmdsParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetMmdsParamsWithContext creates a new GetMmdsParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMmdsParams].
 func NewGetMmdsParamsWithContext(ctx context.Context) *GetMmdsParams {
 	return &GetMmdsParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetMmdsParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type GetMmdsParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get mmds params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetMmdsParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get mmds params
+// WithTimeout adds the timeout to the get mmds params.
 func (o *GetMmdsParams) WithTimeout(timeout time.Duration) *GetMmdsParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get mmds params
+// SetTimeout adds the timeout to the get mmds params.
 func (o *GetMmdsParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get mmds params
+// WithContext adds the context to the get mmds params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMmdsParams].
 func (o *GetMmdsParams) WithContext(ctx context.Context) *GetMmdsParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get mmds params
+// SetContext adds the context to the get mmds params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMmdsParams].
 func (o *GetMmdsParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get mmds params
+// WithHTTPClient adds the HTTPClient to the get mmds params.
 func (o *GetMmdsParams) WithHTTPClient(client *http.Client) *GetMmdsParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get mmds params
+// SetHTTPClient adds the HTTPClient to the get mmds params.
 func (o *GetMmdsParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetMmdsParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

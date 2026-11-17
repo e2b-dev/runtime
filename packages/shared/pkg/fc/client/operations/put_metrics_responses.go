@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutMetricsReader is a Reader for the PutMetrics structure.
@@ -51,11 +50,9 @@ func NewPutMetricsNoContent() *PutMetricsNoContent {
 	return &PutMetricsNoContent{}
 }
 
-/*
-PutMetricsNoContent describes a response with status code 204, with default header values.
-
-Metrics system created.
-*/
+// PutMetricsNoContent describes a response with status code 204, with default header values.
+//
+// Metrics system created.
 type PutMetricsNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutMetricsBadRequest() *PutMetricsBadRequest {
 	return &PutMetricsBadRequest{}
 }
 
-/*
-PutMetricsBadRequest describes a response with status code 400, with default header values.
-
-Metrics system cannot be initialized due to bad input request or metrics system already initialized.
-*/
+// PutMetricsBadRequest describes a response with status code 400, with default header values.
+//
+// Metrics system cannot be initialized due to bad input request or metrics system already initialized.
 type PutMetricsBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutMetricsDefault(code int) *PutMetricsDefault {
 	}
 }
 
-/*
-PutMetricsDefault describes a response with status code -1, with default header values.
-
-Internal server error.
-*/
+// PutMetricsDefault describes a response with status code -1, with default header values.
+//
+// Internal server error.
 type PutMetricsDefault struct {
 	_statusCode int
 

@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutMmdsConfigParams creates a new PutMmdsConfigParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutMmdsConfigParams() *PutMmdsConfigParams {
-	return &PutMmdsConfigParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutMmdsConfigParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutMmdsConfigParamsWithTimeout creates a new PutMmdsConfigParams object
 // with the ability to set a timeout on a request.
 func NewPutMmdsConfigParamsWithTimeout(timeout time.Duration) *PutMmdsConfigParams {
 	return &PutMmdsConfigParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutMmdsConfigParamsWithContext creates a new PutMmdsConfigParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsConfigParams].
 func NewPutMmdsConfigParamsWithContext(ctx context.Context) *PutMmdsConfigParams {
 	return &PutMmdsConfigParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutMmdsConfigParams contains all the parameters to send to the API endpoint
 */
 type PutMmdsConfigParams struct {
 
-	/* Body.
-
-	   The MMDS configuration as JSON.
-	*/
+	// Body.
+	//
+	// The MMDS configuration as JSON.
 	Body *models.MmdsConfig
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put mmds config params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutMmdsConfigParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put mmds config params
+// WithTimeout adds the timeout to the put mmds config params.
 func (o *PutMmdsConfigParams) WithTimeout(timeout time.Duration) *PutMmdsConfigParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put mmds config params
+// SetTimeout adds the timeout to the put mmds config params.
 func (o *PutMmdsConfigParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put mmds config params
+// WithContext adds the context to the put mmds config params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsConfigParams].
 func (o *PutMmdsConfigParams) WithContext(ctx context.Context) *PutMmdsConfigParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put mmds config params
+// SetContext adds the context to the put mmds config params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutMmdsConfigParams].
 func (o *PutMmdsConfigParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put mmds config params
+// WithHTTPClient adds the HTTPClient to the put mmds config params.
 func (o *PutMmdsConfigParams) WithHTTPClient(client *http.Client) *PutMmdsConfigParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put mmds config params
+// SetHTTPClient adds the HTTPClient to the put mmds config params.
 func (o *PutMmdsConfigParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put mmds config params
+// WithBody adds the body to the put mmds config params.
 func (o *PutMmdsConfigParams) WithBody(body *models.MmdsConfig) *PutMmdsConfigParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put mmds config params
+// SetBody adds the body to the put mmds config params.
 func (o *PutMmdsConfigParams) SetBody(body *models.MmdsConfig) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutMmdsConfigParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

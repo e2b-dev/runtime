@@ -168,7 +168,7 @@ func TestGuestProfileResolvesTheDefault(t *testing.T) {
 type failingFlags struct{ t *testing.T }
 
 func (f failingFlags) BoolFlag(_ context.Context, flag featureflags.BoolFlag, _ ...ldcontext.Context) bool {
-	f.t.Fatalf("the flag %s was read", flag.Key())
+	require.Fail(f.t, "the flag "+flag.Key()+" was read")
 
 	return false
 }

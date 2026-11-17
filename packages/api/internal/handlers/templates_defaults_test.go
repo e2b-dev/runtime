@@ -31,14 +31,14 @@ func TestGetDefaultTemplates_UsesNewestReadyDefaultBuildForResources(t *testing.
 	markTemplateDefault(t, ctx, testDB, templateID, new("Base sandbox"))
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
-	readyBuildID := insertTestBuild(t, ctx, testDB, templateID, "ready", 2, baseTime)
+	readyBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 2, baseTime)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, readyBuildID, "default", baseTime)
 	// A newer build tagged default is still building: the template keeps
 	// running the ready one, and reports the newer one's status.
-	buildingBuildID := insertTestBuild(t, ctx, testDB, templateID, "building", 8, baseTime.Add(time.Hour))
+	buildingBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupInProgress, 8, baseTime.Add(time.Hour))
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, buildingBuildID, "default", baseTime.Add(time.Hour))
 	// A newer ready build under another tag does not change the default.
-	betaBuildID := insertTestBuild(t, ctx, testDB, templateID, "ready", 4, baseTime.Add(2*time.Hour))
+	betaBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 4, baseTime.Add(2*time.Hour))
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, betaBuildID, "beta", baseTime.Add(2*time.Hour))
 
 	templates := callDefaultTemplatesHandler(t, ctx, testDB, asAdmin)
@@ -68,7 +68,7 @@ func TestGetDefaultTemplates_ListsDefaultWithoutReadyBuild(t *testing.T) {
 	markTemplateDefault(t, ctx, testDB, failedOnlyID, nil)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
-	failedBuildID := insertTestBuild(t, ctx, testDB, failedOnlyID, "failed", 2, baseTime)
+	failedBuildID := insertTestBuild(t, ctx, testDB, failedOnlyID, dbtypes.BuildStatusGroupFailed, 2, baseTime)
 	insertTemplateTagAssignment(t, ctx, testDB, failedOnlyID, failedBuildID, "default", baseTime)
 
 	templates := callDefaultTemplatesHandler(t, ctx, testDB, asAdmin)
@@ -297,15 +297,15 @@ func setTemplateCreator(t *testing.T, ctx context.Context, testDB *testutils.Dat
 
 // insertTestBuild creates a build with known resources and creation time:
 // vcpu as given, 2048 MiB of memory, a 10240 MiB disk and envd 0.2.0.
-func insertTestBuild(t *testing.T, ctx context.Context, testDB *testutils.Database, templateID string, status string, vcpu int64, createdAt time.Time) uuid.UUID {
+func insertTestBuild(t *testing.T, ctx context.Context, testDB *testutils.Database, templateID string, statusGroup dbtypes.BuildStatusGroup, vcpu int64, createdAt time.Time) uuid.UUID {
 	t.Helper()
 
 	buildID := uuid.New()
 	err := testDB.SqlcClient.TestsRawSQL(ctx,
 		`INSERT INTO public.env_builds
-		(id, env_id, team_id, status, vcpu, ram_mb, free_disk_size_mb, total_disk_size_mb, envd_version, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
+		(id, env_id, team_id, status_group, vcpu, ram_mb, free_disk_size_mb, total_disk_size_mb, envd_version, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
 		VALUES ($1, $2, (SELECT team_id FROM public.envs WHERE id = $2), $3, $4, 2048, 512, 10240, '0.2.0', '6.1.0', '1.4.0', 'test-node', $5, $5)`,
-		buildID, templateID, status, vcpu, createdAt,
+		buildID, templateID, statusGroup, vcpu, createdAt,
 	)
 	require.NoError(t, err, "Failed to create test build")
 

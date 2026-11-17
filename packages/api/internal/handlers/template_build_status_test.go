@@ -29,7 +29,7 @@ func TestTemplateBuildStatusLogsStayEmptyWithoutABuildVersion(t *testing.T) {
 	buildID := uuid.MustParse(created.JSON202.BuildID)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.env_builds SET version = NULL WHERE id = $1`, buildID))
 	require.NoError(t, db.SqlcClient.FinishTemplateBuild(t.Context(), queries.FinishTemplateBuildParams{
-		BuildID: buildID, Status: dbtypes.BuildStatusUploaded,
+		BuildID: buildID, StatusGroup: dbtypes.BuildStatusGroupReady,
 	}))
 	store.clusters = clusters.NewTestPool(clusters.NewCluster(consts.LocalClusterID, nil, "", nil, nil, &originalClusterLogs{}))
 

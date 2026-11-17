@@ -257,7 +257,7 @@ func TestSnapshotIdempotencyReportsConcurrentDuplicates(t *testing.T) {
 	select {
 	case <-f.backend.started:
 	case w := <-owner:
-		t.Fatalf("snapshot finished before it was blocked: %d %s", w.Code, w.Body.String())
+		require.Failf(t, "snapshot finished before it was blocked", "%d %s", w.Code, w.Body.String())
 	}
 
 	duplicates := make(chan *httptest.ResponseRecorder, 4)

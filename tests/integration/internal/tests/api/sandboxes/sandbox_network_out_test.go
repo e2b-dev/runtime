@@ -17,13 +17,9 @@ import (
 	"github.com/e2b-dev/infra/tests/integration/internal/utils"
 )
 
-// gpg has no connect timeout of its own, and keyserver.ubuntu.com round-robins
-// over addresses that black-hole packets. Keep this under the sandbox TTL.
-const gpgKeyserverTimeout = 25 * time.Second
-
 // ensureNetworkTestTemplate returns the template the network tests run on:
 // the suite's prebuilt base template. It already carries every tool they
-// exec (curl, ssh, gpg, python3), so nothing is built or installed for them.
+// exec (curl, ssh, python3), so nothing is built or installed for them.
 // The former custom template installed those tools with apt on top of
 // ubuntu:22.04, and one slow Ubuntu mirror then timed its build out and
 // failed every network test in the shard at once.
@@ -54,6 +50,34 @@ for _ in range(tries):
         continue
     if reply[:2] == query[:2]:
         sys.exit(0)
+sys.exit(1)
+`
+
+// halfCloseProbe sends a DNS query over TCP port 53 to the server in the
+// first argument, half-closes its side, and reads until the server closes,
+// as many times as the second argument says. It exits 0 once a reply answers
+// the query and 1 when none does.
+const halfCloseProbe = `import socket, struct, sys
+server, tries = sys.argv[1], int(sys.argv[2])
+query = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+query += b"\x06google\x03com\x00" + struct.pack(">HH", 1, 1)
+for attempt in range(1, tries + 1):
+    reply = b""
+    try:
+        with socket.create_connection((server, 53), timeout=5) as sock:
+            sock.sendall(struct.pack(">H", len(query)) + query)
+            sock.shutdown(socket.SHUT_WR)
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                reply += chunk
+    except OSError as err:
+        print(f"attempt {attempt}: {err!r} after {len(reply)} bytes", file=sys.stderr)
+        continue
+    if reply[2:4] == query[:2]:
+        sys.exit(0)
+    print(f"attempt {attempt}: closed after {len(reply)} bytes without a reply", file=sys.stderr)
 sys.exit(1)
 `
 
@@ -1099,78 +1123,46 @@ func TestWithNetworkConfig_SSHWorks(t *testing.T) {
 		"Expected 'Permission denied (publickey)' indicating SSH handshake succeeded but auth failed")
 }
 
-// TestGPGKeyserverWorks tests that GPG keyserver connections work correctly.
-// GPG keyservers use the HKP protocol (HTTP Keyserver Protocol) typically on port 11371.
-// This test is important for verifying TCP half-close handling in the firewall proxy.
-// GPG's HKP client may half-close the connection after sending the request (FIN from client),
-// while still waiting for the server's response. If the proxy doesn't handle half-close correctly,
-// the connection would freeze waiting indefinitely and the key retrieval would fail.
-// Expected: GPG should successfully receive the key from the keyserver.
-func TestGPGKeyserverWorks(t *testing.T) {
+// TestHalfClosedConnectionGetsReply tests that the egress proxy keeps the
+// reply direction open after the sandbox half-closes a connection. A proxy
+// that takes the sandbox's FIN for a full close drops the reply. Port 53
+// reaches the proxy's CIDR-only listener, the one with no protocol sniffing.
+func TestHalfClosedConnectionGetsReply(t *testing.T) {
 	t.Parallel()
 
 	templateID := ensureNetworkTestTemplate(t)
 	client := setup.GetAPIClient()
 
-	t.Run("without network config", func(t *testing.T) {
-		t.Parallel()
-		ctx := t.Context()
+	tests := []struct {
+		name    string
+		network *api.SandboxNetworkConfig
+	}{
+		{name: "without network config"},
+		{
+			name: "with network config",
+			// denyOut proves the config is evaluated, not bypassed; allowOut takes precedence.
+			network: &api.SandboxNetworkConfig{
+				AllowOut: &[]string{sandbox_network.AllInternetTrafficCIDR},
+				DenyOut:  &[]string{sandbox_network.AllInternetTrafficCIDR},
+			},
+		},
+	}
 
-		// Create sandbox WITHOUT any network configuration
-		// This tests the default behavior - all traffic should be allowed
-		sbx := utils.SetupSandboxWithCleanup(t, client,
-			utils.WithTemplateID(templateID),
-			utils.WithTimeout(60),
-			// No network config - this is the key part of the test
-		)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
 
-		envdClient := setup.GetEnvdClient(t, ctx)
+			sbx := utils.SetupSandboxWithCleanup(t, client,
+				utils.WithTemplateID(templateID),
+				utils.WithTimeout(60),
+				utils.WithNetwork(tc.network),
+			)
+			envdClient := setup.GetEnvdClient(t, ctx)
 
-		// Test GPG keyserver connection to Ubuntu's keyserver
-		// This tests that:
-		// 1. Non-standard TCP ports (11371) work correctly through the firewall
-		// 2. TCP half-close is properly handled (GPG may FIN after request but expects response)
-		t.Log("Testing GPG keyserver connection to hkp://keyserver.ubuntu.com...")
-		gpgCtx, cancel := context.WithTimeout(ctx, gpgKeyserverTimeout)
-		defer cancel()
-
-		output, err := utils.ExecCommandWithOutput(t, gpgCtx, sbx, envdClient, nil, "user",
-			"gpg", "--keyserver", "hkp://keyserver.ubuntu.com",
-			"--recv-key", "95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7")
-		require.NoError(t, err, "Expected GPG keyserver command to succeed, got error: %v, output: %s", err, output)
-		t.Logf("GPG keyserver output: %s", output)
-	})
-
-	t.Run("with network config", func(t *testing.T) {
-		t.Parallel()
-		ctx := t.Context()
-
-		// Create sandbox WITH network configuration that allows all IPs
-		// Using 0.0.0.0/0 in allowOut to allow all traffic, but with denyOut set to prove
-		// network config is being processed (not just bypassed).
-		sbx := utils.SetupSandboxWithCleanup(t, client,
-			utils.WithTemplateID(templateID),
-			utils.WithTimeout(60),
-			utils.WithNetwork(&api.SandboxNetworkConfig{
-				AllowOut: &[]string{sandbox_network.AllInternetTrafficCIDR}, // Allow all IPs
-				DenyOut:  &[]string{sandbox_network.AllInternetTrafficCIDR}, // Would block all, but allowOut takes precedence
-			}),
-		)
-
-		envdClient := setup.GetEnvdClient(t, ctx)
-
-		// Test GPG keyserver connection to Ubuntu's keyserver
-		// This tests that:
-		// 1. Non-standard TCP ports (11371) work correctly through the firewall when network config is active
-		// 2. TCP half-close is properly handled (GPG may FIN after request but expects response)
-		t.Log("Testing GPG keyserver connection to hkp://keyserver.ubuntu.com with network config defined...")
-		gpgCtx, cancel := context.WithTimeout(ctx, gpgKeyserverTimeout)
-		defer cancel()
-
-		output, err := utils.ExecCommandWithOutput(t, gpgCtx, sbx, envdClient, nil, "user",
-			"gpg", "--keyserver", "hkp://keyserver.ubuntu.com",
-			"--recv-key", "95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7")
-		require.NoError(t, err, "Expected GPG keyserver command to succeed, got error: %v, output: %s", err, output)
-		t.Logf("GPG keyserver output: %s", output)
-	})
+			output, err := utils.ExecCommandWithOutput(t, ctx, sbx, envdClient, nil, "user",
+				"python3", "-c", halfCloseProbe, "8.8.8.8", "3")
+			require.NoError(t, err, "Expected a reply on the half-closed connection, output: %s", output)
+		})
+	}
 }

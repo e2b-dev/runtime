@@ -3,6 +3,7 @@ package permissions
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/user"
 	"path/filepath"
 
@@ -59,4 +60,38 @@ func ExpandAndResolve(path string, user *user.User, defaultPath *string) (string
 	}
 
 	return abs, nil
+}
+
+// EnsureDirs creates every missing directory on the way to path and gives each
+// one it creates to uid and gid through Chown, which decides per platform what
+// ownership means.
+func EnsureDirs(path string, uid, gid int) error {
+	for _, subpath := range getSubpaths(path) {
+		info, err := os.Stat(subpath)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat directory: %w", err)
+		}
+
+		if err != nil && os.IsNotExist(err) {
+			err = os.Mkdir(subpath, 0o755)
+			if err != nil && !os.IsExist(err) {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
+
+			// Chown even if another process created the directory (os.IsExist),
+			// since it may not have called Chown yet. Chown is idempotent.
+			err = Chown(subpath, uid, gid)
+			if err != nil {
+				return fmt.Errorf("failed to chown directory: %w", err)
+			}
+
+			continue
+		}
+
+		if !info.IsDir() {
+			return fmt.Errorf("path is a file: %s", subpath)
+		}
+	}
+
+	return nil
 }

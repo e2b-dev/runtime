@@ -162,7 +162,7 @@ func repauseParams(teamID uuid.UUID, sandboxID, baseTemplateID string) queries.U
 		KernelVersion:      "6.1.0",
 		FirecrackerVersion: "1.4.0",
 		OriginNodeID:       "test-node",
-		Status:             types.BuildStatusSuccess,
+		StatusGroup:        types.BuildStatusGroupReady,
 	}
 }
 
@@ -220,7 +220,7 @@ func TestUpsertSnapshot_KeepsAStampCommittedWhileItWaited(t *testing.T) {
 	case err := <-upserted:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the upsert did not finish after the soft delete committed")
+		require.Fail(t, "the upsert did not finish after the soft delete committed")
 	}
 	assert.Equal(t, "stamped", testutils.SnapshotEnvStamp(t, ctx, db, sandboxID))
 }
@@ -254,7 +254,7 @@ func TestSoftDeleteTemplate_StampsARowAPauseHeld(t *testing.T) {
 	case err := <-deleted:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "the soft delete did not finish after the pause committed")
+		require.Fail(t, "the soft delete did not finish after the pause committed")
 	}
 	assert.Equal(t, "stamped", testutils.SnapshotEnvStamp(t, ctx, db, sandboxID))
 }

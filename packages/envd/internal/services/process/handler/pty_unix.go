@@ -16,8 +16,8 @@ func (p *Handler) startPty(_ context.Context, cmd *exec.Cmd, cols, rows uint16) 
 	return pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
-func (p *Handler) sysResizeTty(size *pty.Winsize) error {
-	return pty.Setsize(p.tty, size)
+func (p *Handler) sysResizeTty(cols, rows uint16) error {
+	return pty.Setsize(p.tty, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
 func (p *Handler) sysWriteTty(data []byte) error {

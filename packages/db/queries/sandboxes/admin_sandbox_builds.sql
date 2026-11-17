@@ -48,7 +48,6 @@ SELECT
     eba.env_id,
     eba.tag,
     eba.created_at::timestamptz AS assigned_at,
-    eb.status,
     eb.status_group,
     eb.cluster_node_id
 FROM public.env_build_assignments eba

@@ -337,13 +337,13 @@ func TestRemoveThenWriteGated(t *testing.T) {
 				case rerr := <-removeCh:
 					require.NoError(t, rerr, "gated remove")
 				case <-ctx.Done():
-					t.Fatal("timed out waiting for the gated remove")
+					require.Fail(t, "timed out waiting for the gated remove")
 				}
 				select {
 				case werr := <-writeCh:
 					require.NoError(t, werr, "concurrent write")
 				case <-ctx.Done():
-					t.Fatal("timed out waiting for the concurrent write")
+					require.Fail(t, "timed out waiting for the concurrent write")
 				}
 
 				// The fault hook fires before the install, so the log is

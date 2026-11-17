@@ -25,6 +25,13 @@ type Metrics struct {
 	MemTotal uint64 `json:"mem_total"` // Total virtual memory in bytes
 	MemUsed  uint64 `json:"mem_used"`  // Used virtual memory in bytes
 	MemCache uint64 `json:"mem_cache"` // Cached memory (page cache) in bytes
+	// MemLimit is filled by the API from the memory limit manager, not here.
+	MemLimit uint64 `json:"mem_limit"` // Limit envd last applied to the user and PTY cgroups in bytes, 0 when none
+	// MemMovable, MemKernel and MemOnlinePolicy are filled by the API from the memory limit
+	// manager's last read of ReadMemoryLayout.
+	MemMovable      uint64 `json:"mem_movable"`                 // Memory managed in ZONE_MOVABLE in bytes
+	MemKernel       uint64 `json:"mem_kernel"`                  // Memory managed in every other zone in bytes
+	MemOnlinePolicy string `json:"mem_online_policy,omitempty"` // memory_hotplug.online_policy, empty when the kernel has none
 
 	DiskUsed  uint64 `json:"disk_used"`  // Used disk space in bytes
 	DiskTotal uint64 `json:"disk_total"` // Total disk space in bytes
@@ -74,4 +81,14 @@ func GetMetrics() (*Metrics, error) {
 type diskSpace struct {
 	Total     uint64
 	Available uint64
+}
+
+// MemTotal is the guest memory the kernel has online, in bytes.
+func MemTotal() (uint64, error) {
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
+
+	return v.Total, nil
 }

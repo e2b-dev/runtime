@@ -53,21 +53,6 @@ func (q *Queries) AssignTeamCluster(ctx context.Context, arg AssignTeamClusterPa
 	return i, err
 }
 
-const clusterDeletionProtected = `-- name: ClusterDeletionProtected :one
-SELECT EXISTS (
-    SELECT FROM public.clusters
-    WHERE id = $1::uuid
-      AND deletion_protection
-)
-`
-
-func (q *Queries) ClusterDeletionProtected(ctx context.Context, clusterID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, clusterDeletionProtected, clusterID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const clusterUsedByMultipleTeams = `-- name: ClusterUsedByMultipleTeams :one
 SELECT COUNT(DISTINCT team_id) > 1
 FROM (
@@ -85,80 +70,6 @@ func (q *Queries) ClusterUsedByMultipleTeams(ctx context.Context, clusterID uuid
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const createCluster = `-- name: CreateCluster :one
-INSERT INTO public.clusters (
-    id,
-    name,
-    endpoint,
-    endpoint_tls,
-    token,
-    sandbox_proxy_domain,
-    auth_org_id,
-    deletion_protection
-)
-VALUES (
-    COALESCE($1::uuid, gen_random_uuid()),
-    $2::text,
-    $3::text,
-    $4::boolean,
-    $5::text,
-    $6::text,
-    $7::text,
-    $8::boolean
-)
-ON CONFLICT (id) DO UPDATE
-SET id = EXCLUDED.id
-WHERE clusters.name = EXCLUDED.name
-  AND clusters.endpoint = EXCLUDED.endpoint
-  AND clusters.endpoint_tls = EXCLUDED.endpoint_tls
-  AND clusters.token = EXCLUDED.token
-  AND clusters.sandbox_proxy_domain IS NOT DISTINCT FROM EXCLUDED.sandbox_proxy_domain
-  AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
-RETURNING id
-`
-
-type CreateClusterParams struct {
-	ClusterID          *uuid.UUID
-	Name               string
-	Endpoint           string
-	EndpointTls        bool
-	Token              string
-	SandboxProxyDomain *string
-	AuthOrgID          *string
-	DeletionProtection bool
-}
-
-// deletion_protection is set only on a new row. Registering an existing cluster
-// again leaves its stored protection unchanged.
-func (q *Queries) CreateCluster(ctx context.Context, arg CreateClusterParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, createCluster,
-		arg.ClusterID,
-		arg.Name,
-		arg.Endpoint,
-		arg.EndpointTls,
-		arg.Token,
-		arg.SandboxProxyDomain,
-		arg.AuthOrgID,
-		arg.DeletionProtection,
-	)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
-const deleteCluster = `-- name: DeleteCluster :execrows
-DELETE FROM public.clusters
-WHERE id = $1::uuid
-`
-
-func (q *Queries) DeleteCluster(ctx context.Context, clusterID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteCluster, clusterID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const deleteEnvironmentsActiveBuilds = `-- name: DeleteEnvironmentsActiveBuilds :exec
@@ -262,84 +173,6 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 	return items, nil
 }
 
-const lockClusterDeletionProtection = `-- name: LockClusterDeletionProtection :one
-SELECT deletion_protection
-FROM public.clusters
-WHERE id = $1::uuid
-FOR UPDATE
-`
-
-// Locks the row for the rest of the transaction, so a concurrent protection
-// change commits before or after the caller's check, never between.
-func (q *Queries) LockClusterDeletionProtection(ctx context.Context, clusterID uuid.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, lockClusterDeletionProtection, clusterID)
-	var deletion_protection bool
-	err := row.Scan(&deletion_protection)
-	return deletion_protection, err
-}
-
-const registerManagedCluster = `-- name: RegisterManagedCluster :one
-INSERT INTO public.clusters (
-    id,
-    name,
-    endpoint,
-    endpoint_tls,
-    token,
-    sandbox_proxy_domain,
-    auth_org_id,
-    deletion_protection
-)
-VALUES (
-    COALESCE($1::uuid, gen_random_uuid()),
-    $2::text,
-    $3::text,
-    $4::boolean,
-    $5::text,
-    $6::text,
-    $7::text,
-    $8::boolean
-)
-ON CONFLICT (id) DO UPDATE
-SET token = EXCLUDED.token,
-    endpoint = EXCLUDED.endpoint,
-    endpoint_tls = EXCLUDED.endpoint_tls,
-    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain
-WHERE clusters.name = EXCLUDED.name
-  AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
-RETURNING id
-`
-
-type RegisterManagedClusterParams struct {
-	ClusterID          *uuid.UUID
-	Name               string
-	Endpoint           string
-	EndpointTls        bool
-	Token              string
-	SandboxProxyDomain *string
-	AuthOrgID          *string
-	DeletionProtection bool
-}
-
-// Management registration of an existing cluster with the same name and auth
-// organization updates its connection details and credential, so a cluster
-// that moves to a new domain keeps its identity. Assignments and stored
-// deletion protection survive.
-func (q *Queries) RegisterManagedCluster(ctx context.Context, arg RegisterManagedClusterParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, registerManagedCluster,
-		arg.ClusterID,
-		arg.Name,
-		arg.Endpoint,
-		arg.EndpointTls,
-		arg.Token,
-		arg.SandboxProxyDomain,
-		arg.AuthOrgID,
-		arg.DeletionProtection,
-	)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec
 DELETE FROM public.env_aliases
 WHERE env_id = ANY($1::text[])
@@ -347,17 +180,6 @@ WHERE env_id = ANY($1::text[])
 
 func (q *Queries) ReleaseEnvironmentsAliases(ctx context.Context, envIds []string) error {
 	_, err := q.db.Exec(ctx, releaseEnvironmentsAliases, envIds)
-	return err
-}
-
-const requestClusterDeletion = `-- name: RequestClusterDeletion :exec
-UPDATE public.clusters
-SET deletion_requested_at = COALESCE(deletion_requested_at, now())
-WHERE id = $1::uuid
-`
-
-func (q *Queries) RequestClusterDeletion(ctx context.Context, clusterID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, requestClusterDeletion, clusterID)
 	return err
 }
 

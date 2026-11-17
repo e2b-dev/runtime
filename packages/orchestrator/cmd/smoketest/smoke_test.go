@@ -19,11 +19,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldlog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
+	hostmetrics "github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/artifact"
@@ -117,6 +119,17 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 			meta, err := tmpl.Metadata()
 			require.NoError(t, err)
 
+			// A hugepage start stops counting toward the node's admission once
+			// its guest memory is reported reserved: the pool must show it by then.
+			var reported bool
+			var committedBytes uint64
+			memoryReserved := sandbox.WithGuestMemoryReserved(func() {
+				reported = true
+				if m, err := hostmetrics.NewHostMetrics().GetMemoryMetrics(ctx); err == nil {
+					committedBytes = (m.HugePagesUsed + m.HugePagesReserved) * m.HugePageSizeBytes
+				}
+			})
+
 			token := "smoke-test"
 			t0 := time.Now()
 			sbx, err := infra.factory.ResumeSandbox(
@@ -146,9 +159,16 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 				t0,
 				t0.Add(10*time.Minute),
 				nil,
+				memoryReserved,
 			)
 			require.NoError(t, err, "resume failed for FC %s", fcVersion)
 			t.Logf("resumed in %s", time.Since(t0))
+
+			// Only a Firecracker that passes its memory file has it mapped.
+			require.Equal(t, fc.FCSupportsMemfd(fcVersion), reported, "guest memory reported reserved")
+			if reported {
+				require.GreaterOrEqual(t, committedBytes, uint64(512<<20), "the hugepage pool shows the 512 MiB guest once its memory is reported reserved")
+			}
 
 			// Phase 3: freeze and thaw the live guest rootfs. (envd readiness
 			// is already guaranteed: ResumeSandbox runs WaitForEnvd before
@@ -564,21 +584,20 @@ func assertFsFreezeQuiescesRootfsAt(t *testing.T, ctx context.Context, envdURL, 
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), envdRequestTimeout)
 			defer cancel()
 
-			if _, err := postEnvd(cleanupCtx, client, envdURL, accessToken, "/fsthaw"); err != nil {
-				t.Errorf("thawing the guest rootfs during cleanup failed: %v", err)
-			}
+			_, err := postEnvd(cleanupCtx, client, envdURL, accessToken, "/fsthaw")
+			assert.NoError(t, err, "thawing the guest rootfs during cleanup") //nolint:testifylint // keep waiting for the blocked write below even if the thaw failed
 		}
 
 		select {
 		case <-blocked:
 		case <-time.After(thawedWriteTimeout):
-			t.Error("the write blocked by the freeze never completed after the thaw")
+			assert.Fail(t, "the write blocked by the freeze never completed after the thaw")
 		}
 	}()
 
 	select {
 	case blockedStatus := <-blocked:
-		t.Fatalf("a write to the frozen rootfs completed with HTTP %d; the freeze did not take", blockedStatus)
+		require.Failf(t, "a write to the frozen rootfs completed; the freeze did not take", "HTTP %d", blockedStatus)
 	case <-time.After(frozenWriteWindow):
 	}
 
@@ -607,7 +626,7 @@ func assertFsFreezeQuiescesRootfsAt(t *testing.T, ctx context.Context, envdURL, 
 	case blockedStatus := <-blocked:
 		require.Equal(t, http.StatusOK, blockedStatus, "the write blocked by the freeze should succeed once thawed")
 	case <-time.After(thawedWriteTimeout):
-		t.Fatal("the write blocked by the freeze did not complete after the thaw")
+		require.Fail(t, "the write blocked by the freeze did not complete after the thaw")
 	}
 }
 

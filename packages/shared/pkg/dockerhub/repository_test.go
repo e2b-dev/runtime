@@ -2,6 +2,9 @@ package dockerhub
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRemoveRegistryFromTag(t *testing.T) {
@@ -60,14 +63,12 @@ func TestRemoveRegistryFromTag(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := removeRegistryFromTag(tt.tag)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("removeRegistryFromTag() error = %v, wantErr %v", err, tt.wantErr)
-
-				return
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			if got != tt.want {
-				t.Errorf("removeRegistryFromTag() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

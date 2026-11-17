@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -63,6 +64,7 @@ func (a *APIStore) GetTemplates(c *gin.Context, params api.GetTemplatesParams) {
 	}
 
 	if capped && len(envs) > templatesUnboundedMaxCount {
+		a.templateListCapHits.Add(ctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.ID.String())))
 		a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Team has more than %d templates; update to the latest E2B SDK or list them with GET /v2/templates", templatesUnboundedMaxCount))
 		telemetry.ReportEvent(ctx, "template list exceeds the unbounded limit")
 

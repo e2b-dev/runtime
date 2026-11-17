@@ -156,7 +156,10 @@ func (e *Evictor) Start(ctx context.Context) {
 		case <-ticker.C:
 			sbxs, err := e.store.ExpiredItems(ctx)
 			if err != nil {
-				logger.L().Error(ctx, "Failed to get expired sandboxes", zap.Error(err))
+				// A stop cancels the query in flight; that is not a failure.
+				if ctx.Err() == nil {
+					logger.L().Error(ctx, "Failed to get expired sandboxes", zap.Error(err))
+				}
 
 				continue
 			}

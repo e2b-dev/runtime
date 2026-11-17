@@ -24,7 +24,7 @@ func waitCMUXShutdown(t *testing.T, done <-chan struct{}, message string) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal(message)
+		require.Fail(t, message)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestCMUXCloseJoinsBlockedMatcher(t *testing.T) {
 	select {
 	case <-started:
 	case <-ctx.Done():
-		t.Fatal("real matcher did not observe the client")
+		require.Fail(t, "real matcher did not observe the client")
 	}
 	// This is the normal Run ordering: HTTP/gRPC close the matched listener
 	// (and thus root socket) before the final cmux closer joins matcher work.

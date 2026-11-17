@@ -61,7 +61,7 @@ func requireNoSentinel(t *testing.T, what, haystack string, needles ...string) {
 
 	for _, needle := range needles {
 		if needle != "" && strings.Contains(haystack, needle) {
-			t.Fatalf("%s leaked confidential request material", what)
+			require.Fail(t, what+" leaked confidential request material")
 		}
 	}
 }
@@ -289,7 +289,7 @@ func TestPostSecretsSendsOnlyDerivedProjectAndValue(t *testing.T) {
 	require.Empty(t, request.GetMetadata(), "omitted metadata is sent as empty")
 
 	if string(request.GetValue()) != sentinelSecretValue {
-		t.Fatal("the backend did not receive the value the caller sent")
+		require.Fail(t, "the backend did not receive the value the caller sent")
 	}
 
 	// No caller credential and no client-asserted tenant reaches the hop.
@@ -1192,8 +1192,54 @@ func receiveWithin[T any](t *testing.T, values <-chan T, what string) (value T) 
 	select {
 	case value = <-values:
 	case <-time.After(10 * time.Second):
-		t.Fatalf("timed out waiting for %s", what)
+		require.Fail(t, "timed out waiting for "+what)
 	}
 
 	return value
+}
+
+func Test_SecretsHandlers_CacheControl(t *testing.T) {
+	t.Parallel()
+
+	endpoints := map[string]struct {
+		method, target string
+		serve          func(store *APIStore, c *gin.Context)
+	}{
+		"create": {http.MethodPost, "/secrets", func(store *APIStore, c *gin.Context) { store.PostSecrets(c) }},
+		"list":   {http.MethodGet, "/secrets", func(store *APIStore, c *gin.Context) { store.GetSecrets(c, api.GetSecretsParams{}) }},
+		"get":    {http.MethodGet, "/secrets/my-secret", func(store *APIStore, c *gin.Context) { store.GetSecretsSecretID(c, "my-secret") }},
+		"update": {http.MethodPost, "/secrets/my-secret", func(store *APIStore, c *gin.Context) { store.PostSecretsSecretID(c, "my-secret") }},
+		"delete": {http.MethodDelete, "/secrets/my-secret", func(store *APIStore, c *gin.Context) { store.DeleteSecretsSecretID(c, "my-secret") }},
+	}
+	for name, tc := range endpoints {
+		t.Run("should mark a refused "+name+" response no-store", func(t *testing.T) {
+			t.Parallel()
+
+			// Arrange
+			store := newSecretsStore(t, startSecretsBackend(t, &fakeSecretsBackend{}), false)
+			ginCtx, recorder, _ := newSecretsRequest(t, tc.method, tc.target, "")
+
+			// Act
+			tc.serve(store, ginCtx)
+
+			// Assert
+			require.GreaterOrEqual(t, ginCtx.Writer.Status(), http.StatusBadRequest)
+			require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+		})
+	}
+
+	t.Run("should mark a successful response no-store", func(t *testing.T) {
+		t.Parallel()
+
+		// Arrange
+		store := newSecretsStore(t, startSecretsBackend(t, &fakeSecretsBackend{}), true)
+		ginCtx, recorder, _ := newSecretsRequest(t, http.MethodGet, "/secrets", "")
+
+		// Act
+		store.GetSecrets(ginCtx, api.GetSecretsParams{})
+
+		// Assert
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+	})
 }

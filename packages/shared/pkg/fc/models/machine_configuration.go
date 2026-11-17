@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -72,7 +73,7 @@ func (m *MachineConfiguration) Validate(formats strfmt.Registry) error {
 }
 
 func (m *MachineConfiguration) validateCPUTemplate(formats strfmt.Registry) error {
-	if swag.IsZero(m.CPUTemplate) { // not required
+	if typeutils.IsZero(m.CPUTemplate) { // not required
 		return nil
 	}
 
@@ -124,7 +125,7 @@ func (m *MachineConfiguration) validateHugePagesEnum(path, location string, valu
 }
 
 func (m *MachineConfiguration) validateHugePages(formats strfmt.Registry) error {
-	if swag.IsZero(m.HugePages) { // not required
+	if typeutils.IsZero(m.HugePages) { // not required
 		return nil
 	}
 
@@ -180,7 +181,7 @@ func (m *MachineConfiguration) contextValidateCPUTemplate(ctx context.Context, f
 
 	if m.CPUTemplate != nil {
 
-		if swag.IsZero(m.CPUTemplate) { // not required
+		if typeutils.IsZero(m.CPUTemplate) { // not required
 			return nil
 		}
 
@@ -206,13 +207,13 @@ func (m *MachineConfiguration) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *MachineConfiguration) UnmarshalBinary(b []byte) error {
 	var res MachineConfiguration
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

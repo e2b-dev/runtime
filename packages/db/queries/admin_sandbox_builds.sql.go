@@ -158,7 +158,6 @@ SELECT
     eba.env_id,
     eba.tag,
     eba.created_at::timestamptz AS assigned_at,
-    eb.status,
     eb.status_group,
     eb.cluster_node_id
 FROM public.env_build_assignments eba
@@ -190,7 +189,6 @@ type ListAdminSandboxBuildsRow struct {
 	EnvID         string
 	Tag           string
 	AssignedAt    time.Time
-	Status        types.BuildStatus
 	StatusGroup   types.BuildStatusGroup
 	ClusterNodeID *string
 }
@@ -217,7 +215,6 @@ func (q *Queries) ListAdminSandboxBuilds(ctx context.Context, arg ListAdminSandb
 			&i.EnvID,
 			&i.Tag,
 			&i.AssignedAt,
-			&i.Status,
 			&i.StatusGroup,
 			&i.ClusterNodeID,
 		); err != nil {

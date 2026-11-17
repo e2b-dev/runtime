@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -84,7 +84,7 @@ func (m *InstanceActionInfo) validateActionType(formats strfmt.Registry) error {
 }
 
 // ContextValidate validates this instance action info based on context it is used
-func (m *InstanceActionInfo) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *InstanceActionInfo) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -93,13 +93,13 @@ func (m *InstanceActionInfo) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *InstanceActionInfo) UnmarshalBinary(b []byte) error {
 	var res InstanceActionInfo
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

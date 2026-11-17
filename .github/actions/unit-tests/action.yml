@@ -136,7 +136,7 @@ runs:
     # mise downloads the release binary pinned in .tool-versions rather than
     # building it from source.
     - name: Install gotestsum
-      uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
       with:
         version: ${{ env.TOOL_VERSION_MISE }}
         install_args: gotestsum

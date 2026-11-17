@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
@@ -61,12 +62,8 @@ func TestPollBuildStatus_builderLookupErrorKeepsBuildAlive(t *testing.T) {
 		c.poll(ctx)
 
 		failedReasons, finished, calls := client.snapshot()
-		if len(failedReasons) > 0 {
-			t.Fatalf("build was failed after %d status calls, reasons: %q", calls, failedReasons)
-		}
-		if !finished {
-			t.Fatalf("build was not finished after %d status calls", calls)
-		}
+		require.Empty(t, failedReasons, "build was failed after %d status calls", calls)
+		require.True(t, finished, "build was not finished after %d status calls", calls)
 	})
 }
 
@@ -178,12 +175,8 @@ func TestPollBuildStatus_transientRPCErrorKeepsBuildAlive(t *testing.T) {
 		c.poll(ctx)
 
 		failedReasons, finished, calls := client.snapshot()
-		if len(failedReasons) > 0 {
-			t.Fatalf("build was failed after %d status calls, reasons: %q", calls, failedReasons)
-		}
-		if !finished {
-			t.Fatalf("build was not finished after %d status calls", calls)
-		}
+		require.Empty(t, failedReasons, "build was failed after %d status calls", calls)
+		require.True(t, finished, "build was not finished after %d status calls", calls)
 	})
 }
 
@@ -209,21 +202,11 @@ func TestPollBuildStatus_transientRPCErrorEventuallyFailsBuild(t *testing.T) {
 		elapsed := time.Since(start)
 
 		failedReasons, _, _ := client.snapshot()
-		if len(failedReasons) != 1 {
-			t.Fatalf("expected exactly one failure, got %q", failedReasons)
-		}
-		if !strings.Contains(failedReasons[0], "DeadlineExceeded") {
-			t.Errorf("failure reason should keep the underlying error, got %q", failedReasons[0])
-		}
-		if elapsed < transientErrorGracePeriod {
-			t.Errorf("build failed after %s, expected the poller to retry for at least %s", elapsed, transientErrorGracePeriod)
-		}
-		if elapsed >= buildTimeout {
-			t.Errorf("build failed only once the build timed out, after %s", elapsed)
-		}
-		if client.wasDeleted() {
-			t.Error("the build was cancelled on the node; only the build deadline does that")
-		}
+		require.Len(t, failedReasons, 1)
+		assert.Contains(t, failedReasons[0], "DeadlineExceeded", "failure reason should keep the underlying error")
+		assert.GreaterOrEqual(t, elapsed, transientErrorGracePeriod, "the poller should retry for at least the grace period")
+		assert.Less(t, elapsed, buildTimeout, "build failed only once the build timed out")
+		assert.False(t, client.wasDeleted(), "the build was cancelled on the node; only the build deadline does that")
 	})
 }
 
@@ -270,12 +253,8 @@ func TestPollBuildStatus_answeredPollResetsTheGracePeriod(t *testing.T) {
 		c.poll(ctx)
 
 		failedReasons, finished, _ := client.snapshot()
-		if len(failedReasons) > 0 {
-			t.Fatalf("build was failed, reasons: %q", failedReasons)
-		}
-		if !finished {
-			t.Fatal("build was not finished")
-		}
+		require.Empty(t, failedReasons)
+		require.True(t, finished, "build was not finished")
 	})
 }
 
@@ -305,12 +284,8 @@ func TestPollBuildStatus_transientRunLogsOnce(t *testing.T) {
 
 		c.poll(ctx)
 
-		if n := logs.FilterMessage("Build status polling received a transient error, keeping the build alive").Len(); n != 1 {
-			t.Errorf("transient warning logged %d times, want 1", n)
-		}
-		if n := logs.FilterMessage("Build status polling recovered").Len(); n != 1 {
-			t.Errorf("recovery logged %d times, want 1", n)
-		}
+		assert.Equal(t, 1, logs.FilterMessage("Build status polling received a transient error, keeping the build alive").Len(), "transient warning log count")
+		assert.Equal(t, 1, logs.FilterMessage("Build status polling recovered").Len(), "recovery log count")
 	})
 }
 
@@ -337,15 +312,9 @@ func TestPollBuildStatus_terminalRPCErrorFailsBuild(t *testing.T) {
 		elapsed := time.Since(start)
 
 		failedReasons, _, _ := client.snapshot()
-		if len(failedReasons) != 1 {
-			t.Fatalf("expected exactly one failure, got %q", failedReasons)
-		}
-		if !strings.Contains(failedReasons[0], "polling received unrecoverable error") {
-			t.Errorf("unexpected failure reason %q", failedReasons[0])
-		}
-		if elapsed >= transientErrorGracePeriod {
-			t.Errorf("terminal error took %s to fail the build", elapsed)
-		}
+		require.Len(t, failedReasons, 1)
+		assert.Contains(t, failedReasons[0], "polling received unrecoverable error")
+		assert.Less(t, elapsed, transientErrorGracePeriod, "terminal error took too long to fail the build")
 	})
 }
 
@@ -377,18 +346,10 @@ func TestPollBuildStatus_terminalErrorInMixedRetryBatchFailsBuild(t *testing.T) 
 		elapsed := time.Since(start)
 
 		failedReasons, _, calls := client.snapshot()
-		if len(failedReasons) != 1 {
-			t.Fatalf("expected exactly one failure after %d status calls, got %q", calls, failedReasons)
-		}
-		if !strings.Contains(failedReasons[0], "polling received unrecoverable error") {
-			t.Errorf("unexpected failure reason %q", failedReasons[0])
-		}
-		if !strings.Contains(failedReasons[0], "no such build") {
-			t.Errorf("failure reason should keep the terminal error, got %q", failedReasons[0])
-		}
-		if elapsed >= transientErrorGracePeriod {
-			t.Errorf("terminal error took %s to fail the build", elapsed)
-		}
+		require.Len(t, failedReasons, 1, "after %d status calls", calls)
+		assert.Contains(t, failedReasons[0], "polling received unrecoverable error")
+		assert.Contains(t, failedReasons[0], "no such build", "failure reason should keep the terminal error")
+		assert.Less(t, elapsed, transientErrorGracePeriod, "terminal error took too long to fail the build")
 	})
 }
 
@@ -416,9 +377,7 @@ func TestIsTransientStatusError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := isTransientStatusError(tt.err); got != tt.want {
-				t.Errorf("isTransientStatusError(%v) = %v, want %v", tt.err, got, tt.want)
-			}
+			assert.Equal(t, tt.want, isTransientStatusError(tt.err))
 		})
 	}
 }

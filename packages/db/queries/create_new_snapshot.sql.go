@@ -83,7 +83,7 @@ new_build as (
         kernel_version,
         firecracker_version,
         envd_version,
-        status,
+        status_group,
         cluster_node_id,
         total_disk_size_mb,
         updated_at,
@@ -151,7 +151,7 @@ type UpsertSnapshotParams struct {
 	KernelVersion       string
 	FirecrackerVersion  string
 	EnvdVersion         *string
-	Status              types.BuildStatus
+	StatusGroup         types.BuildStatusGroup
 	TotalDiskSizeMb     *int64
 	SourceBuildID       uuid.UUID
 	BuildFilesystemOnly bool
@@ -192,7 +192,7 @@ func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) 
 		arg.KernelVersion,
 		arg.FirecrackerVersion,
 		arg.EnvdVersion,
-		arg.Status,
+		arg.StatusGroup,
 		arg.TotalDiskSizeMb,
 		arg.SourceBuildID,
 		arg.BuildFilesystemOnly,

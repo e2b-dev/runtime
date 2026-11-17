@@ -17,8 +17,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
@@ -26,6 +24,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -88,7 +88,7 @@ func newKindFixture(t *testing.T, checkpointErr error) kindFixture {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
-	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, string(types.BuildStatusUploaded))
+	sourceBuildID := testutils.CreateTestBuild(t, t.Context(), db, baseTemplateID, types.BuildStatusGroupReady)
 
 	client := &checkpointStubClient{err: checkpointErr}
 	node := nodemanager.NewTestNode("node-1", api.NodeStatusReady, 0, 8)
@@ -180,7 +180,7 @@ func TestCheckpointSandbox_SuccessRecordsMemoryKind(t *testing.T) {
 	assert.False(t, lastSnapshotBuildKind(t, f.o, f.sbx.SandboxID), "the fork's build is labelled memory even though the previous one was filesystem-only")
 	assert.False(t, f.client.lastRequest(t).GetFilesystemOnly(), "a fork never asks for a filesystem-only checkpoint")
 	buildStatus, _ := snapshotBuildStatus(t, f.db, f.sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusSuccess), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 	assert.Equal(t, sandbox.StateRunning, f.state(t))
 }
 
@@ -210,7 +210,7 @@ func TestCreateSnapshotTemplate_RecordsRequestedKind(t *testing.T) {
 	assert.True(t, f.templateBuildKind(t, fsOnly.TemplateID), "the memory:false template's build is labelled filesystem-only")
 	assert.True(t, f.client.lastRequest(t).GetFilesystemOnly())
 	buildStatus, _ := snapshotBuildStatus(t, f.db, f.sbx.SandboxID)
-	assert.Equal(t, string(types.BuildStatusUploaded), buildStatus)
+	assert.Equal(t, types.BuildStatusGroupReady, buildStatus)
 
 	memory, err := f.o.CreateSnapshotTemplate(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, SnapshotTemplateOpts{Tag: id.DefaultTag})
 	require.NoError(t, err)

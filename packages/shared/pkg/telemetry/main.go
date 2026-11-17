@@ -26,6 +26,7 @@ const metricExportPeriod = 15 * time.Second
 type Client struct {
 	MetricExporter  sdkmetric.Exporter
 	MeterProvider   metric.MeterProvider
+	flushMeters     func(ctx context.Context) error
 	shutdownMeters  func(ctx context.Context) error
 	SpanExporter    sdktrace.SpanExporter
 	TracerProvider  trace.TracerProvider
@@ -170,15 +171,22 @@ func NewWithOptions(ctx context.Context, nodeID, serviceName, serviceCommit, ser
 	propagator := NewTextPropagator()
 	otel.SetTextMapPropagator(propagator)
 
+	client := meteredClient(metricsExporter, meterProvider)
+	client.SpanExporter = spanExporter
+	client.TracerProvider = tracerProvider
+	client.TracePropagator = propagator
+	client.LogsProvider = logProvider
+
+	return client, nil
+}
+
+func meteredClient(exporter sdkmetric.Exporter, provider *sdkmetric.MeterProvider) *Client {
 	return &Client{
-		MetricExporter:  metricsExporter,
-		MeterProvider:   meterProvider,
-		shutdownMeters:  meterProvider.Shutdown,
-		SpanExporter:    spanExporter,
-		TracerProvider:  tracerProvider,
-		TracePropagator: propagator,
-		LogsProvider:    logProvider,
-	}, nil
+		MetricExporter: exporter,
+		MeterProvider:  provider,
+		flushMeters:    provider.ForceFlush,
+		shutdownMeters: provider.Shutdown,
+	}
 }
 
 // NewAnonymous creates a telemetry client for tools and CLI commands that don't
@@ -193,6 +201,13 @@ func NewAnonymous(ctx context.Context, serviceName string) (*Client, error) {
 	}
 
 	return New(ctx, nodeID, serviceName, "unknown", "dev", uuid.NewString())
+}
+
+// FlushMetrics exports every measurement recorded so far rather than at the
+// next periodic export, and does nothing on the noop client. ctx bounds the
+// wait, not the export: one that outlives it finishes on the reader's context.
+func (t *Client) FlushMetrics(ctx context.Context) error {
+	return t.flushMeters(ctx)
 }
 
 func (t *Client) Shutdown(ctx context.Context) error {
@@ -223,6 +238,7 @@ func NewNoopClient() *Client {
 	return &Client{
 		MetricExporter:  &noopMetricExporter{},
 		MeterProvider:   noopMetric.MeterProvider{},
+		flushMeters:     func(context.Context) error { return nil },
 		shutdownMeters:  func(context.Context) error { return nil },
 		SpanExporter:    &noopSpanExporter{},
 		TracerProvider:  noopTrace.NewTracerProvider(),

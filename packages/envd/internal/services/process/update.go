@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"connectrpc.com/connect"
-	"github.com/creack/pty"
 
 	rpc "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process"
 )
@@ -17,10 +16,8 @@ func (s *Service) Update(_ context.Context, req *connect.Request[rpc.UpdateReque
 	}
 
 	if req.Msg.GetPty() != nil {
-		err := proc.ResizeTty(&pty.Winsize{
-			Rows: uint16(req.Msg.GetPty().GetSize().GetRows()),
-			Cols: uint16(req.Msg.GetPty().GetSize().GetCols()),
-		})
+		size := req.Msg.GetPty().GetSize()
+		err := proc.ResizeTty(uint16(size.GetCols()), uint16(size.GetRows()))
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("error resizing tty: %w", err))
 		}

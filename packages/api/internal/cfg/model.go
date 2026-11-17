@@ -153,10 +153,18 @@ type Config struct {
 	// when the backend is absent, so the surface does not depend on the wiring.
 	WebhooksBackendGrpcAddress string `env:"WEBHOOKS_BACKEND_GRPC_ADDRESS"`
 
+	// ClusterServiceGrpcAddress is the gRPC target of the cluster service,
+	// which stores the remote clusters. Optional: when empty the API runs on
+	// the local cluster alone and answers the cluster admin and management
+	// routes with 503, and refuses to start while a team is assigned to a
+	// remote cluster.
+	ClusterServiceGrpcAddress string `env:"CLUSTER_SERVICE_GRPC_ADDRESS"`
+
 	VolumesToken VolumesTokenConfig
 
 	AuthProvider      sharedauth.ProviderConfig `env:"AUTH_PROVIDER_CONFIG"`
 	AdminAuthProvider sharedauth.ProviderConfig `env:"ADMIN_AUTH_PROVIDER_CONFIG"`
+	TelemetryReaderID string                    `env:"TELEMETRY_READER_ID"`
 
 	DefaultPersistentVolumeType     string `env:"DEFAULT_PERSISTENT_VOLUME_TYPE"`
 	PlaceholderPersistentVolumeType string `env:"PLACEHOLDER_PERSISTENT_VOLUME_TYPE" envDefault:"__DEFAULT_VOLUME_TYPE__"`
@@ -176,6 +184,11 @@ type Config struct {
 	// placement (max of CPU and pool). A node that reports no pool scores
 	// 0.5, so clusters without a pool should set this false and rank on CPU.
 	BestOfKHugepageMemory bool `env:"BEST_OF_K_HUGEPAGE_MEMORY" envDefault:"true"`
+
+	// TemplatesDefaultPublic is the visibility a template gets when a build
+	// creates it. Templates that already exist keep their stored visibility.
+	// Self-hosted deployments whose teams start each other's templates set it true.
+	TemplatesDefaultPublic bool `env:"TEMPLATES_DEFAULT_PUBLIC"`
 
 	// OutboxMaxWorkers is how many River outbox jobs one API replica works at
 	// once.

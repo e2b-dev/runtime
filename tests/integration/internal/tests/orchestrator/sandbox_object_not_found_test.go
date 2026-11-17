@@ -70,6 +70,5 @@ func TestSandboxObjectNotFound(t *testing.T) {
 		return
 	}
 
-	t.Log("failed to create sandbox after 36 retries")
-	t.FailNow()
+	require.Fail(t, "failed to create sandbox after 36 retries")
 }

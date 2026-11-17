@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel"
@@ -22,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildlogger"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/oci/auth"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/cache"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	templatemanager "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -45,6 +47,7 @@ var (
 	// so a template the build rejected is not read as a team that has none.
 	buildCPUTemplate = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildCPUTemplate))
 	buildVcpuSizing  = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildVcpuSizing))
+	buildMemSizing   = utils.Must(telemetry.GetCounter(meter, telemetry.TemplateBuildMemorySizing))
 )
 
 func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templatemanager.TemplateCreateRequest) (*emptypb.Empty, error) {
@@ -86,6 +89,29 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	vcpuSizing := config.VcpuSizing(int64(cfg.GetVCpuCount()), int64(cfg.GetMaxVCpuCount()))
 	buildVcpuSizing.Add(ctx, 1, metric.WithAttributes(attribute.String("result", vcpuSizing)))
 
+	// Every request the vCPU sizing counted is counted once here too, after it, so a bad maximum
+	// never hides a vCPU count. The count lands when this RPC decides: its requested sizing once
+	// the build is registered and running, else rejected with the reason, internal for any failure
+	// no named check caught. A retry of a build already registered is not counted again. Refusals
+	// inside the build show on template.build.result instead.
+	memResult, memReason, memCount := memorySizingRejected, memoryRejectedInternal, true
+	defer func() {
+		if memCount {
+			s.countMemorySizing(ctx, memResult, memReason)
+		}
+	}()
+	if err := validateMaxMemoryMB(cfg); err != nil {
+		memReason = memoryRejectedInvalid
+		s.logger.Warn(ctx, "rejected template build memory sizing",
+			zap.Error(err), logger.WithTemplateID(cfg.GetTemplateID()), logger.WithBuildID(cfg.GetBuildID()),
+			zap.Int32("memory_mb", cfg.GetMemoryMB()), zap.Int32("max_memory_mb", cfg.GetMaxMemoryMB()),
+		)
+
+		return nil, err
+	}
+	memorySizing := config.MemorySizing(int64(cfg.GetMemoryMB()), int64(cfg.GetMaxMemoryMB()))
+	memoryRegionMB := config.MemoryHotplugRegionMB(int64(cfg.GetMemoryMB()), int64(cfg.GetMaxMemoryMB()))
+
 	metadata := storage.Paths{
 		BuildID: cfg.GetBuildID(),
 	}
@@ -114,11 +140,24 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	kernelVersion := s.featureFlags.StringFlag(ctx, featureflags.BuildKernelVersion)
 	firecrackerVersion := s.featureFlags.StringFlag(ctx, featureflags.BuildFirecrackerVersion)
 
+	// Only a build is capped: a template built under a looser cap keeps resuming and rebooting.
+	memoryMaxRatio := int64(s.featureFlags.IntFlag(ctx, featureflags.TemplateMemoryHotplugMaxRatioFlag))
+	if err := validateMemoryRatio(cfg, memoryMaxRatio); err != nil {
+		memReason = memoryRejectedRatio
+		s.logger.Warn(ctx, "rejected template build memory sizing above the hotplug cap",
+			zap.Error(err), logger.WithTemplateID(cfg.GetTemplateID()), logger.WithBuildID(cfg.GetBuildID()),
+			zap.Int32("memory_mb", cfg.GetMemoryMB()), zap.Int32("max_memory_mb", cfg.GetMaxMemoryMB()),
+			zap.Int64("max_ratio", memoryMaxRatio),
+		)
+
+		return nil, err
+	}
+
 	// Read once here, at the only place the per-team flag is read, so every boot in this
 	// build agrees and what gets recorded is what was actually applied.
 	cmdlineArgs, cmdlineErr := fc.ParseCmdlineArgs(s.featureFlags.StringFlag(ctx, featureflags.BuildKernelCmdlineArgs))
 	if cmdlineErr == nil {
-		cmdlineErr = fc.ValidateCmdlineArgs(cmdlineArgs)
+		cmdlineErr = fc.ValidateBuildCmdlineArgs(cmdlineArgs)
 	}
 	if cmdlineErr != nil {
 		// Fall back to the default command line rather than fail the build: a flag set
@@ -141,6 +180,15 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	fcInfo, err := fcversion.New(firecrackerVersion)
 	if err != nil {
 		return nil, fmt.Errorf("invalid resolved firecracker version %q: %w", firecrackerVersion, err)
+	}
+
+	// The builder's kernel and Firecracker are the fleet's to fix, not the caller's.
+	if err := (fc.Config{KernelVersion: kernelVersion, FirecrackerVersion: firecrackerVersion}).RefuseMemoryHotplug(memoryRegionMB); err != nil {
+		memReason = fc.MemoryHotplugRefusalReason(err)
+		s.logger.Warn(ctx, "refused a template build with a memory maximum this builder cannot carry", zap.Error(err),
+			logger.WithTemplateID(cfg.GetTemplateID()), logger.WithBuildID(cfg.GetBuildID()))
+
+		return nil, status.Error(codes.FailedPrecondition, "this template builder cannot build templates with a maximum memory size yet")
 	}
 
 	// Read once per build, so every layer boots with the same template.
@@ -195,6 +243,7 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		telemetry.WithFirecrackerVersion(firecrackerVersion),
 		attribute.Int64("env.memory_mb", int64(cfg.GetMemoryMB())),
 		attribute.Int64("env.vcpu_count", int64(cfg.GetVCpuCount())),
+		attribute.Int64("env.max_memory_mb", int64(cfg.GetMaxMemoryMB())),
 		attribute.Bool("env.huge_pages", hugePages),
 		attribute.Bool("env.free_page_reporting", freePageReporting),
 		attribute.Bool("env.free_page_hinting", freePageHinting),
@@ -222,6 +271,7 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		VCpuCount:            int64(cfg.GetVCpuCount()),
 		MaxVCpuCount:         int64(cfg.GetMaxVCpuCount()),
 		MemoryMB:             int64(cfg.GetMemoryMB()),
+		MaxMemoryMB:          int64(cfg.GetMaxMemoryMB()),
 		StartCmd:             cfg.GetStartCommand(),
 		ReadyCmd:             cfg.GetReadyCommand(),
 		DiskSizeMB:           int64(cfg.GetDiskSizeMB()),
@@ -243,6 +293,8 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	logs := buildlogger.NewLogEntryLogger()
 	buildInfo, err := s.buildCache.Create(template.TeamID, metadata.BuildID, logs)
 	if err != nil {
+		memCount = !errors.Is(err, cache.ErrBuildExists)
+
 		return nil, fmt.Errorf("error while creating build cache: %w", err)
 	}
 
@@ -326,6 +378,8 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		}
 	}(context.WithoutCancel(ctx))
 
+	memResult, memReason = memorySizing, ""
+
 	return nil, nil
 }
 
@@ -356,6 +410,57 @@ func validateMaxVCpuCount(cfg *templatemanager.TemplateConfig) error {
 	}
 	if !fc.ValidMachineVcpus(maxVCpus) {
 		return status.Errorf(codes.InvalidArgument, "cannot boot a VM with %d vcpus on this host", maxVCpus)
+	}
+
+	return nil
+}
+
+const (
+	memorySizingRejected      = "rejected"
+	memoryRejectedInvalid     = "invalid"
+	memoryRejectedFirecracker = "firecracker"
+	memoryRejectedKernel      = "kernel"
+	memoryRejectedRatio       = "ratio"
+	memoryRejectedInternal    = "internal"
+)
+
+// countMemorySizing counts one request's memory sizing: absent, equal or resizable, or rejected
+// with the reason (invalid, ratio, firecracker, kernel, or internal).
+func (s *ServerStore) countMemorySizing(ctx context.Context, result, reason string) {
+	attrs := []attribute.KeyValue{attribute.String("result", result)}
+	if reason != "" {
+		attrs = append(attrs, attribute.String("reason", reason))
+	}
+	counter := s.memorySizing
+	if counter == nil {
+		counter = buildMemSizing
+	}
+	counter.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+// validateMemoryRatio rejects a hotplug region above maxRatio times boot RAM (0 is no cap).
+func validateMemoryRatio(cfg *templatemanager.TemplateConfig, maxRatio int64) error {
+	if cfg.MaxMemoryMB == nil {
+		return nil
+	}
+	if err := fc.ValidateMemoryHotplugRatio(int64(cfg.GetMemoryMB()), int64(cfg.GetMaxMemoryMB()), maxRatio, "maxMemoryMB"); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	return nil
+}
+
+// validateMaxMemoryMB rejects memory sizes Firecracker cannot give a hotplug region before any
+// build VM starts. Absent keeps the final VM at memoryMB; an explicit value must be at least
+// memoryMB, with the region above boot RAM a whole number of slots and at most
+// fc.MaxMemoryHotplugMiB.
+func validateMaxMemoryMB(cfg *templatemanager.TemplateConfig) error {
+	if cfg.MaxMemoryMB == nil {
+		return nil
+	}
+	err := fc.ValidateMemoryHotplug(int64(cfg.GetMemoryMB()), int64(cfg.GetMaxMemoryMB()), "memoryMB", "maxMemoryMB")
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	return nil

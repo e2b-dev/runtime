@@ -120,7 +120,7 @@ func TestInsertWritersClickHouse(t *testing.T) {
 				select {
 				case ctx = <-captured.contexts:
 				case <-time.After(5 * time.Second):
-					t.Fatal("writer did not flush")
+					require.Fail(t, "writer did not flush")
 				}
 				var async, wait bool
 				require.NoError(t, conn.QueryRow(ctx, "SELECT getSetting('async_insert'), getSetting('wait_for_async_insert')").Scan(&async, &wait))

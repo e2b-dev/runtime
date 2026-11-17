@@ -75,7 +75,7 @@ func TestCheckMigrationVersionTimesOutAStalledHandshake(t *testing.T) {
 			case err := <-done:
 				require.NoError(t, err)
 			case <-time.After(time.Minute):
-				t.Fatal("the check hung on a stalled handshake")
+				require.Fail(t, "the check hung on a stalled handshake")
 			}
 		})
 	}

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	templatemanagergrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
@@ -110,18 +112,12 @@ func TestPollBuildStatus_setStatus(t *testing.T) {
 			}
 			err := c.setStatus(t.Context())
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("PollBuildStatus.getSetStatusFn() = %v", err)
-				}
+				require.Error(t, err)
 			}
 			if !tt.wantErr {
-				if err != nil {
-					t.Errorf("PollBuildStatus.getSetStatusFn() = %v", err)
-				}
+				require.NoError(t, err)
 			}
-			if tt.status.GetStatus() != c.status.GetStatus() {
-				t.Errorf("PollBuildStatus.getSetStatusFn() = %v, want %v", c.status, tt.status)
-			}
+			assert.Equal(t, tt.status.GetStatus(), c.status.GetStatus())
 		})
 	}
 }
@@ -284,24 +280,12 @@ func TestPollBuildStatus_dispatchBasedOnStatus(t *testing.T) {
 
 			completed, err := c.dispatchBasedOnStatus(t.Context(), tt.args.status)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("Expected error, got no error")
-				}
+				require.Error(t, err)
 			} else {
-				if err != nil {
-					t.Errorf("Expected no error, got %v", err)
-				}
+				require.NoError(t, err)
 			}
 
-			if tt.wantCompleteState {
-				if !completed {
-					t.Errorf("Expected completed, got failure")
-				}
-			} else {
-				if completed {
-					t.Errorf("Expected failure, got completed")
-				}
-			}
+			assert.Equal(t, tt.wantCompleteState, completed)
 		})
 	}
 }

@@ -5,7 +5,6 @@ package fc
 import (
 	"net"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +13,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -44,9 +44,7 @@ func TestStartVMRecordsInstanceStartDuration(t *testing.T) {
 func stubInstanceStart(t *testing.T, status int) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the test name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 
 	socket := dir + "/fc.sock"
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)

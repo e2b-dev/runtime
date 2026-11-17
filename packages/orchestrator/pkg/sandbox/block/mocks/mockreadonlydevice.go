@@ -19,10 +19,19 @@ func NewMockReadonlyDevice(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockReadonlyDevice {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockReadonlyDevice{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -209,7 +218,7 @@ type MockReadonlyDevice_ReadAt_Call struct {
 //   - ctx context.Context
 //   - p []byte
 //   - off int64
-func (_e *MockReadonlyDevice_Expecter) ReadAt(ctx interface{}, p interface{}, off interface{}) *MockReadonlyDevice_ReadAt_Call {
+func (_e *MockReadonlyDevice_Expecter) ReadAt(ctx any, p any, off any) *MockReadonlyDevice_ReadAt_Call {
 	return &MockReadonlyDevice_ReadAt_Call{Call: _e.mock.On("ReadAt", ctx, p, off)}
 }
 
@@ -279,7 +288,7 @@ type MockReadonlyDevice_Size_Call struct {
 
 // Size is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockReadonlyDevice_Expecter) Size(ctx interface{}) *MockReadonlyDevice_Size_Call {
+func (_e *MockReadonlyDevice_Expecter) Size(ctx any) *MockReadonlyDevice_Size_Call {
 	return &MockReadonlyDevice_Size_Call{Call: _e.mock.On("Size", ctx)}
 }
 
@@ -343,7 +352,7 @@ type MockReadonlyDevice_Slice_Call struct {
 //   - ctx context.Context
 //   - off int64
 //   - length int64
-func (_e *MockReadonlyDevice_Expecter) Slice(ctx interface{}, off interface{}, length interface{}) *MockReadonlyDevice_Slice_Call {
+func (_e *MockReadonlyDevice_Expecter) Slice(ctx any, off any, length any) *MockReadonlyDevice_Slice_Call {
 	return &MockReadonlyDevice_Slice_Call{Call: _e.mock.On("Slice", ctx, off, length)}
 }
 
@@ -393,7 +402,7 @@ type MockReadonlyDevice_SwapHeader_Call struct {
 
 // SwapHeader is a helper method to define mock.On call
 //   - h *header.Header
-func (_e *MockReadonlyDevice_Expecter) SwapHeader(h interface{}) *MockReadonlyDevice_SwapHeader_Call {
+func (_e *MockReadonlyDevice_Expecter) SwapHeader(h any) *MockReadonlyDevice_SwapHeader_Call {
 	return &MockReadonlyDevice_SwapHeader_Call{Call: _e.mock.On("SwapHeader", h)}
 }
 

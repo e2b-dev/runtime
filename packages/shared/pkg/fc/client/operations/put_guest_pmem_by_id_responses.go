@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutGuestPmemByIDReader is a Reader for the PutGuestPmemByID structure.
@@ -51,11 +50,9 @@ func NewPutGuestPmemByIDNoContent() *PutGuestPmemByIDNoContent {
 	return &PutGuestPmemByIDNoContent{}
 }
 
-/*
-PutGuestPmemByIDNoContent describes a response with status code 204, with default header values.
-
-Pmem device is created/updated
-*/
+// PutGuestPmemByIDNoContent describes a response with status code 204, with default header values.
+//
+// Pmem device is created/updated
 type PutGuestPmemByIDNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutGuestPmemByIDBadRequest() *PutGuestPmemByIDBadRequest {
 	return &PutGuestPmemByIDBadRequest{}
 }
 
-/*
-PutGuestPmemByIDBadRequest describes a response with status code 400, with default header values.
-
-Pmem device cannot be created/updated due to bad input
-*/
+// PutGuestPmemByIDBadRequest describes a response with status code 400, with default header values.
+//
+// Pmem device cannot be created/updated due to bad input
 type PutGuestPmemByIDBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutGuestPmemByIDDefault(code int) *PutGuestPmemByIDDefault {
 	}
 }
 
-/*
-PutGuestPmemByIDDefault describes a response with status code -1, with default header values.
-
-Internal server error.
-*/
+// PutGuestPmemByIDDefault describes a response with status code -1, with default header values.
+//
+// Internal server error.
 type PutGuestPmemByIDDefault struct {
 	_statusCode int
 

@@ -1,0 +1,131 @@
+edition = "2024";
+
+package e2b.scheduling.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+option features.field_presence = IMPLICIT;
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling";
+
+// Records of running sandboxes. A record is the JSON of the store's sandbox
+// record, as the store keeps it.
+service StateService {
+  // A record of the same execution already stored is kept.
+  rpc Add(AddRequest) returns (AddResponse);
+
+  rpc Get(GetRequest) returns (GetResponse);
+
+  rpc Remove(RemoveRequest) returns (RemoveResponse);
+
+  rpc TeamItems(TeamItemsRequest) returns (stream TeamItemsResponse);
+
+  // Not a pure read: it sweeps and re-scores entries of the expiration index.
+  rpc ExpiredItems(ExpiredItemsRequest) returns (stream ExpiredItemsResponse);
+
+  // Not a pure read: it prunes stale entries of the teams index.
+  rpc TeamsWithSandboxCount(TeamsWithSandboxCountRequest) returns (TeamsWithSandboxCountResponse);
+
+  // A failed read answers no orphans.
+  rpc Reconcile(ReconcileRequest) returns (ReconcileResponse);
+}
+
+enum StateOutcome {
+  STATE_OUTCOME_UNSPECIFIED = 0;
+  STATE_OUTCOME_OK = 1;
+  STATE_OUTCOME_NOT_FOUND = 2;
+  STATE_OUTCOME_LIFECYCLE_HELD = 3;
+  STATE_OUTCOME_EXECUTION_MISMATCH = 4;
+  STATE_OUTCOME_LOCK_LOST = 5;
+}
+
+enum SandboxState {
+  SANDBOX_STATE_UNSPECIFIED = 0;
+  SANDBOX_STATE_RUNNING = 1;
+  SANDBOX_STATE_PAUSING = 2;
+  SANDBOX_STATE_KILLING = 3;
+  SANDBOX_STATE_SNAPSHOTTING = 4;
+}
+
+message AddRequest {
+  bytes record = 1;
+}
+
+message AddResponse {
+  StateOutcome outcome = 1;
+}
+
+message GetRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+}
+
+message GetResponse {
+  StateOutcome outcome = 1;
+  bytes record = 2;
+}
+
+message RemoveRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+  // Empty removes the record of any execution.
+  string expected_execution_id = 3;
+}
+
+message RemoveResponse {
+  StateOutcome outcome = 1;
+}
+
+message TeamItemsRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  // Empty means every state.
+  repeated SandboxState states = 2 [(buf.validate.field).repeated.items.enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+}
+
+message TeamItemsResponse {
+  repeated bytes records = 1;
+}
+
+message ExpiredItemsRequest {}
+
+message ExpiredItemsResponse {
+  repeated bytes records = 1;
+}
+
+message TeamsWithSandboxCountRequest {}
+
+message TeamsWithSandboxCountResponse {
+  map<string, int64> counts = 1;
+}
+
+message NodeSandbox {
+  string sandbox_id = 1;
+  string execution_id = 2;
+  string team_id = 3 [(buf.validate.field).string.uuid = true];
+  string node_id = 4;
+  string cluster_id = 5 [(buf.validate.field).string.uuid = true];
+  google.protobuf.Timestamp start_time = 6;
+  int64 vcpu = 7;
+  int64 ram_mb = 8;
+  bool huge_pages = 9;
+  bool ended = 10;
+  string guest_event = 11;
+  bool disk_kept = 12;
+}
+
+message ReconcileRequest {
+  string node_id = 1;
+  repeated NodeSandbox sandboxes = 2;
+}
+
+message SandboxReference {
+  string team_id = 1;
+  string sandbox_id = 2;
+}
+
+message ReconcileResponse {
+  repeated SandboxReference orphans = 1;
+}

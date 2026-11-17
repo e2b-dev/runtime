@@ -44,7 +44,7 @@ func TestRemoveSandbox_JoinerOfAnUnsupportedRefusal(t *testing.T) {
 			select {
 			case <-read:
 			case <-time.After(5 * time.Second):
-				t.Fatal("the joiner never read the in-flight transition")
+				require.Fail(t, "the joiner never read the in-flight transition")
 			}
 
 			_, err = f.o.sandboxStore.RestoreRunning(ctx, transition, sandbox.RestoreOpts{})
@@ -56,7 +56,7 @@ func TestRemoveSandbox_JoinerOfAnUnsupportedRefusal(t *testing.T) {
 				require.ErrorIs(t, jerr, tc.want)
 				require.NotErrorIs(t, jerr, ErrSandboxOperationFailed, "a joiner is never answered with the generic failure")
 			case <-time.After(5 * time.Second):
-				t.Fatal("joiner did not wake")
+				require.Fail(t, "joiner did not wake")
 			}
 
 			stored, err := f.o.sandboxStore.Get(ctx, f.sbx.TeamID, f.sbx.SandboxID)

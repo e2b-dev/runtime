@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // CreateSnapshotReader is a Reader for the CreateSnapshot structure.
@@ -51,11 +50,9 @@ func NewCreateSnapshotNoContent() *CreateSnapshotNoContent {
 	return &CreateSnapshotNoContent{}
 }
 
-/*
-CreateSnapshotNoContent describes a response with status code 204, with default header values.
-
-Snapshot created
-*/
+// CreateSnapshotNoContent describes a response with status code 204, with default header values.
+//
+// Snapshot created
 type CreateSnapshotNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewCreateSnapshotBadRequest() *CreateSnapshotBadRequest {
 	return &CreateSnapshotBadRequest{}
 }
 
-/*
-CreateSnapshotBadRequest describes a response with status code 400, with default header values.
-
-Snapshot cannot be created due to bad input
-*/
+// CreateSnapshotBadRequest describes a response with status code 400, with default header values.
+//
+// Snapshot cannot be created due to bad input
 type CreateSnapshotBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewCreateSnapshotDefault(code int) *CreateSnapshotDefault {
 	}
 }
 
-/*
-CreateSnapshotDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// CreateSnapshotDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type CreateSnapshotDefault struct {
 	_statusCode int
 

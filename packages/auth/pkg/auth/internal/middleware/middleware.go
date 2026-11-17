@@ -279,6 +279,14 @@ func NewAdminJWTAuthenticator(verifier *token.JWKSVerifier) Authenticator {
 			if err != nil {
 				return "", &APIError{Code: http.StatusUnauthorized, Err: err, ClientMsg: "Invalid service token."}
 			}
+			scope, _ := claims["scope"].(string)
+			limited := false
+			for value := range strings.FieldsSeq(scope) {
+				limited = limited || value == "telemetry:read"
+			}
+			if limited {
+				return "", &APIError{Code: http.StatusUnauthorized, ClientMsg: "Invalid service token scope."}
+			}
 			issuer, err := claims.GetIssuer()
 			if err != nil {
 				return "", &APIError{Code: http.StatusUnauthorized, Err: err, ClientMsg: "Invalid service token."}

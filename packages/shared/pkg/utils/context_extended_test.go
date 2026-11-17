@@ -56,7 +56,7 @@ func TestContextExtendedTo_CallerThatLeavesAfterTheInstantEndsAtOnce(t *testing.
 	case <-ctx.Done():
 		require.ErrorIs(t, context.Cause(ctx), cause)
 	case <-time.After(2 * time.Second):
-		require.FailNow(t, "did not end with the caller")
+		require.Fail(t, "did not end with the caller")
 	}
 }
 

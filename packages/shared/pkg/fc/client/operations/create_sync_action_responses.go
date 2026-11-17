@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // CreateSyncActionReader is a Reader for the CreateSyncAction structure.
@@ -51,11 +50,9 @@ func NewCreateSyncActionNoContent() *CreateSyncActionNoContent {
 	return &CreateSyncActionNoContent{}
 }
 
-/*
-CreateSyncActionNoContent describes a response with status code 204, with default header values.
-
-The update was successful
-*/
+// CreateSyncActionNoContent describes a response with status code 204, with default header values.
+//
+// The update was successful
 type CreateSyncActionNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewCreateSyncActionBadRequest() *CreateSyncActionBadRequest {
 	return &CreateSyncActionBadRequest{}
 }
 
-/*
-CreateSyncActionBadRequest describes a response with status code 400, with default header values.
-
-The action cannot be executed due to bad input
-*/
+// CreateSyncActionBadRequest describes a response with status code 400, with default header values.
+//
+// The action cannot be executed due to bad input
 type CreateSyncActionBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewCreateSyncActionDefault(code int) *CreateSyncActionDefault {
 	}
 }
 
-/*
-CreateSyncActionDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// CreateSyncActionDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type CreateSyncActionDefault struct {
 	_statusCode int
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
@@ -43,7 +44,7 @@ func TestKernelMountRetainsRootAcrossLifecycleReplacement(t *testing.T) { //noli
 		case err := <-served:
 			require.NoError(t, err)
 		case <-time.After(5 * time.Second):
-			t.Error("kernel-test NFS listener did not join")
+			assert.Fail(t, "kernel-test NFS listener did not join")
 		}
 	})
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -59,7 +60,7 @@ func TestKernelMountRetainsRootAcrossLifecycleReplacement(t *testing.T) { //noli
 		if !wantSuccess {
 			if mountErr == nil {
 				require.NoError(t, unix.Unmount(target, 0), "unexpectedly accepted export must still be unmounted")
-				t.Fatalf("kernel accepted stale or plain export %q", export)
+				require.Failf(t, "kernel accepted stale or plain export", "export %q", export)
 			}
 			require.Contains(t, strings.ToLower(string(output)), "access denied", "rejection must come from MOUNT access validation, not setup failure")
 

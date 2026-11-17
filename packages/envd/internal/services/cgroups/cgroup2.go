@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -19,8 +20,9 @@ type Cgroup2Manager struct {
 }
 
 var (
-	_ Manager     = (*Cgroup2Manager)(nil)
-	_ PathManager = (*Cgroup2Manager)(nil)
+	_ Manager       = (*Cgroup2Manager)(nil)
+	_ PathManager   = (*Cgroup2Manager)(nil)
+	_ MemoryLimiter = (*Cgroup2Manager)(nil)
 )
 
 type cgroup2Config struct {
@@ -268,6 +270,24 @@ func (c Cgroup2Manager) setFreezeState(procType ProcessType, value string) error
 	}
 
 	return writeCgroupProp(filepath.Join(path, "cgroup.freeze"), value)
+}
+
+// SetMemoryLimit writes limit to memory.high and then memory.max, so that lowering it
+// reclaims under memory.high before memory.max can OOM-kill.
+func (c Cgroup2Manager) SetMemoryLimit(procType ProcessType, limit uint64) error {
+	path, ok := c.cgroupPaths[procType]
+	if !ok {
+		return fmt.Errorf("unknown process type: %s", procType)
+	}
+
+	value := strconv.FormatUint(limit, 10)
+	for _, name := range []string{"memory.high", "memory.max"} {
+		if err := writeCgroupProp(filepath.Join(path, name), value); err != nil {
+			return fmt.Errorf("failed to write %s for %s: %w", name, procType, err)
+		}
+	}
+
+	return nil
 }
 
 func (c Cgroup2Manager) Close() error {

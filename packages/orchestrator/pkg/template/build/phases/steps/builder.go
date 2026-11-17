@@ -142,6 +142,10 @@ func (sb *StepBuilder) Layer(
 	// snapshotted from a larger VM. Only finalize needs the final VM capacity.
 	// Pause records the stored size; this keeps the in-memory layer result in step.
 	finalMetadata.VcpuCount = sb.Config.VCpuCount
+	// A step that cold-boots has no hotplug region; one that resumes its source keeps the source's.
+	if !sb.resumesSource(sourceLayer) {
+		finalMetadata.MemoryHotplugMB = 0
+	}
 	finalMetadata.Template = metadata.TemplateMetadata{
 		BuildID:            uuid.NewString(),
 		KernelVersion:      sb.Config.KernelVersion,
@@ -188,12 +192,8 @@ func (sb *StepBuilder) Build(
 	guestTemplate := sb.Config.GuestTemplate()
 
 	// First not cached layer is create (to change CPU, Memory, etc), subsequent are layers are resumes.
-	// A guest profile that always resumes takes the parent's machine (adoptParentMachine).
-	var sandboxCreator layer.SandboxCreator
-	switch {
-	case guestTemplate.AlwaysResume:
-		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
-	case sourceLayer.Cached:
+	var sandboxCreator layer.SandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
+	if !sb.resumesSource(sourceLayer) {
 		sandboxCreator = layer.NewCreateSandbox(
 			sbxConfig,
 			sb.sandboxFactory,
@@ -203,8 +203,6 @@ func (sb *StepBuilder) Build(
 				layer.BootDiagnosticsOptions(ctx, sb.featureFlags)...,
 			)...,
 		)
-	default:
-		sandboxCreator = layer.NewResumeSandbox(sbxConfig, sb.sandboxFactory, layerTimeout)
 	}
 
 	actionExecutor := layer.NewFunctionAction(func(ctx context.Context, sbx *sandbox.Sandbox, meta metadata.Template) (metadata.Template, error) {
@@ -264,6 +262,14 @@ func (sb *StepBuilder) Build(
 		Cached:   false,
 		Hash:     currentLayer.Hash,
 	}, nil
+}
+
+// resumesSource reports whether the step resumes its source's memory snapshot rather than
+// cold-booting its rootfs: always for a guest profile that resumes its parent (adoptParentMachine),
+// otherwise only when the source was built in this build. A cached source is cold-booted, so the
+// first uncached step can change the VM's CPU and memory.
+func (sb *StepBuilder) resumesSource(source phases.LayerResult) bool {
+	return sb.Config.GuestTemplate().AlwaysResume || !source.Cached
 }
 
 // ErrStepEndedGuest marks a step whose command restarted or shut down the guest.

@@ -177,7 +177,7 @@ func (o *Orchestrator) CreateSnapshotTemplate(ctx context.Context, teamID uuid.U
 		return SnapshotTemplateResult{}, fmt.Errorf("checkpoint failed: %w", err)
 	}
 
-	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, false, types.BuildStatusUploaded, false); err != nil {
+	if err := o.finishSnapshotBuildWithKind(ctx, upsertResult.BuildID, sandboxID, currentKind, opts.FilesystemOnly, false, false); err != nil {
 		return SnapshotTemplateResult{}, errors.Join(fmt.Errorf("error updating build status: %w", err), o.restoreCheckpointed(ctx, transition, checkpointed.GetNetwork(), finish))
 	}
 
@@ -227,12 +227,12 @@ func (o *Orchestrator) upsertSnapshotKeepingKind(ctx context.Context, sbx sandbo
 // when the kind changed, the new kind on the sandbox's snapshot row in the
 // same transaction: the row's kind and its latest ready build must never be
 // observed apart, or a resume would memory-restore a memoryless build.
-// finishSnapshotBuildWithKind records the build's terminal status together
-// with what the row must now say about it: the kind, when it changed, and the
+// finishSnapshotBuildWithKind records the build as ready together with what
+// the row must now say about it: the kind, when it changed, and the
 // mark that the memory snapshot was taken while the guest agent did not
 // answer, so a resume can refuse to restore that memory without asking the
 // node. One transaction, so a reader never sees the build ready without them.
-func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind, envdUnresponsive bool, status types.BuildStatus, rekindBuild bool) error {
+func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID uuid.UUID, sandboxID string, currentKind, wantKind, envdUnresponsive, rekindBuild bool) error {
 	// One detached budget for every write below, so finalization reports
 	// before the sandbox's state transition expires.
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
@@ -252,7 +252,7 @@ func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID 
 	}
 
 	if currentKind == wantKind && !envdUnresponsive {
-		return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+		return o.writeSnapshotBuildReady(writeCtx, buildID)
 	}
 
 	txDB, tx, err := o.sqlcDB.WithTx(writeCtx)
@@ -277,10 +277,10 @@ func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID 
 	}
 
 	if err := txDB.UpdateEnvBuildStatus(writeCtx, queries.UpdateEnvBuildStatusParams{
-		Status:     status,
-		FinishedAt: new(time.Now()),
-		Reason:     types.BuildReason{},
-		BuildID:    buildID,
+		StatusGroup: types.BuildStatusGroupReady,
+		FinishedAt:  new(time.Now()),
+		Reason:      types.BuildReason{},
+		BuildID:     buildID,
 	}); err != nil {
 		return fmt.Errorf("update build status: %w", err)
 	}
@@ -288,25 +288,25 @@ func (o *Orchestrator) finishSnapshotBuildWithKind(ctx context.Context, buildID 
 	return tx.Commit(writeCtx)
 }
 
-// finishSnapshotBuild records a snapshot build's terminal status, detached from
-// the caller so a cancelled request cannot abandon the write.
+// finishSnapshotBuild records a snapshot build as ready, detached from the
+// caller so a cancelled request cannot abandon the write.
 // ListTeamSnapshotTemplates returns only terminal-success builds, so a build
 // left non-terminal hides a durable snapshot for good.
-func (o *Orchestrator) finishSnapshotBuild(ctx context.Context, buildID uuid.UUID, status types.BuildStatus) error {
+func (o *Orchestrator) finishSnapshotBuild(ctx context.Context, buildID uuid.UUID) error {
 	writeCtx, cancel := detachedBuildStatusCtx(ctx)
 	defer cancel()
 
-	return o.writeSnapshotBuildStatus(writeCtx, buildID, status)
+	return o.writeSnapshotBuildReady(writeCtx, buildID)
 }
 
-// writeSnapshotBuildStatus records a terminal status under ctx as given; the
+// writeSnapshotBuildReady records the build as ready under ctx as given; the
 // caller owns the detached budget.
-func (o *Orchestrator) writeSnapshotBuildStatus(ctx context.Context, buildID uuid.UUID, status types.BuildStatus) error {
+func (o *Orchestrator) writeSnapshotBuildReady(ctx context.Context, buildID uuid.UUID) error {
 	return o.sqlcDB.UpdateEnvBuildStatus(ctx, queries.UpdateEnvBuildStatusParams{
-		Status:     status,
-		FinishedAt: new(time.Now()),
-		Reason:     types.BuildReason{},
-		BuildID:    buildID,
+		StatusGroup: types.BuildStatusGroupReady,
+		FinishedAt:  new(time.Now()),
+		Reason:      types.BuildReason{},
+		BuildID:     buildID,
 	})
 }
 
@@ -317,10 +317,10 @@ func (o *Orchestrator) failSnapshotBuild(ctx context.Context, buildID uuid.UUID,
 	defer cancel()
 
 	err := o.sqlcDB.UpdateEnvBuildStatus(writeCtx, queries.UpdateEnvBuildStatusParams{
-		Status:     types.BuildStatusFailed,
-		FinishedAt: new(time.Now()),
-		Reason:     types.BuildReason{Message: cause.Error()},
-		BuildID:    buildID,
+		StatusGroup: types.BuildStatusGroupFailed,
+		FinishedAt:  new(time.Now()),
+		Reason:      types.BuildReason{Message: cause.Error()},
+		BuildID:     buildID,
 	})
 	if err != nil {
 		telemetry.ReportError(ctx, "error failing build", err)

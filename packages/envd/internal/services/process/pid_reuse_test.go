@@ -170,7 +170,7 @@ func TestReapByPidfd_RetainsExitBeforeClose(t *testing.T) {
 	select {
 	case <-drained:
 	case <-time.After(10 * time.Second):
-		t.Fatal("reaper did not close EndEvent")
+		require.Fail(t, "reaper did not close EndEvent")
 	}
 
 	got, ok := svc.terminated.Load(pid)

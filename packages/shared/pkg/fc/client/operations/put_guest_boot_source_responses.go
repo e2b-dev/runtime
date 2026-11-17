@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutGuestBootSourceReader is a Reader for the PutGuestBootSource structure.
@@ -51,11 +50,9 @@ func NewPutGuestBootSourceNoContent() *PutGuestBootSourceNoContent {
 	return &PutGuestBootSourceNoContent{}
 }
 
-/*
-PutGuestBootSourceNoContent describes a response with status code 204, with default header values.
-
-Boot source created/updated
-*/
+// PutGuestBootSourceNoContent describes a response with status code 204, with default header values.
+//
+// Boot source created/updated
 type PutGuestBootSourceNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutGuestBootSourceBadRequest() *PutGuestBootSourceBadRequest {
 	return &PutGuestBootSourceBadRequest{}
 }
 
-/*
-PutGuestBootSourceBadRequest describes a response with status code 400, with default header values.
-
-Boot source cannot be created due to bad input
-*/
+// PutGuestBootSourceBadRequest describes a response with status code 400, with default header values.
+//
+// Boot source cannot be created due to bad input
 type PutGuestBootSourceBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutGuestBootSourceDefault(code int) *PutGuestBootSourceDefault {
 	}
 }
 
-/*
-PutGuestBootSourceDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutGuestBootSourceDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutGuestBootSourceDefault struct {
 	_statusCode int
 

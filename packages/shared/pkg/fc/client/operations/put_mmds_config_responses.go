@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutMmdsConfigReader is a Reader for the PutMmdsConfig structure.
@@ -51,11 +50,9 @@ func NewPutMmdsConfigNoContent() *PutMmdsConfigNoContent {
 	return &PutMmdsConfigNoContent{}
 }
 
-/*
-PutMmdsConfigNoContent describes a response with status code 204, with default header values.
-
-MMDS configuration was created/updated.
-*/
+// PutMmdsConfigNoContent describes a response with status code 204, with default header values.
+//
+// MMDS configuration was created/updated.
 type PutMmdsConfigNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutMmdsConfigBadRequest() *PutMmdsConfigBadRequest {
 	return &PutMmdsConfigBadRequest{}
 }
 
-/*
-PutMmdsConfigBadRequest describes a response with status code 400, with default header values.
-
-MMDS configuration cannot be updated due to bad input.
-*/
+// PutMmdsConfigBadRequest describes a response with status code 400, with default header values.
+//
+// MMDS configuration cannot be updated due to bad input.
 type PutMmdsConfigBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutMmdsConfigDefault(code int) *PutMmdsConfigDefault {
 	}
 }
 
-/*
-PutMmdsConfigDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutMmdsConfigDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutMmdsConfigDefault struct {
 	_statusCode int
 

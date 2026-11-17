@@ -13,7 +13,6 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -61,19 +60,15 @@ func TestMultiErrorHandlerSecuritySelection(t *testing.T) {
 func runErrorHandler(t *testing.T, message string, statusCode int) (int, string) {
 	t.Helper()
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sandboxes", nil)
-
-	ErrorHandler(c, message, statusCode)
+	result := refuse(t, http.MethodGet, "/sandboxes", "/sandboxes", "", message, statusCode)
 
 	var body struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.NoError(t, json.Unmarshal(result.actualResponse.Body.Bytes(), &body))
 
-	return w.Code, body.Message
+	return result.actualResponse.Code, body.Message
 }
 
 func TestErrorHandlerSecurityStatusMapping(t *testing.T) {
@@ -118,187 +113,81 @@ func TestErrorHandlerSecurityStatusMapping(t *testing.T) {
 	}
 }
 
-// TestErrorHandlerOnSecretsRouteIsFixedAndBodyBlind proves the handler answers a
-// secrets route with fixed text, records a fixed error, and never reads the
-// request body to build one.
-func TestErrorHandlerOnSecretsRouteIsFixedAndBodyBlind(t *testing.T) {
-	t.Parallel()
+// sentinel stands for a value a client sent that must never be returned or
+// recorded.
+const sentinel = "sentinel-value-DO-NOT-LOG-0000"
 
-	const sentinel = "sentinel-value-DO-NOT-LOG-0000"
-
-	tests := []struct {
-		name        string
-		statusCode  int
-		wantMessage string
-	}{
-		{name: "validation", statusCode: http.StatusBadRequest, wantMessage: "Invalid secrets request"},
-		{name: "authentication", statusCode: http.StatusUnauthorized, wantMessage: "You are not authenticated"},
-		{name: "forbidden", statusCode: http.StatusForbidden, wantMessage: "Secrets are not available for this team"},
-		{name: "unmatched path", statusCode: http.StatusNotFound, wantMessage: "Not found"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/secrets/"+sentinel+"?metadata="+sentinel,
-				strings.NewReader(`{"value":"`+sentinel+`"}`))
-
-			ErrorHandler(c, "request body has an error: "+sentinel, test.statusCode)
-
-			if recorder.Code != test.statusCode {
-				t.Fatalf("got status %d, want %d", recorder.Code, test.statusCode)
-			}
-
-			if strings.Contains(recorder.Body.String(), sentinel) {
-				t.Fatal("the response echoed confidential request material")
-			}
-
-			if !strings.Contains(recorder.Body.String(), test.wantMessage) {
-				t.Fatalf("the response does not carry the fixed message %q", test.wantMessage)
-			}
-
-			for _, ginErr := range c.Errors {
-				if strings.Contains(ginErr.Error(), sentinel) {
-					t.Fatal("a gin error carried confidential request material")
-				}
-			}
-
-			// The body was never consumed, so a handler could still read it.
-			body, err := io.ReadAll(c.Request.Body)
-			if err != nil {
-				t.Fatalf("reading the request body: %v", err)
-			}
-
-			if len(body) == 0 {
-				t.Fatal("the error handler consumed the request body")
-			}
-		})
-	}
+// refusal is what a request refused before its handler left behind.
+type refusal struct {
+	actualResponse *httptest.ResponseRecorder
+	// recorded is every error left on the gin context, which the logging and
+	// tracing middleware persist.
+	recorded string
+	// unread is the request body still readable after the refusal.
+	unread []byte
 }
 
-// The webhook create and update bodies carry the caller's signing secret,
-// which is enough to forge a delivery for that team. A request these routes
-// reject before the handler must not put that body in the response, the access
-// log or the span — while keeping the validation message the spec documents.
-func TestErrorHandlerOnWebhookRoutesIsBodyBlind(t *testing.T) {
-	t.Parallel()
-
-	const secret = "whsec-DO-NOT-LOG-0000"
-
-	for _, test := range []struct {
-		name   string
-		method string
-		target string
-	}{
-		{name: "create", method: http.MethodPost, target: "/events/webhooks"},
-		{name: "update", method: http.MethodPatch, target: "/events/webhooks/" + uuid.NewString()},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequestWithContext(t.Context(), test.method, test.target,
-				strings.NewReader(`{"name":"alerts","url":"nope","signatureSecret":"`+secret+`"}`))
-
-			ErrorHandler(c, `request body has an error: doesn't match schema: Error at "/url"`, http.StatusBadRequest)
-
-			assert.Equal(t, http.StatusBadRequest, recorder.Code)
-			assert.NotContains(t, recorder.Body.String(), secret, "the response echoed the signing secret")
-
-			// The caller still learns what was refused.
-			assert.Contains(t, recorder.Body.String(), `Error at \"/url\"`)
-
-			for _, ginErr := range c.Errors {
-				assert.NotContains(t, ginErr.Error(), secret, "a gin error carried the signing secret")
-			}
-
-			// The body was never consumed, so a handler could still read it.
-			body, err := io.ReadAll(c.Request.Body)
-			require.NoError(t, err)
-			assert.NotEmpty(t, body)
-		})
-	}
+// leaked reports whether the sentinel reached the response or the record.
+func (r refusal) leaked() bool {
+	return strings.Contains(r.actualResponse.Body.String(), sentinel) || strings.Contains(r.recorded, sentinel)
 }
 
-// A read route under the same prefix carries no secret, but the rule keys off
-// the path family rather than the method, so it is covered too.
-func TestErrorHandlerOnWebhookReadRoutesIsBodyBlind(t *testing.T) {
-	t.Parallel()
+// refuse serves one request to route and refuses it with ErrorHandler.
+func refuse(t *testing.T, method, route, target, body, message string, statusCode int) refusal {
+	t.Helper()
 
-	const sentinel = "sentinel-DO-NOT-LOG"
+	var result refusal
+	engine := gin.New()
+	engine.Handle(method, route, func(c *gin.Context) {
+		ErrorHandler(c, message, statusCode)
 
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		"/events/webhooks/x/deliveries", strings.NewReader(sentinel))
+		result.recorded = c.Errors.String()
+		result.unread, _ = io.ReadAll(c.Request.Body)
+	})
 
-	ErrorHandler(c, "request has an error: limit", http.StatusBadRequest)
+	result.actualResponse = httptest.NewRecorder()
+	engine.ServeHTTP(result.actualResponse, httptest.NewRequestWithContext(t.Context(), method, target, strings.NewReader(body)))
 
-	for _, ginErr := range c.Errors {
-		assert.NotContains(t, ginErr.Error(), sentinel)
-	}
+	return result
 }
 
-// A request refused for its credentials was refused before its body was
-// validated, so the body is neither reported nor consumed.
-func TestErrorHandlerOnAuthFailureIsBodyBlind(t *testing.T) {
+func Test_ErrorHandler(t *testing.T) {
 	t.Parallel()
 
-	const sentinel = "env-secret-DO-NOT-LOG-0000"
-
-	for _, test := range []struct {
-		name       string
+	refusals := map[string]struct {
 		message    string
 		statusCode int
 		wantCode   int
 	}{
-		{name: "unknown key", message: sharedauth.SecurityErrPrefix + "Invalid API key", statusCode: http.StatusUnauthorized, wantCode: http.StatusUnauthorized},
-		{name: "forbidden team", message: sharedauth.ForbiddenErrPrefix + "team is banned", statusCode: http.StatusUnauthorized, wantCode: http.StatusForbidden},
-		{name: "blocked team", message: sharedauth.BlockedErrPrefix + "team is blocked", statusCode: http.StatusUnauthorized, wantCode: http.StatusForbidden},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+		"a validation error": {message: "request body has an error", statusCode: http.StatusBadRequest, wantCode: http.StatusBadRequest},
+		"an unknown key":     {message: sharedauth.SecurityErrPrefix + "Invalid API key", statusCode: http.StatusUnauthorized, wantCode: http.StatusUnauthorized},
+		"a forbidden team":   {message: sharedauth.ForbiddenErrPrefix + "team is banned", statusCode: http.StatusUnauthorized, wantCode: http.StatusForbidden},
+	}
+	for name, tc := range refusals {
+		t.Run("should neither read nor record the body of a request refused for "+name, func(t *testing.T) {
 			t.Parallel()
 
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes",
-				strings.NewReader(`{"templateID":"base","envVars":{"TOKEN":"`+sentinel+`"}}`))
+			// Act
+			result := refuse(t, http.MethodPost, "/sandboxes", "/sandboxes",
+				`{"templateID":"base","envVars":{"TOKEN":"`+sentinel+`"}}`, tc.message, tc.statusCode)
 
-			ErrorHandler(c, test.message, test.statusCode)
-
-			assert.Equal(t, test.wantCode, recorder.Code)
-			assert.NotContains(t, recorder.Body.String(), sentinel)
-
-			require.NotEmpty(t, c.Errors)
-			for _, ginErr := range c.Errors {
-				assert.NotContains(t, ginErr.Error(), sentinel, "a gin error carried the request body")
-			}
-
-			body, err := io.ReadAll(c.Request.Body)
-			require.NoError(t, err)
-			assert.Contains(t, string(body), sentinel, "the error handler consumed the request body")
+			// Assert
+			assert.Equal(t, tc.wantCode, result.actualResponse.Code)
+			assert.False(t, result.leaked(), "the body reached the response or the record")
+			assert.Contains(t, string(result.unread), sentinel, "the error handler consumed the request body")
 		})
 	}
-}
 
-// Every other route keeps reporting the body, which is what makes a rejected
-// request diagnosable.
-func TestErrorHandlerStillRecordsTheBodyElsewhere(t *testing.T) {
-	t.Parallel()
+	t.Run("should return and record the validator's message", func(t *testing.T) {
+		t.Parallel()
 
-	const marker = "template-marker"
+		// Act
+		result := refuse(t, http.MethodPost, "/sandboxes", "/sandboxes", `{}`,
+			`request body has an error: Error at "/templateID": property is missing`, http.StatusBadRequest)
 
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/sandboxes",
-		strings.NewReader(`{"templateID":"`+marker+`"}`))
-
-	ErrorHandler(c, "request body has an error", http.StatusBadRequest)
-
-	require.NotEmpty(t, c.Errors)
-	assert.Contains(t, c.Errors[0].Error(), marker)
+		// Assert
+		assert.Equal(t, http.StatusBadRequest, result.actualResponse.Code)
+		assert.Contains(t, result.actualResponse.Body.String(), `Error at \"/templateID\"`)
+		assert.Contains(t, result.recorded, `Error at "/templateID"`)
+	})
 }

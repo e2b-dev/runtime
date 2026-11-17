@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
@@ -84,8 +85,10 @@ type Prefetcher struct {
 	// faults (served fast from the warm cache). Fetch-only is used for the
 	// last-cycle diff, whose multi-GiB prefault would load UFFDIO_COPY onto the
 	// resume-critical path for no workload gain and would regress warm resumes.
-	Prefault     bool
-	featureFlags *featureflags.Client
+	Prefault bool
+	// RestorePaused identifies prefetch for a VM restored without running its guest.
+	RestorePaused bool
+	featureFlags  *featureflags.Client
 }
 
 func New(
@@ -162,11 +165,14 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 	if p.Prefault {
 		modeAttr = modePrefaultAttr
 	}
-	mappingBlocksHistogram.Record(ctx, int64(totalPages), modeAttr)
+	restoreMode := metric.WithAttributes(attribute.Bool("restore_paused", p.RestorePaused))
+	mappingBlocksHistogram.Record(ctx, int64(totalPages), modeAttr, restoreMode)
 
 	span.SetAttributes(
 		attribute.Int64("prefetch.total_pages", int64(totalPages)),
 		attribute.Int64("prefetch.block_size", blockSize),
+		attribute.Int64("prefetch.mapped_bytes", int64(totalPages)*blockSize),
+		attribute.Bool("prefetch.restore_paused", p.RestorePaused),
 		attribute.Int("prefetch.max_fetch_workers", maxFetchWorkers),
 		attribute.Int("prefetch.max_copy_workers", maxCopyWorkers),
 		attribute.Int("prefetch.coalesce_max_mb", coalesceMaxMB),
@@ -258,13 +264,14 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 	fetchSkipped := fetchSkippedCount.Load()
 	copied := copiedCount.Load()
 	copySkipped := copySkippedCount.Load()
-	pagesCounter.Add(ctx, int64(fetched), stageFetchedAttr)
-	pagesCounter.Add(ctx, int64(fetchSkipped), stageFetchSkippedAttr)
-	pagesCounter.Add(ctx, int64(copied), stageCopiedAttr)
-	pagesCounter.Add(ctx, int64(copySkipped), stageCopySkippedAttr)
-	durationHistogram.Record(ctx, fetchDuration.Milliseconds(), phaseFetchAttr)
+	pagesCounter.Add(ctx, int64(fetched), stageFetchedAttr, restoreMode)
+	pagesCounter.Add(ctx, int64(fetchSkipped), stageFetchSkippedAttr, restoreMode)
+	pagesCounter.Add(ctx, int64(copied), stageCopiedAttr, restoreMode)
+	pagesCounter.Add(ctx, int64(copySkipped), stageCopySkippedAttr, restoreMode)
+	durationHistogram.Record(ctx, fetchDuration.Milliseconds(), phaseFetchAttr, restoreMode)
 	span.SetAttributes(
 		attribute.Int64("prefetch.fetched_pages", int64(fetched)),
+		attribute.Int64("prefetch.fetched_logical_bytes", int64(fetched)*blockSize),
 		attribute.Int64("prefetch.fetch_skipped_pages", int64(fetchSkipped)),
 		attribute.Int64("prefetch.copied_pages", int64(copied)),
 		attribute.Int64("prefetch.copy_skipped_pages", int64(copySkipped)),
@@ -273,15 +280,15 @@ func (p *Prefetcher) Start(ctx context.Context) error {
 	if cs := copyStart.Load(); cs != nil {
 		copyDuration := time.Since(*cs)
 		copyStartDelay := cs.Sub(runStart)
-		durationHistogram.Record(ctx, copyDuration.Milliseconds(), phaseCopyAttr)
-		durationHistogram.Record(ctx, copyStartDelay.Milliseconds(), phaseCopyStartDelayAttr)
+		durationHistogram.Record(ctx, copyDuration.Milliseconds(), phaseCopyAttr, restoreMode)
+		durationHistogram.Record(ctx, copyStartDelay.Milliseconds(), phaseCopyStartDelayAttr, restoreMode)
 		span.SetAttributes(
 			attribute.Float64("prefetch.copy_ms", float64(copyDuration)/float64(time.Millisecond)),
 			attribute.Float64("prefetch.copy_start_delay_ms", float64(copyStartDelay)/float64(time.Millisecond)),
 		)
 	}
 	totalDuration := time.Since(runStart)
-	durationHistogram.Record(ctx, totalDuration.Milliseconds(), phaseTotalAttr)
+	durationHistogram.Record(ctx, totalDuration.Milliseconds(), phaseTotalAttr, restoreMode)
 	span.SetAttributes(attribute.Float64("prefetch.total_ms", float64(totalDuration)/float64(time.Millisecond)))
 
 	p.logger.Debug(ctx, "prefetch: completed",

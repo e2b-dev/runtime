@@ -5,7 +5,6 @@ package sandbox
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -178,18 +177,18 @@ func TestStartRootfsProviderAfterCleanup(t *testing.T) {
 	select {
 	case <-provider.startCalled:
 	case <-time.After(time.Second):
-		t.Fatal("rootfs Start was not launched before late cleanup")
+		require.Fail(t, "rootfs Start was not launched before late cleanup")
 	}
 
 	select {
 	case <-provider.closeCalled:
 	case <-time.After(time.Second):
-		t.Fatal("late cleanup did not call rootfs Close")
+		require.Fail(t, "late cleanup did not call rootfs Close")
 	}
 
 	select {
 	case <-done:
-		t.Fatal("rootfs Close returned before Start published readiness")
+		require.Fail(t, "rootfs Close returned before Start published readiness")
 	default:
 	}
 
@@ -198,7 +197,7 @@ func TestStartRootfsProviderAfterCleanup(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("rootfs Close did not return after Start published readiness")
+		require.Fail(t, "rootfs Close did not return after Start published readiness")
 	}
 
 	require.Equal(t, 1, provider.starts)
@@ -323,9 +322,7 @@ func TestCgroupRemovalAcrossCleanupRegistration(t *testing.T) {
 			var order []string
 			addStep := func(name string) func(context.Context) error {
 				return func(ctx context.Context) error {
-					if ctx.Err() != nil {
-						t.Fatal("cleanup used the canceled startup context")
-					}
+					require.NoError(t, ctx.Err(), "cleanup used the canceled startup context")
 					order = append(order, name)
 
 					return nil
@@ -334,9 +331,7 @@ func TestCgroupRemovalAcrossCleanupRegistration(t *testing.T) {
 			cleanup.Add(ctx, addStep("rootfs"))
 			removeCalls := 0
 			remove := func(ctx context.Context) error {
-				if ctx.Err() != nil {
-					t.Fatal("cgroup removal used the canceled startup context")
-				}
+				require.NoError(t, ctx.Err(), "cgroup removal used the canceled startup context")
 				removeCalls++
 				order = append(order, "remove")
 				if tc.removeFails {
@@ -357,17 +352,13 @@ func TestCgroupRemovalAcrossCleanupRegistration(t *testing.T) {
 			}
 			cleanupIfNotRegistered(ctx, &result, &registered, remove)
 			cleanupErr := cleanup.Run(ctx)
-			if removeCalls != 1 {
-				t.Fatalf("cgroup removal ran %d times, want once", removeCalls)
+			require.Equal(t, 1, removeCalls, "cgroup removal must run once")
+			require.Equal(t, tc.wantOrder, order, "cleanup order")
+			if tc.failStartup {
+				require.ErrorIs(t, result, startErr, "startup error lost")
 			}
-			if !slices.Equal(order, tc.wantOrder) {
-				t.Fatalf("cleanup order = %v, want %v", order, tc.wantOrder)
-			}
-			if tc.failStartup && !errors.Is(result, startErr) {
-				t.Fatalf("startup error lost: %v", result)
-			}
-			if tc.removeFails && !errors.Is(errors.Join(result, cleanupErr), removeErr) {
-				t.Fatalf("cgroup removal error lost: result=%v cleanup=%v", result, cleanupErr)
+			if tc.removeFails {
+				require.ErrorIs(t, errors.Join(result, cleanupErr), removeErr, "cgroup removal error lost")
 			}
 		})
 	}

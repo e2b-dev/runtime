@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -70,12 +71,12 @@ func (m *CPUConfig) Validate(formats strfmt.Registry) error {
 }
 
 func (m *CPUConfig) validateCpuidModifiers(formats strfmt.Registry) error {
-	if swag.IsZero(m.CpuidModifiers) { // not required
+	if typeutils.IsZero(m.CpuidModifiers) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.CpuidModifiers); i++ {
-		if swag.IsZero(m.CpuidModifiers[i]) { // not required
+		if typeutils.IsZero(m.CpuidModifiers[i]) { // not required
 			continue
 		}
 
@@ -100,12 +101,12 @@ func (m *CPUConfig) validateCpuidModifiers(formats strfmt.Registry) error {
 }
 
 func (m *CPUConfig) validateMsrModifiers(formats strfmt.Registry) error {
-	if swag.IsZero(m.MsrModifiers) { // not required
+	if typeutils.IsZero(m.MsrModifiers) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.MsrModifiers); i++ {
-		if swag.IsZero(m.MsrModifiers[i]) { // not required
+		if typeutils.IsZero(m.MsrModifiers[i]) { // not required
 			continue
 		}
 
@@ -130,12 +131,12 @@ func (m *CPUConfig) validateMsrModifiers(formats strfmt.Registry) error {
 }
 
 func (m *CPUConfig) validateRegModifiers(formats strfmt.Registry) error {
-	if swag.IsZero(m.RegModifiers) { // not required
+	if typeutils.IsZero(m.RegModifiers) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.RegModifiers); i++ {
-		if swag.IsZero(m.RegModifiers[i]) { // not required
+		if typeutils.IsZero(m.RegModifiers[i]) { // not required
 			continue
 		}
 
@@ -160,12 +161,12 @@ func (m *CPUConfig) validateRegModifiers(formats strfmt.Registry) error {
 }
 
 func (m *CPUConfig) validateVcpuFeatures(formats strfmt.Registry) error {
-	if swag.IsZero(m.VcpuFeatures) { // not required
+	if typeutils.IsZero(m.VcpuFeatures) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.VcpuFeatures); i++ {
-		if swag.IsZero(m.VcpuFeatures[i]) { // not required
+		if typeutils.IsZero(m.VcpuFeatures[i]) { // not required
 			continue
 		}
 
@@ -190,7 +191,7 @@ func (m *CPUConfig) validateVcpuFeatures(formats strfmt.Registry) error {
 }
 
 func (m *CPUConfig) validateX86TscKhz(formats strfmt.Registry) error {
-	if swag.IsZero(m.X86TscKhz) { // not required
+	if typeutils.IsZero(m.X86TscKhz) { // not required
 		return nil
 	}
 
@@ -237,8 +238,8 @@ func (m *CPUConfig) contextValidateCpuidModifiers(ctx context.Context, formats s
 
 		if m.CpuidModifiers[i] != nil {
 
-			if swag.IsZero(m.CpuidModifiers[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.CpuidModifiers[i]) { // not required
+				continue
 			}
 
 			if err := m.CpuidModifiers[i].ContextValidate(ctx, formats); err != nil {
@@ -266,8 +267,8 @@ func (m *CPUConfig) contextValidateMsrModifiers(ctx context.Context, formats str
 
 		if m.MsrModifiers[i] != nil {
 
-			if swag.IsZero(m.MsrModifiers[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.MsrModifiers[i]) { // not required
+				continue
 			}
 
 			if err := m.MsrModifiers[i].ContextValidate(ctx, formats); err != nil {
@@ -295,8 +296,8 @@ func (m *CPUConfig) contextValidateRegModifiers(ctx context.Context, formats str
 
 		if m.RegModifiers[i] != nil {
 
-			if swag.IsZero(m.RegModifiers[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.RegModifiers[i]) { // not required
+				continue
 			}
 
 			if err := m.RegModifiers[i].ContextValidate(ctx, formats); err != nil {
@@ -324,8 +325,8 @@ func (m *CPUConfig) contextValidateVcpuFeatures(ctx context.Context, formats str
 
 		if m.VcpuFeatures[i] != nil {
 
-			if swag.IsZero(m.VcpuFeatures[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.VcpuFeatures[i]) { // not required
+				continue
 			}
 
 			if err := m.VcpuFeatures[i].ContextValidate(ctx, formats); err != nil {
@@ -352,13 +353,13 @@ func (m *CPUConfig) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *CPUConfig) UnmarshalBinary(b []byte) error {
 	var res CPUConfig
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

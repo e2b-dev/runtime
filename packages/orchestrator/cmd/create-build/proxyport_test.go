@@ -1,21 +1,19 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 //nolint:paralleltest // uses t.Setenv, which is incompatible with t.Parallel
 func TestProxyPort(t *testing.T) {
 	t.Setenv("PROXY_PORT", "")
-	if got := proxyPort(); got != 5007 {
-		t.Fatalf("unset: got %d, want 5007", got)
-	}
+	require.Equal(t, uint16(5007), proxyPort(), "unset")
 
 	t.Setenv("PROXY_PORT", "6007")
-	if got := proxyPort(); got != 6007 {
-		t.Fatalf("valid override: got %d, want 6007", got)
-	}
+	require.Equal(t, uint16(6007), proxyPort(), "valid override")
 
 	t.Setenv("PROXY_PORT", "not-a-port")
-	if got := proxyPort(); got != 5007 {
-		t.Fatalf("invalid: got %d, want 5007 (fallback)", got)
-	}
+	require.Equal(t, uint16(5007), proxyPort(), "invalid value falls back to the default")
 }

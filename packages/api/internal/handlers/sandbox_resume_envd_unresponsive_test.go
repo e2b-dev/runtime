@@ -76,7 +76,7 @@ func newEnvdUnresponsiveSnapshotStore(t *testing.T, backend *autoResumeBackendSt
 		FirecrackerVersion: "1.4.0",
 		EnvdVersion:        &envdVersion,
 		OriginNodeID:       "test-node",
-		Status:             dbtypes.BuildStatusSuccess,
+		StatusGroup:        dbtypes.BuildStatusGroupReady,
 		Config: &dbtypes.PausedSandboxConfig{
 			AutoResume: &dbtypes.SandboxAutoResumeConfig{Policy: dbtypes.SandboxAutoResumeAny},
 		},

@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // DescribeBalloonConfigReader is a Reader for the DescribeBalloonConfig structure.
@@ -51,11 +50,9 @@ func NewDescribeBalloonConfigOK() *DescribeBalloonConfigOK {
 	return &DescribeBalloonConfigOK{}
 }
 
-/*
-DescribeBalloonConfigOK describes a response with status code 200, with default header values.
-
-The balloon device configuration
-*/
+// DescribeBalloonConfigOK describes a response with status code 200, with default header values.
+//
+// The balloon device configuration
 type DescribeBalloonConfigOK struct {
 	Payload *models.Balloon
 }
@@ -121,11 +118,9 @@ func NewDescribeBalloonConfigBadRequest() *DescribeBalloonConfigBadRequest {
 	return &DescribeBalloonConfigBadRequest{}
 }
 
-/*
-DescribeBalloonConfigBadRequest describes a response with status code 400, with default header values.
-
-Balloon device not configured.
-*/
+// DescribeBalloonConfigBadRequest describes a response with status code 400, with default header values.
+//
+// Balloon device not configured.
 type DescribeBalloonConfigBadRequest struct {
 	Payload *models.Error
 }
@@ -193,11 +188,9 @@ func NewDescribeBalloonConfigDefault(code int) *DescribeBalloonConfigDefault {
 	}
 }
 
-/*
-DescribeBalloonConfigDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// DescribeBalloonConfigDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type DescribeBalloonConfigDefault struct {
 	_statusCode int
 

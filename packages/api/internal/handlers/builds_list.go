@@ -132,6 +132,17 @@ func (a *APIStore) listBuildRows(
 ) ([]listBuildRow, error) {
 	filter := strings.TrimSpace(sharedUtils.DerefOrDefault(buildIDOrTemplate, ""))
 	if filter == "" {
+		if isBuildingStatusGroups(statuses) {
+			rows, err := a.sqlcDB.GetTeamBuildingBuildsPage(ctx, queries.GetTeamBuildingBuildsPageParams{
+				TeamID:          teamID,
+				CursorCreatedAt: cursorTime,
+				CursorID:        cursorID,
+				LimitPlusOne:    limitPlusOne,
+			})
+
+			return convertBuildRows(rows, err, func(r queries.GetTeamBuildingBuildsPageRow) listBuildRow { return listBuildRow(r) })
+		}
+
 		rows, err := a.sqlcDB.GetTeamBuildsPage(ctx, queries.GetTeamBuildsPageParams{
 			TeamID:          teamID,
 			CursorCreatedAt: cursorTime,

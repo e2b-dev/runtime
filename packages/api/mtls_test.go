@@ -47,7 +47,7 @@ func TestHTTPPortServesThroughTheMTLSListener(t *testing.T) {
 
 	flags, source := servicetest.Flags(t)
 	proc, metrics := servicetest.NewProcess(t, flags.StringReader())
-	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false)
+	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false, false)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/health"}, tlsConfig.httpHealthPaths)
 	swagger, err := api.GetSpec()
@@ -102,7 +102,7 @@ func TestGRPCPortsTakeTheMTLSCredentials(t *testing.T) {
 
 	flags, source := servicetest.Flags(t)
 	proc, metrics := servicetest.NewProcess(t, flags.StringReader())
-	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false)
+	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false, false)
 	require.NoError(t, err)
 	internal := serveGRPC(t, tlsConfig.internalGRPC)
 	public := serveGRPC(t, tlsConfig.publicGRPC)
@@ -123,7 +123,7 @@ func TestNewServiceTLSRefusesAWildcardOnTheAPIsPorts(t *testing.T) {
 	t.Parallel()
 
 	proc, _ := servicetest.NewProcess(t, nil)
-	_, err := newServiceTLS(proc, cfg.TLSConfig{InternalGRPC: mtls.ListenerSettings{Allow: []string{"spiffe://td.example.internal/ns/edge/sa/proxy-*"}}}, false)
+	_, err := newServiceTLS(proc, cfg.TLSConfig{InternalGRPC: mtls.ListenerSettings{Allow: []string{"spiffe://td.example.internal/ns/edge/sa/proxy-*"}}}, false, false)
 	require.ErrorIs(t, err, mtls.ErrInvalidAllowList)
 	assert.ErrorContains(t, err, "E2B_TLS_INTERNAL_GRPC_ALLOW")
 }
@@ -142,7 +142,7 @@ func TestHopsReportUnderTheirKeysAndReadTheirFlags(t *testing.T) {
 		SecretsStore: mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/store/sa/store"}},
 		Webhooks:     mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/webhooks/sa/webhooks"}},
 		Orchestrator: mtls.HopSettings{Expect: []string{"spiffe://td.example.internal/ns/orchestrator/sa/orchestrator"}},
-	}, true)
+	}, true, false)
 	require.NoError(t, err)
 
 	for _, hop := range []string{"secrets_store", "orchestrator"} {
@@ -158,7 +158,7 @@ func TestAnalyticsHopIsNotBuiltOffTheHopPath(t *testing.T) {
 	t.Parallel()
 
 	proc, metrics := servicetest.NewProcess(t, nil)
-	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false)
+	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false, false)
 	require.NoError(t, err)
 
 	assert.Nil(t, tlsConfig.hops.Analytics)

@@ -464,7 +464,7 @@ func TestCloseWaitsForOperations(t *testing.T) {
 	case err := <-closed:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("Close did not return: an operation holds the root while waiting for it")
+		require.Fail(t, "Close did not return: an operation holds the root while waiting for it")
 	}
 
 	wg.Wait()

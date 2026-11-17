@@ -334,7 +334,7 @@ func skeletonCopyBlock(t *testing.T) string {
 			}
 		}
 	}
-	t.Fatal("unterminated skeleton-copy block in configure.sh")
+	require.Fail(t, "unterminated skeleton-copy block in configure.sh")
 
 	return ""
 }

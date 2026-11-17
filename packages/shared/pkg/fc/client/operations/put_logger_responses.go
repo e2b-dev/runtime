@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutLoggerReader is a Reader for the PutLogger structure.
@@ -51,11 +50,9 @@ func NewPutLoggerNoContent() *PutLoggerNoContent {
 	return &PutLoggerNoContent{}
 }
 
-/*
-PutLoggerNoContent describes a response with status code 204, with default header values.
-
-Logger created.
-*/
+// PutLoggerNoContent describes a response with status code 204, with default header values.
+//
+// Logger created.
 type PutLoggerNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutLoggerBadRequest() *PutLoggerBadRequest {
 	return &PutLoggerBadRequest{}
 }
 
-/*
-PutLoggerBadRequest describes a response with status code 400, with default header values.
-
-Logger cannot be initialized due to bad input.
-*/
+// PutLoggerBadRequest describes a response with status code 400, with default header values.
+//
+// Logger cannot be initialized due to bad input.
 type PutLoggerBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutLoggerDefault(code int) *PutLoggerDefault {
 	}
 }
 
-/*
-PutLoggerDefault describes a response with status code -1, with default header values.
-
-Internal server error.
-*/
+// PutLoggerDefault describes a response with status code -1, with default header values.
+//
+// Internal server error.
 type PutLoggerDefault struct {
 	_statusCode int
 

@@ -170,13 +170,13 @@ func TestFreezeBlocksWritesAndThawReleasesThem(t *testing.T) {
 		select {
 		case <-blocked:
 		case <-time.After(cleanupTimeout):
-			t.Error("the write blocked by the freeze never completed after the thaw")
+			assert.Fail(t, "the write blocked by the freeze never completed after the thaw")
 		}
 	})
 
 	select {
 	case err := <-blocked:
-		t.Fatalf("a write to the frozen filesystem completed (err=%v); the freeze did not take", err)
+		require.Failf(t, "a write to the frozen filesystem completed; the freeze did not take", "write returned %v", err)
 	case <-time.After(frozenWriteTimeout):
 	}
 
@@ -195,7 +195,7 @@ func TestFreezeBlocksWritesAndThawReleasesThem(t *testing.T) {
 	case err := <-blocked:
 		require.NoError(t, err, "the write blocked by the freeze should succeed once thawed")
 	case <-time.After(thawedWriteTimeout):
-		t.Fatal("the write blocked by the freeze did not complete after the thaw")
+		require.Fail(t, "the write blocked by the freeze did not complete after the thaw")
 	}
 
 	// The kernel answers EINVAL; Thaw reports success.

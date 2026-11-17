@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutCPUConfigurationParams creates a new PutCPUConfigurationParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutCPUConfigurationParams() *PutCPUConfigurationParams {
-	return &PutCPUConfigurationParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutCPUConfigurationParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutCPUConfigurationParamsWithTimeout creates a new PutCPUConfigurationParams object
 // with the ability to set a timeout on a request.
 func NewPutCPUConfigurationParamsWithTimeout(timeout time.Duration) *PutCPUConfigurationParams {
 	return &PutCPUConfigurationParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutCPUConfigurationParamsWithContext creates a new PutCPUConfigurationParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutCPUConfigurationParams].
 func NewPutCPUConfigurationParamsWithContext(ctx context.Context) *PutCPUConfigurationParams {
 	return &PutCPUConfigurationParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutCPUConfigurationParams contains all the parameters to send to the API endpoin
 */
 type PutCPUConfigurationParams struct {
 
-	/* Body.
-
-	   CPU configuration request
-	*/
+	// Body.
+	//
+	// CPU configuration request
 	Body *models.CPUConfig
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put Cpu configuration params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutCPUConfigurationParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put Cpu configuration params
+// WithTimeout adds the timeout to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) WithTimeout(timeout time.Duration) *PutCPUConfigurationParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put Cpu configuration params
+// SetTimeout adds the timeout to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put Cpu configuration params
+// WithContext adds the context to the put Cpu configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutCPUConfigurationParams].
 func (o *PutCPUConfigurationParams) WithContext(ctx context.Context) *PutCPUConfigurationParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put Cpu configuration params
+// SetContext adds the context to the put Cpu configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutCPUConfigurationParams].
 func (o *PutCPUConfigurationParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put Cpu configuration params
+// WithHTTPClient adds the HTTPClient to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) WithHTTPClient(client *http.Client) *PutCPUConfigurationParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put Cpu configuration params
+// SetHTTPClient adds the HTTPClient to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put Cpu configuration params
+// WithBody adds the body to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) WithBody(body *models.CPUConfig) *PutCPUConfigurationParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put Cpu configuration params
+// SetBody adds the body to the put Cpu configuration params.
 func (o *PutCPUConfigurationParams) SetBody(body *models.CPUConfig) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutCPUConfigurationParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

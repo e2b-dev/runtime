@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutSerialDeviceParams creates a new PutSerialDeviceParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutSerialDeviceParams() *PutSerialDeviceParams {
-	return &PutSerialDeviceParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutSerialDeviceParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutSerialDeviceParamsWithTimeout creates a new PutSerialDeviceParams object
 // with the ability to set a timeout on a request.
 func NewPutSerialDeviceParamsWithTimeout(timeout time.Duration) *PutSerialDeviceParams {
 	return &PutSerialDeviceParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutSerialDeviceParamsWithContext creates a new PutSerialDeviceParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutSerialDeviceParams].
 func NewPutSerialDeviceParamsWithContext(ctx context.Context) *PutSerialDeviceParams {
 	return &PutSerialDeviceParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutSerialDeviceParams contains all the parameters to send to the API endpoint
 */
 type PutSerialDeviceParams struct {
 
-	/* Body.
-
-	   Serial console properties
-	*/
+	// Body.
+	//
+	// Serial console properties
 	Body *models.SerialDevice
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put serial device params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutSerialDeviceParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put serial device params
+// WithTimeout adds the timeout to the put serial device params.
 func (o *PutSerialDeviceParams) WithTimeout(timeout time.Duration) *PutSerialDeviceParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put serial device params
+// SetTimeout adds the timeout to the put serial device params.
 func (o *PutSerialDeviceParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put serial device params
+// WithContext adds the context to the put serial device params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutSerialDeviceParams].
 func (o *PutSerialDeviceParams) WithContext(ctx context.Context) *PutSerialDeviceParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put serial device params
+// SetContext adds the context to the put serial device params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutSerialDeviceParams].
 func (o *PutSerialDeviceParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put serial device params
+// WithHTTPClient adds the HTTPClient to the put serial device params.
 func (o *PutSerialDeviceParams) WithHTTPClient(client *http.Client) *PutSerialDeviceParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put serial device params
+// SetHTTPClient adds the HTTPClient to the put serial device params.
 func (o *PutSerialDeviceParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put serial device params
+// WithBody adds the body to the put serial device params.
 func (o *PutSerialDeviceParams) WithBody(body *models.SerialDevice) *PutSerialDeviceParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put serial device params
+// SetBody adds the body to the put serial device params.
 func (o *PutSerialDeviceParams) SetBody(body *models.SerialDevice) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutSerialDeviceParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

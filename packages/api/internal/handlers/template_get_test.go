@@ -14,6 +14,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestGetTemplatesTemplateID_SummarisesTheNewestReadyDefaultBuild(t *testing.T) {
@@ -28,9 +29,9 @@ func TestGetTemplatesTemplateID_SummarisesTheNewestReadyDefaultBuild(t *testing.
 	markTemplateDefault(t, ctx, testDB, templateID, new("Base sandbox"))
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
-	readyBuildID := insertTestBuild(t, ctx, testDB, templateID, "ready", 2, baseTime)
+	readyBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 2, baseTime)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, readyBuildID, "default", baseTime)
-	failedBuildID := insertTestBuild(t, ctx, testDB, templateID, "failed", 8, baseTime.Add(time.Hour))
+	failedBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupFailed, 8, baseTime.Add(time.Hour))
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, failedBuildID, "default", baseTime.Add(time.Hour))
 
 	template := callTemplateGetHandler(t, testDB, teamID, templateID)
@@ -60,7 +61,7 @@ func TestGetTemplatesTemplateID_ZeroBuildFieldsWithoutAReadyDefaultBuild(t *test
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
-	readyBetaBuildID := insertTestBuild(t, ctx, testDB, templateID, "ready", 2, baseTime)
+	readyBetaBuildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 2, baseTime)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, readyBetaBuildID, "beta", baseTime)
 
 	template := callTemplateGetHandler(t, testDB, teamID, templateID)

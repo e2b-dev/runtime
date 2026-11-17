@@ -330,14 +330,13 @@ func registerBuild(
 	telemetry.ReportEvent(ctx, "marked previous builds as failed")
 
 	// Insert the new build
-	// TODO(ENG-3469): Switch to dbtypes.BuildStatusPending once all consumers are migrated.
 	// kernel_version and firecracker_version are seeded here for backwards
 	// compatibility; the template-manager reports the versions it actually
 	// used in TemplateBuildMetadata and SetFinished overwrites these rows.
 	err = client.CreateTemplateBuild(ctx, queries.CreateTemplateBuildParams{
 		BuildID:            buildID,
 		TemplateID:         data.TemplateID,
-		Status:             dbtypes.BuildStatusWaiting,
+		StatusGroup:        dbtypes.BuildStatusGroupPending,
 		RamMb:              ramMB,
 		Vcpu:               cpuCount,
 		MaxVcpu:            maxVcpu.value,

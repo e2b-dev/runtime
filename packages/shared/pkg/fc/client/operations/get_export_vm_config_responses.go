@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // GetExportVMConfigReader is a Reader for the GetExportVMConfig structure.
@@ -45,11 +44,9 @@ func NewGetExportVMConfigOK() *GetExportVMConfigOK {
 	return &GetExportVMConfigOK{}
 }
 
-/*
-GetExportVMConfigOK describes a response with status code 200, with default header values.
-
-OK
-*/
+// GetExportVMConfigOK describes a response with status code 200, with default header values.
+//
+// OK
 type GetExportVMConfigOK struct {
 	Payload *models.FullVMConfiguration
 }
@@ -117,11 +114,9 @@ func NewGetExportVMConfigDefault(code int) *GetExportVMConfigDefault {
 	}
 }
 
-/*
-GetExportVMConfigDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// GetExportVMConfigDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type GetExportVMConfigDefault struct {
 	_statusCode int
 

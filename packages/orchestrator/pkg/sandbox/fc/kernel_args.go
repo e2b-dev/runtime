@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 type KernelArgs map[string]string
@@ -44,6 +46,30 @@ var reservedCmdlineParams = map[string]struct{}{
 	"quiet":         {},
 	"selinux":       {},
 }
+
+// memoryHotplugCmdlineParams are the parameters that decide how plugged memory is onlined: whether
+// it can ever be unplugged again, and how much of it auto-movable may online as movable. They are
+// reserved only where the orchestrator sets them, on a boot with a hotplug region, and for new
+// builds. A stored overlay from before (in a template's metadata) that names one still replays
+// unchanged on a boot without a region.
+var memoryHotplugCmdlineParams = map[string]struct{}{
+	"memhp_default_state":                    {},
+	"memory_hotplug.online_policy":           {},
+	"memory_hotplug.auto_movable_ratio":      {},
+	"memory_hotplug.auto_movable_numa_aware": {},
+}
+
+// MemoryHotplugOnlinePolicy is how the guest kernel onlines memory plugged into the virtio-mem
+// hotplug region, set only on boots that configure one. auto-movable onlines blocks as movable,
+// which keeps them unpluggable, while movable memory stays within auto_movable_ratio of kernel
+// memory, and onlines the rest as kernel memory, so a large region next to small boot RAM
+// cannot starve the guest kernel of memory for itself. Plain "online" would make unplugging
+// unreliable; "online_movable" (upstream Firecracker's advice) makes every block movable and
+// needs a cap on the region relative to boot RAM. The policy must not change once memory is
+// online, so it is fixed at the boot that builds the template.
+const MemoryHotplugOnlinePolicy = "memhp_default_state=online memory_hotplug.online_policy=auto-movable"
+
+var memoryHotplugKernelArgs = utils.Must(ParseCmdlineArgs(MemoryHotplugOnlinePolicy))
 
 // ParseCmdlineArgs parses a guest kernel command line fragment the way the kernel itself does:
 // parameters separated by whitespace, each split at its FIRST '=' into a name and a value, and
@@ -87,6 +113,33 @@ func ValidateCmdlineArgs(args map[string]string) error {
 	}
 
 	return nil
+}
+
+// ValidateBuildCmdlineArgs is ValidateCmdlineArgs for the build flag, which also may not set the
+// memory hotplug online policy: a build that configures a region sets it itself, and a fragment
+// recorded now would otherwise be replayed into every later boot of the template.
+func ValidateBuildCmdlineArgs(args map[string]string) error {
+	if err := ValidateCmdlineArgs(args); err != nil {
+		return err
+	}
+	if conflicting := MemoryHotplugCmdlineConflicts(args); len(conflicting) > 0 {
+		return fmt.Errorf("guest kernel cmdline parameter %q is reserved by the orchestrator for memory hotplug", conflicting[0])
+	}
+
+	return nil
+}
+
+// MemoryHotplugCmdlineConflicts names the overlay parameters a boot with a hotplug region drops,
+// sorted, because the region's online policy replaces them.
+func MemoryHotplugCmdlineConflicts(args map[string]string) []string {
+	var conflicting []string
+	for _, name := range slices.Sorted(maps.Keys(args)) {
+		if _, ok := memoryHotplugCmdlineParams[name]; ok {
+			conflicting = append(conflicting, name)
+		}
+	}
+
+	return conflicting
 }
 
 // hostArch is the architecture the guest kernel boots on. Firecracker never emulates, so it
@@ -163,6 +216,15 @@ func buildKernelArgsFor(arch string, ipv4 string, options ProcessOptions) Kernel
 	// whole overlay leaves the command line byte-identical to the default.
 	if ValidateCmdlineArgs(options.CmdlineArgs) == nil {
 		maps.Copy(args, options.CmdlineArgs)
+	}
+
+	// A boot with a region keeps its online policy over a stored overlay's: the rest of the
+	// overlay still applies, and the caller logs what was replaced.
+	if options.MemoryHotplugMB > 0 {
+		for name := range memoryHotplugCmdlineParams {
+			delete(args, name)
+		}
+		maps.Copy(args, memoryHotplugKernelArgs)
 	}
 
 	return args

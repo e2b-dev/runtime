@@ -36,7 +36,7 @@ func TestInstallCACerts_SlowCleanupDoesNotBlockOrOverwriteInit(t *testing.T) {
 	case err := <-installed:
 		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("init blocked behind source-file cleanup")
+		require.Fail(t, "init blocked behind source-file cleanup")
 	}
 	tr.requireBundle(t, a, b)
 	// The delayed read sees B while a newer init adopts B. Its legacy hash link must survive.

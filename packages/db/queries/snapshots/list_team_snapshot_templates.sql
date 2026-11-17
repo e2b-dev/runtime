@@ -26,7 +26,7 @@ JOIN LATERAL (
     FROM "public"."env_build_assignments" ba
     JOIN "public"."env_builds" b ON b.id = ba.build_id
     WHERE ba.env_id = e.id
-      AND b.status IN ('success', 'uploaded', 'ready')
+      AND b.status_group = 'ready'
       AND (sqlc.narg(tag)::text IS NULL OR ba.tag = sqlc.narg(tag)::text)
     ORDER BY ba.created_at DESC
     LIMIT 1

@@ -92,11 +92,12 @@ type DirectPathMount struct {
 
 	logger logger.Logger
 
-	Backend         block.Device
-	deviceIndex     uint32
-	blockSize       uint64
-	ioTimeout       time.Duration
-	deadconnTimeout time.Duration
+	Backend           block.Device
+	deviceIndex       uint32
+	blockSize         uint64
+	ioTimeout         time.Duration
+	deadconnTimeout   time.Duration
+	disconnectTimeout time.Duration
 
 	// deviceFile is held open for the whole life of the mount so Flush can see
 	// every writeback error, not just the ones its own sync produces. The kernel
@@ -109,32 +110,7 @@ type DirectPathMount struct {
 	// ioctlSession is set when the device was attached through the ioctl
 	// interface; Close then detaches through the same interface.
 	ioctlSession *ioctlSession
-	// ioctlUnmasked leaves the parked NBD_DO_IT thread's signals deliverable,
-	// and ioctlAfterConfigure runs once the device is configured; only tests
-	// set them.
-	ioctlUnmasked        bool
-	ioctlAfterConfigure  func(deviceIndex uint32)
-	ioctlCloseCtl        func(fd int) error
-	ioctlDisconnectIoctl func(fd int) error
-	ioctlAbandoned       func(*ioctlSession)
-	// openDeviceFn opens the connected device; only tests set it.
-	openDeviceFn func(path string) (*os.File, error)
-	// deferredReleaseTimeout bounds the release of a slot whose ioctl session
-	// outlived its disconnect; zero is the pool's own close bound. Only tests
-	// set it, and deferredReleaseDone, which receives that release's result.
-	deferredReleaseTimeout time.Duration
-	deferredReleaseDone    chan error
-
-	// afterConnect runs as soon as nbdnl.Connect has succeeded, before the
-	// wait-for-connected poll. Only tests set it, to cancel the context inside
-	// the window where the kernel holds the device but Open has not returned it.
-	afterConnect func(deviceIndex uint32)
-
-	// Tests replace device operations without connecting a kernel NBD device.
-	// Production leaves these nil and uses the same disconnect and pool calls.
-	disconnectDeviceFn func(ctx context.Context, deviceIndex uint32) error
-	releaseDeviceFn    func(ctx context.Context, deviceIndex uint32) error
-	socketPairFn       func() ([2]int, error)
+	ops          *deviceOps
 
 	dispatchers []*Dispatch
 	socksClient []*os.File
@@ -158,16 +134,18 @@ func WithDeadconnTimeout(d time.Duration) MountOption {
 
 func NewDirectPathMount(b block.Device, devicePool *DevicePool, featureFlags *featureflags.Client, lg logger.Logger, opts ...MountOption) *DirectPathMount {
 	m := &DirectPathMount{
-		Backend:         b,
-		blockSize:       4096,
-		devicePool:      devicePool,
-		featureFlags:    featureFlags,
-		logger:          lg,
-		socksClient:     make([]*os.File, 0),
-		socksServer:     make([]io.Closer, 0),
-		deviceIndex:     math.MaxUint32,
-		ioTimeout:       ioTimeout,
-		deadconnTimeout: deadconnTimeout,
+		Backend:           b,
+		blockSize:         4096,
+		devicePool:        devicePool,
+		featureFlags:      featureFlags,
+		logger:            lg,
+		socksClient:       make([]*os.File, 0),
+		socksServer:       make([]io.Closer, 0),
+		deviceIndex:       math.MaxUint32,
+		ioTimeout:         ioTimeout,
+		deadconnTimeout:   deadconnTimeout,
+		disconnectTimeout: disconnectTimeout,
+		ops:               linuxDeviceOps(),
 	}
 
 	for _, o := range opts {
@@ -233,7 +211,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		for i := range connections {
 			// Create the socket pairs
-			sockPair, err := d.socketPair()
+			sockPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 			if err != nil {
 				closeErr := closeSocketPairs(d.socksClient, d.socksServer)
 				releaseErr := d.devicePool.ReleaseDevice(ctx, deviceIndex)
@@ -292,25 +270,22 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			attachInterface = "ioctl"
 			var session *ioctlSession
 			session, connectErr = attachIoctl(ctx, ioctlAttachConfig{
-				index:           deviceIndex,
-				socks:           d.socksClient,
-				size:            uint64(size),
-				blockSize:       d.blockSize,
-				timeout:         d.ioTimeout,
-				deadconn:        d.deadconnTimeout,
-				flags:           uint64(serverFlags),
-				maxDevices:      d.devicePool.MaxDevices(),
-				afterConfigure:  d.ioctlAfterConfigure,
-				closeCtl:        d.ioctlCloseCtl,
-				disconnectIoctl: d.ioctlDisconnectIoctl,
-				abandoned:       d.ioctlAbandoned,
-			}, d.logger, d.ioctlUnmasked)
+				index:      deviceIndex,
+				socks:      d.socksClient,
+				size:       uint64(size),
+				blockSize:  d.blockSize,
+				timeout:    d.ioTimeout,
+				deadconn:   d.deadconnTimeout,
+				flags:      uint64(serverFlags),
+				maxDevices: d.devicePool.MaxDevices(),
+				ops:        d.ops,
+			}, d.logger)
 			if connectErr == nil {
 				idx = deviceIndex
 				d.ioctlSession = session
 			}
 		} else {
-			idx, connectErr = nbdnl.Connect(deviceIndex, d.socksClient, uint64(size), 0, serverFlags, opts...)
+			idx, connectErr = d.ops.netlinkConnect(deviceIndex, d.socksClient, uint64(size), serverFlags, opts...)
 		}
 		nbdAttachCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("interface", attachInterface),
@@ -322,10 +297,6 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 			// The idx should be the same as deviceIndex, because we are connecting to it,
 			// but we will use the one returned by nbdnl
 			deviceIndex = idx
-
-			if d.afterConnect != nil {
-				d.afterConnect(deviceIndex)
-			}
 
 			break
 		}
@@ -354,25 +325,28 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 		if !viaIoctl && (errors.Is(connectErr, unix.EBUSY) || strings.Contains(connectErr.Error(), "device or resource busy")) {
 			taken = true
 		}
-		// A cancelled ioctl attach, or one whose session ended before the
-		// device started, hands the device to that session's own teardown
-		// (its run goroutine ends the session and frees the device). Open
-		// gives the slot back rather than spin-releasing a device the session
-		// still holds, or one another owner took when a lost claim's caller
-		// had already cancelled; the feeder re-offers it once sysfs reads it
-		// free. These do not retry.
-		sessionOwnsTeardown := viaIoctl && (errors.Is(connectErr, context.Canceled) ||
-			errors.Is(connectErr, context.DeadlineExceeded) || errors.Is(connectErr, errIoctlSessionEnded))
-		if taken || sessionOwnsTeardown {
+		// An ioctl attach that leaves its session on the device, because the
+		// caller went away, the session ended before the device started, or
+		// the device did not start in time, hands the device to that
+		// session's own teardown. The slot stays claimed until the session
+		// lets go of the device, then is given up rather than released: the
+		// device may be one another owner took when a lost claim's caller had
+		// already cancelled, and the feeder re-offers it once sysfs reads it
+		// free. Of these, only the start timeout retries.
+		var held *ioctlSessionHeldError
+		switch {
+		case errors.As(connectErr, &held):
+			d.devicePool.disownAfter(ctx, deviceIndex, held.deviceReleased, d.logger)
+			if !errors.Is(connectErr, errIoctlStartTimeout) {
+				return math.MaxUint32, connectErr
+			}
+		case taken:
 			d.devicePool.Disown(ctx, deviceIndex)
-		} else {
+		default:
 			err = d.devicePool.ReleaseDevice(context.WithoutCancel(ctx), deviceIndex, WithInfiniteRetry(), WithTimeout(disconnectTimeout), WithLogger(d.logger))
 			if err != nil {
 				d.logger.Error(ctx, "error opening NBD, error releasing device", zap.Error(err), zap.Uint32("device_index", deviceIndex))
 			}
-		}
-		if sessionOwnsTeardown {
-			return math.MaxUint32, connectErr
 		}
 
 		// A lost device race retries with another device, whatever errno the
@@ -412,8 +386,8 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 
 		time.Sleep(100 * time.Microsecond)
 	}
-	// Cancellation that landed after the connect, in afterConnect or while an
-	// ioctl session started, still means the caller owns no device.
+	// Cancellation that landed after the connect, or while an ioctl session
+	// started, still means the caller owns no device.
 	if err := ctx.Err(); err != nil {
 		closeErr := d.closeConnected(ctx, deviceIndex, "wait_connected")
 
@@ -428,11 +402,7 @@ func (d *DirectPathMount) Open(ctx context.Context) (retDeviceIndex uint32, err 
 	// would not do.
 	devicePath := GetDevicePath(deviceIndex)
 
-	openDevice := os.Open
-	if d.openDeviceFn != nil {
-		openDevice = d.openDeviceFn
-	}
-	deviceFile, err := openDevice(devicePath)
+	deviceFile, err := d.ops.openConnected(devicePath)
 	if err != nil {
 		closeErr := d.closeConnected(ctx, deviceIndex, "device_open")
 
@@ -702,7 +672,7 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 		if d.ioctlSession != nil && disconnectErr != nil {
 			err = d.releaseAfterSession(ctx, idx)
 		} else {
-			err = d.releaseDevice(ctx, idx)
+			err = d.devicePool.ReleaseDevice(ctx, idx, WithInfiniteRetry(), WithLogger(d.logger))
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("error releasing overlay device: %w", err))
@@ -712,31 +682,12 @@ func (d *DirectPathMount) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (d *DirectPathMount) socketPair() ([2]int, error) {
-	if d.socketPairFn != nil {
-		return d.socketPairFn()
-	}
-
-	return syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-}
-
 func (d *DirectPathMount) disconnectDevice(ctx context.Context, deviceIndex uint32) error {
-	if d.disconnectDeviceFn != nil {
-		return d.disconnectDeviceFn(ctx, deviceIndex)
-	}
 	if d.ioctlSession != nil {
-		return d.ioctlSession.disconnect(ctx, disconnectTimeout)
+		return d.ioctlSession.disconnect(ctx, d.disconnectTimeout)
 	}
 
-	return disconnectNBDWithTimeout(ctx, deviceIndex, disconnectTimeout)
-}
-
-func (d *DirectPathMount) releaseDevice(ctx context.Context, deviceIndex uint32) error {
-	if d.releaseDeviceFn != nil {
-		return d.releaseDeviceFn(ctx, deviceIndex)
-	}
-
-	return d.devicePool.ReleaseDevice(ctx, deviceIndex, WithInfiniteRetry(), WithLogger(d.logger))
+	return disconnectNBDWithTimeout(ctx, deviceIndex, d.disconnectTimeout)
 }
 
 // releaseAfterSession releases the slot of an ioctl session whose disconnect
@@ -744,32 +695,13 @@ func (d *DirectPathMount) releaseDevice(ctx context.Context, deviceIndex uint32)
 // closed, the session's own and the disconnect request's private duplicate,
 // and either close can hang on the device; a release here would spin for as
 // long as the hang lasts and hold the caller's teardown with it. One attempt
-// reclaims a device that has freed since; otherwise the release moves to a
-// goroutine under one deadline, like the pool's own close, and the caller
-// learns that its slot is still claimed.
+// reclaims a device that has freed since; otherwise the slot stays claimed
+// until the session lets go of the device, and the caller learns that it is.
 func (d *DirectPathMount) releaseAfterSession(ctx context.Context, deviceIndex uint32) error {
-	ctx = context.WithoutCancel(ctx)
-	if err := d.devicePool.ReleaseDevice(ctx, deviceIndex, WithLogger(d.logger)); err == nil {
+	if err := d.devicePool.ReleaseDevice(context.WithoutCancel(ctx), deviceIndex, WithLogger(d.logger)); err == nil {
 		return nil
 	}
-
-	timeout := d.deferredReleaseTimeout
-	if timeout == 0 {
-		timeout = devicePoolCloseReleaseTimeout
-	}
-	go func() {
-		err := d.devicePool.ReleaseDevice(ctx, deviceIndex, WithInfiniteRetry(), WithTimeout(timeout), WithLogger(d.logger))
-		if err != nil {
-			d.logger.Error(ctx, "NBD device slot left claimed: its device stayed in use after its ioctl session's disconnect",
-				zap.Uint32("device_index", deviceIndex),
-				zap.Duration("timeout", timeout),
-				zap.Error(err),
-			)
-		}
-		if d.deferredReleaseDone != nil {
-			d.deferredReleaseDone <- err
-		}
-	}()
+	d.devicePool.disownAfter(ctx, deviceIndex, d.ioctlSession.deviceReleased(), d.logger)
 
 	return fmt.Errorf("device %d: slot release deferred, its device is still in use", deviceIndex)
 }

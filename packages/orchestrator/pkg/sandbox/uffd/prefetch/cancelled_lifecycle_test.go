@@ -24,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/memory"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd/userfaultfd"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -90,11 +91,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, len(want), n)
 			source := &lifecycleCacheSource{cache: cache, want: want, hold: mode == "late-cancel", entered: make(chan struct{})}
-			// Avoid the long test-name prefix in t.TempDir: Unix socket
-			// addresses have a much smaller limit than regular file paths.
-			socketDir, err := os.MkdirTemp("", "pf-") //nolint:usetesting // t.TempDir's test-name prefix exceeds the Unix socket path limit.
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, os.RemoveAll(socketDir)) })
+			socketDir := testutils.SocketDir(t)
 			socket := filepath.Join(socketDir, "uffd.sock")
 			backend := uffd.New(source, socket, log)
 			// Before handler admission, cancellation must keep its error identity.
@@ -120,11 +117,11 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			select {
 			case <-backend.Ready():
 			case <-ctx.Done():
-				t.Fatal("actual backend did not publish Ready")
+				require.Fail(t, "actual backend did not publish Ready")
 			}
 			select {
 			case <-backend.Exit().Done():
-				t.Fatalf("Ready was an error exit, not successful admission: %v", backend.Exit().Error())
+				require.Failf(t, "Ready was an error exit, not successful admission", "exit error: %v", backend.Exit().Error())
 			default:
 			}
 			settings := ldtestdata.DataSource()
@@ -147,7 +144,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 				select {
 				case <-source.entered:
 				case <-ctx.Done():
-					t.Fatal("actual cache read was not admitted")
+					require.Fail(t, "actual cache read was not admitted")
 				}
 				cancelRun()
 			}
@@ -155,7 +152,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			case err := <-done:
 				require.NoError(t, err, "Start preserves nil-on-cancellation")
 			case <-ctx.Done():
-				t.Fatal("Start failed to join before backend/source teardown")
+				require.Fail(t, "Start failed to join before backend/source teardown")
 			}
 			require.Zero(t, source.active.Load(), "source callbacks outlived Start")
 			require.False(t, source.badRead.Load())
@@ -172,7 +169,7 @@ func TestCancelledStartRealBackendStopAndSourceClose(t *testing.T) {
 			case <-backend.Exit().Done():
 				require.NoError(t, backend.Exit().Error())
 			case <-ctx.Done():
-				t.Fatal("Stop failed to settle the actual serve loop/Close")
+				require.Fail(t, "Stop failed to settle the actual serve loop/Close")
 			}
 			installed, err = backend.Prefault(ctx, 0, want[:4096])
 			require.False(t, installed)

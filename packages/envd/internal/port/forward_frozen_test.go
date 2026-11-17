@@ -49,7 +49,7 @@ func (m *socatCgroupManager) FrozenAt(string) (bool, error) { return m.frozen.Lo
 // as forwarded on every later scan and the port stays dark until the listener reopens.
 func TestStartForwarding_RetriesAPortSkippedWhileFrozen(t *testing.T) {
 	t.Parallel()
-	if err := forwardingAvailable(); err != nil {
+	if err := checkForwarding(); err != nil {
 		t.Skip(err)
 	}
 

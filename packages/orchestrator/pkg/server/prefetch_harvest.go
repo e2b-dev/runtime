@@ -47,14 +47,17 @@ type harvestOutcome string
 
 // The vocabulary, in the order a harvest can fail:
 //
-//	skipped          the snapshot's deferred seal failed or did not settle inside
-//	                 the harvest deadline; no start slot was ever taken
-//	slot_timeout     the seal settled but no start slot freed up inside the
-//	                 deadline; the node's starts were the bottleneck
-//	resume_failed    slot held, the throwaway could not be brought up
-//	collect_failed   throwaway up, the trace could not be read
-//	success          trace harvested (the persist, if any, is best-effort)
-//	persist_deadline trace harvested but never reached the artifact
+//	guest_unresponsive the snapshot was taken over a guest agent that did not
+//	                   answer the pause probe; the API only ever resumes it
+//	                   without memory, so no goroutine and no slot was ever taken
+//	skipped            the snapshot's deferred seal failed or did not settle
+//	                   inside the harvest deadline; no start slot was ever taken
+//	slot_timeout       the seal settled but no start slot freed up inside the
+//	                   deadline; the node's starts were the bottleneck
+//	resume_failed      slot held, the throwaway could not be brought up
+//	collect_failed     throwaway up, the trace could not be read
+//	success            trace harvested (the persist, if any, is best-effort)
+//	persist_deadline   trace harvested but never reached the artifact
 //
 // skipped and slot_timeout are kept apart because their fixes differ: one is
 // an export that did not land, the other is start-slot pressure.
@@ -64,6 +67,8 @@ const (
 	harvestCollectFailed harvestOutcome = "collect_failed"
 	harvestSkipped       harvestOutcome = "skipped"
 	harvestSlotTimeout   harvestOutcome = "slot_timeout"
+	// Counted so the marked pauses that would otherwise harvest stay visible.
+	harvestGuestUnresponsive harvestOutcome = "guest_unresponsive"
 	// Kept apart from success deliberately: the customer's next resume then
 	// demand-faults everything, and counting that as a success is what made the
 	// loss invisible.
@@ -154,6 +159,7 @@ func (r factoryResumer) ResumeForHarvest(ctx context.Context, t sbxtemplate.Temp
 	if r.hold != nil {
 		releaseHugePages := r.hold(ctx, config)
 		defer releaseHugePages()
+		opts = append(opts, sandbox.WithGuestMemoryReserved(releaseHugePages))
 	}
 	sbx, err := r.factory.ResumeSandbox(
 		ctx,
@@ -235,6 +241,23 @@ func (s *Server) harvestResumePrefetchAsync(
 		return
 	}
 
+	// The API refuses a memory resume of a marked snapshot, so a mapping
+	// harvested from it would never be replayed; count the skip, hold nothing.
+	if res.meta.IsEnvdUnresponsive() {
+		harvestAttemptsCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("result", string(harvestGuestUnresponsive)),
+			attribute.String("path", string(source)),
+			telemetry.WithTeamID(sbx.Runtime.TeamID),
+		))
+		logger.L().Info(ctx, "resume prefetch harvest skipped: snapshot taken over an unresponsive guest agent",
+			logger.WithSandboxID(sbx.Runtime.SandboxID),
+			logger.WithBuildID(buildID),
+			zap.String("path", string(source)),
+		)
+
+		return
+	}
+
 	timeoutMs := s.featureFlags.IntFlag(ctx, featureflags.PauseResumePrefetchHarvestTimeoutMsFlag)
 	// Guard against a misconfigured (zero/negative) flag value, which would yield
 	// an already-expired context and silently skip every harvest.
@@ -243,6 +266,7 @@ func (s *Server) harvestResumePrefetchAsync(
 	// nothing — so resumes are unaffected and we can validate harvest behaviour
 	// with no customer-visible change before enabling prefetch on resume.
 	consume := s.featureFlags.BoolFlag(ctx, featureflags.PauseResumePrefetchConsumeFlag)
+
 	harvester := s.newPrefetchHarvester()
 
 	releaseWork := s.info.TrackWork()

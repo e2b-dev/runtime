@@ -83,7 +83,7 @@ func TestRedisTemplatesBuildCache_Get_DBFallback(t *testing.T) {
 	// Create test data in DB
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "building")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupInProgress)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 
 	c := NewTemplateBuildCache(db.SqlcClient, redisClient)

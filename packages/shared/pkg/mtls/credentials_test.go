@@ -123,7 +123,7 @@ func awaitOutcome(t *testing.T, outcomes <-chan serverOutcome) serverOutcome {
 	case outcome := <-outcomes:
 		return outcome
 	case <-time.After(5 * time.Second):
-		t.Fatal("no handshake outcome within 5s")
+		require.Fail(t, "no handshake outcome within 5s")
 
 		return serverOutcome{}
 	}

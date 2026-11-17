@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetMachineConfigurationParams() *GetMachineConfigurationParams {
-	return &GetMachineConfigurationParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetMachineConfigurationParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetMachineConfigurationParamsWithTimeout creates a new GetMachineConfigurationParams object
 // with the ability to set a timeout on a request.
 func NewGetMachineConfigurationParamsWithTimeout(timeout time.Duration) *GetMachineConfigurationParams {
 	return &GetMachineConfigurationParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetMachineConfigurationParamsWithContext creates a new GetMachineConfigurationParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMachineConfigurationParams].
 func NewGetMachineConfigurationParamsWithContext(ctx context.Context) *GetMachineConfigurationParams {
 	return &GetMachineConfigurationParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetMachineConfigurationParams contains all the parameters to send to the API end
 	Typically these are written to a http.Request.
 */
 type GetMachineConfigurationParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get machine configuration params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetMachineConfigurationParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get machine configuration params
+// WithTimeout adds the timeout to the get machine configuration params.
 func (o *GetMachineConfigurationParams) WithTimeout(timeout time.Duration) *GetMachineConfigurationParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get machine configuration params
+// SetTimeout adds the timeout to the get machine configuration params.
 func (o *GetMachineConfigurationParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get machine configuration params
+// WithContext adds the context to the get machine configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMachineConfigurationParams].
 func (o *GetMachineConfigurationParams) WithContext(ctx context.Context) *GetMachineConfigurationParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get machine configuration params
+// SetContext adds the context to the get machine configuration params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMachineConfigurationParams].
 func (o *GetMachineConfigurationParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get machine configuration params
+// WithHTTPClient adds the HTTPClient to the get machine configuration params.
 func (o *GetMachineConfigurationParams) WithHTTPClient(client *http.Client) *GetMachineConfigurationParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get machine configuration params
+// SetHTTPClient adds the HTTPClient to the get machine configuration params.
 func (o *GetMachineConfigurationParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetMachineConfigurationParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

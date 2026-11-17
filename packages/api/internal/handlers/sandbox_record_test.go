@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
@@ -65,6 +66,33 @@ func TestSandboxRecordIsTheTeamsLatestRunWithItsSnapshotBaseTemplate(t *testing.
 		RetentionExpired:       true,
 		EventsRetentionExpired: true,
 	}, body)
+}
+
+// The pool already holds every assigned cluster's domain, so the record does
+// not wait on, or fail with, the cluster service.
+func TestSandboxRecordReadsTheDomainFromTheClusterPool(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	createSandboxLogTable(t, db)
+	teamID := testutils.CreateTestTeam(t, db)
+	clusterID := uuid.New()
+	insertCluster(t, db, clusterID, false)
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, teamID, clusterID))
+	sandboxID := "sbxpooldomain"
+	insertSandboxLog(t, db, teamID, sandboxID, "tmpl", 1, time.Now(), nil)
+	domain := "pool.example.test"
+	// No expectation: a call fails the test.
+	store, _ := newClusterServiceStore(t)
+	store.sqlcDB = db.SqlcClient
+	store.clusters = clusters.NewTestPool(clusters.NewTestCluster(clusterID, &domain))
+
+	recorder := getSandboxRecordFrom(t, store, &types.Team{Team: &dbtypes.Team{ID: teamID}, Limits: &types.TeamLimits{EventsTTLDays: 7}}, sandboxID)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var body api.SandboxRecord
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, &domain, body.Domain)
 }
 
 func TestSandboxRecordIsNotFoundWithoutARunTheTeamCanSee(t *testing.T) {
@@ -195,7 +223,15 @@ func insertSandboxLog(t *testing.T, db *testutils.Database, teamID uuid.UUID, sa
 		sandboxID, templateID, vcpu, startedAt, stoppedAt, teamID))
 }
 
+// getSandboxRecord serves the record with an empty cluster pool, so a team's
+// remote cluster is read from the cluster service.
 func getSandboxRecord(t *testing.T, db *testutils.Database, team *types.Team, sandboxID string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return getSandboxRecordFrom(t, &APIStore{sqlcDB: db.SqlcClient, clusters: clusters.NewTestPool(), clusterService: clusterServiceFromDB(t, db)}, team, sandboxID)
+}
+
+func getSandboxRecordFrom(t *testing.T, store *APIStore, team *types.Team, sandboxID string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
@@ -203,7 +239,7 @@ func getSandboxRecord(t *testing.T, db *testutils.Database, team *types.Team, sa
 	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/unstable/sandboxes/"+sandboxID+"/record", nil)
 	auth.SetTeamInfoForTest(t, c, team)
 
-	(&APIStore{sqlcDB: db.SqlcClient}).GetUnstableSandboxesSandboxIDRecord(c, sandboxID)
+	store.GetUnstableSandboxesSandboxIDRecord(c, sandboxID)
 
 	return recorder
 }

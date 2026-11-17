@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
@@ -37,7 +38,7 @@ func TestDeleteTemplate_SoftDeletesEnvAndPreservesStructure(t *testing.T) {
 
 	teamID := testutils.CreateTestTeam(t, db)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
 	alias := testutils.CreateTestTemplateAlias(t, db, templateID)
 

@@ -24,7 +24,7 @@ func BenchmarkBuildServeNewAttrs(b *testing.B) {
 	for b.Loop() {
 		attrs := buildServeNewAttrs()
 		if attrs[0][0][0][0] == nil {
-			b.Fatal("missing source attributes")
+			require.Fail(b, "missing source attributes")
 		}
 	}
 }

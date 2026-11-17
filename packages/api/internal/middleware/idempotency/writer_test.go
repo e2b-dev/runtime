@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,9 +172,8 @@ func TestReplayPreservesHTTPDefaults(t *testing.T) {
 			r := gin.New()
 			r.GET("/original", func(c *gin.Context) {
 				c.Status(tc.status)
-				if _, err := c.Writer.Write(tc.body); err != nil {
-					t.Error(err)
-				}
+				_, err := c.Writer.Write(tc.body)
+				assert.NoError(t, err)
 			})
 			r.GET("/replay", func(c *gin.Context) {
 				replay(c, cachedResponse{Status: tc.status, Body: tc.body})

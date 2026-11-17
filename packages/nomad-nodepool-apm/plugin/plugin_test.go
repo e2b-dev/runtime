@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/nomad/api"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCountReadyNodesIncludesIneligibleNodes(t *testing.T) {
@@ -15,7 +16,5 @@ func TestCountReadyNodesIncludesIneligibleNodes(t *testing.T) {
 		{Status: api.NodeStatusDown, SchedulingEligibility: api.NodeSchedulingEligible},
 	}
 
-	if got := countReadyNodes(nodes); got != 2 {
-		t.Fatalf("ready node count = %d, want 2", got)
-	}
+	require.Equal(t, 2, countReadyNodes(nodes))
 }

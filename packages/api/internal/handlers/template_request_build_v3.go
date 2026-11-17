@@ -111,7 +111,8 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 	findTemplateCtx, span := tracer.Start(ctx, "find-template-alias")
 	defer span.End()
 	templateID := id.Generate()
-	public := false
+	// A template the team already owns keeps its visibility (below).
+	public := a.config.TemplatesDefaultPublic
 	replacesTemplateID := ""
 
 	aliasInfo, metadata, err := a.templateCache.ResolveAliasWithMetadata(findTemplateCtx, identifier, team.Slug)

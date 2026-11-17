@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // DescribeInstanceReader is a Reader for the DescribeInstance structure.
@@ -45,11 +44,9 @@ func NewDescribeInstanceOK() *DescribeInstanceOK {
 	return &DescribeInstanceOK{}
 }
 
-/*
-DescribeInstanceOK describes a response with status code 200, with default header values.
-
-The instance information
-*/
+// DescribeInstanceOK describes a response with status code 200, with default header values.
+//
+// The instance information
 type DescribeInstanceOK struct {
 	Payload *models.InstanceInfo
 }
@@ -117,11 +114,9 @@ func NewDescribeInstanceDefault(code int) *DescribeInstanceDefault {
 	}
 }
 
-/*
-DescribeInstanceDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// DescribeInstanceDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type DescribeInstanceDefault struct {
 	_statusCode int
 

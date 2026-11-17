@@ -14,10 +14,19 @@ func newMockfileOps(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *mockfileOps {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &mockfileOps{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -60,7 +69,7 @@ type mockfileOps_Link_Call struct {
 // Link is a helper method to define mock.On call
 //   - oldPath string
 //   - newPath string
-func (_e *mockfileOps_Expecter) Link(oldPath interface{}, newPath interface{}) *mockfileOps_Link_Call {
+func (_e *mockfileOps_Expecter) Link(oldPath any, newPath any) *mockfileOps_Link_Call {
 	return &mockfileOps_Link_Call{Call: _e.mock.On("Link", oldPath, newPath)}
 }
 
@@ -116,7 +125,7 @@ type mockfileOps_Remove_Call struct {
 
 // Remove is a helper method to define mock.On call
 //   - path string
-func (_e *mockfileOps_Expecter) Remove(path interface{}) *mockfileOps_Remove_Call {
+func (_e *mockfileOps_Expecter) Remove(path any) *mockfileOps_Remove_Call {
 	return &mockfileOps_Remove_Call{Call: _e.mock.On("Remove", path)}
 }
 

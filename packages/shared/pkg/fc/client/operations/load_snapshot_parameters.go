@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewLoadSnapshotParams creates a new LoadSnapshotParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewLoadSnapshotParams() *LoadSnapshotParams {
-	return &LoadSnapshotParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewLoadSnapshotParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewLoadSnapshotParamsWithTimeout creates a new LoadSnapshotParams object
 // with the ability to set a timeout on a request.
 func NewLoadSnapshotParamsWithTimeout(timeout time.Duration) *LoadSnapshotParams {
 	return &LoadSnapshotParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewLoadSnapshotParamsWithContext creates a new LoadSnapshotParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [LoadSnapshotParams].
 func NewLoadSnapshotParamsWithContext(ctx context.Context) *LoadSnapshotParams {
 	return &LoadSnapshotParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ LoadSnapshotParams contains all the parameters to send to the API endpoint
 */
 type LoadSnapshotParams struct {
 
-	/* Body.
-
-	   The configuration used for loading a snapshot.
-	*/
+	// Body.
+	//
+	// The configuration used for loading a snapshot.
 	Body *models.SnapshotLoadParams
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the load snapshot params (not the query body).
@@ -86,54 +88,57 @@ func (o *LoadSnapshotParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the load snapshot params
+// WithTimeout adds the timeout to the load snapshot params.
 func (o *LoadSnapshotParams) WithTimeout(timeout time.Duration) *LoadSnapshotParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the load snapshot params
+// SetTimeout adds the timeout to the load snapshot params.
 func (o *LoadSnapshotParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the load snapshot params
+// WithContext adds the context to the load snapshot params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [LoadSnapshotParams].
 func (o *LoadSnapshotParams) WithContext(ctx context.Context) *LoadSnapshotParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the load snapshot params
+// SetContext adds the context to the load snapshot params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [LoadSnapshotParams].
 func (o *LoadSnapshotParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the load snapshot params
+// WithHTTPClient adds the HTTPClient to the load snapshot params.
 func (o *LoadSnapshotParams) WithHTTPClient(client *http.Client) *LoadSnapshotParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the load snapshot params
+// SetHTTPClient adds the HTTPClient to the load snapshot params.
 func (o *LoadSnapshotParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the load snapshot params
+// WithBody adds the body to the load snapshot params.
 func (o *LoadSnapshotParams) WithBody(body *models.SnapshotLoadParams) *LoadSnapshotParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the load snapshot params
+// SetBody adds the body to the load snapshot params.
 func (o *LoadSnapshotParams) SetBody(body *models.SnapshotLoadParams) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *LoadSnapshotParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

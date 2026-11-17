@@ -26,18 +26,6 @@ type ActiveEnv struct {
 	Source        string
 }
 
-type Cluster struct {
-	ID                  uuid.UUID
-	Endpoint            string
-	EndpointTls         bool
-	Token               string
-	SandboxProxyDomain  *string
-	AuthOrgID           *string
-	Name                string
-	DeletionProtection  bool
-	DeletionRequestedAt *time.Time
-}
-
 type EnvAlias struct {
 	Alias       string
 	IsRenamable bool
@@ -51,7 +39,6 @@ type EnvBuild struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	FinishedAt         *time.Time
-	Status             types.BuildStatus
 	Dockerfile         *string
 	StartCmd           *string
 	Vcpu               int64
@@ -98,6 +85,7 @@ type Snapshot struct {
 	TeamID              uuid.UUID
 	Config              *types.PausedSandboxConfig
 	EnvDeletedAt        *time.Time
+	ExpiresAt           *time.Time
 }
 
 type Volume struct {

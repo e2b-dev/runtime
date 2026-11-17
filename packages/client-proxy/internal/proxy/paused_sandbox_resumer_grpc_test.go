@@ -375,7 +375,7 @@ func TestResumeFlights_StalledTokenRefreshEndsAtTheAttemptDeadline(t *testing.T)
 	select {
 	case served = <-result:
 	case <-time.After(30 * time.Second):
-		require.FailNow(t, "the attempt did not end with its deadline while the token refresh stayed blocked")
+		require.Fail(t, "the attempt did not end with its deadline while the token refresh stayed blocked")
 	}
 	require.Nil(t, served.route)
 

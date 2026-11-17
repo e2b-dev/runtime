@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewCreateSyncActionParams creates a new CreateSyncActionParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewCreateSyncActionParams() *CreateSyncActionParams {
-	return &CreateSyncActionParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewCreateSyncActionParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewCreateSyncActionParamsWithTimeout creates a new CreateSyncActionParams object
 // with the ability to set a timeout on a request.
 func NewCreateSyncActionParamsWithTimeout(timeout time.Duration) *CreateSyncActionParams {
 	return &CreateSyncActionParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewCreateSyncActionParamsWithContext creates a new CreateSyncActionParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [CreateSyncActionParams].
 func NewCreateSyncActionParamsWithContext(ctx context.Context) *CreateSyncActionParams {
 	return &CreateSyncActionParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -63,9 +66,9 @@ type CreateSyncActionParams struct {
 	// Info.
 	Info *models.InstanceActionInfo
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the create sync action params (not the query body).
@@ -83,54 +86,57 @@ func (o *CreateSyncActionParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the create sync action params
+// WithTimeout adds the timeout to the create sync action params.
 func (o *CreateSyncActionParams) WithTimeout(timeout time.Duration) *CreateSyncActionParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the create sync action params
+// SetTimeout adds the timeout to the create sync action params.
 func (o *CreateSyncActionParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the create sync action params
+// WithContext adds the context to the create sync action params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [CreateSyncActionParams].
 func (o *CreateSyncActionParams) WithContext(ctx context.Context) *CreateSyncActionParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the create sync action params
+// SetContext adds the context to the create sync action params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [CreateSyncActionParams].
 func (o *CreateSyncActionParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the create sync action params
+// WithHTTPClient adds the HTTPClient to the create sync action params.
 func (o *CreateSyncActionParams) WithHTTPClient(client *http.Client) *CreateSyncActionParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the create sync action params
+// SetHTTPClient adds the HTTPClient to the create sync action params.
 func (o *CreateSyncActionParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithInfo adds the info to the create sync action params
+// WithInfo adds the info to the create sync action params.
 func (o *CreateSyncActionParams) WithInfo(info *models.InstanceActionInfo) *CreateSyncActionParams {
 	o.SetInfo(info)
 	return o
 }
 
-// SetInfo adds the info to the create sync action params
+// SetInfo adds the info to the create sync action params.
 func (o *CreateSyncActionParams) SetInfo(info *models.InstanceActionInfo) {
 	o.Info = info
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *CreateSyncActionParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

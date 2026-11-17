@@ -18,10 +18,19 @@ func NewMockChunkServiceClient(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockChunkServiceClient {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockChunkServiceClient{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -82,9 +91,9 @@ type MockChunkServiceClient_GetBuildBlob_Call struct {
 //   - ctx context.Context
 //   - in *orchestrator.GetBuildBlobRequest
 //   - opts ...grpc.CallOption
-func (_e *MockChunkServiceClient_Expecter) GetBuildBlob(ctx interface{}, in interface{}, opts ...interface{}) *MockChunkServiceClient_GetBuildBlob_Call {
+func (_e *MockChunkServiceClient_Expecter) GetBuildBlob(ctx any, in any, opts ...any) *MockChunkServiceClient_GetBuildBlob_Call {
 	return &MockChunkServiceClient_GetBuildBlob_Call{Call: _e.mock.On("GetBuildBlob",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockChunkServiceClient_GetBuildBlob_Call) Run(run func(ctx context.Context, in *orchestrator.GetBuildBlobRequest, opts ...grpc.CallOption)) *MockChunkServiceClient_GetBuildBlob_Call {
@@ -165,9 +174,9 @@ type MockChunkServiceClient_GetBuildFileExists_Call struct {
 //   - ctx context.Context
 //   - in *orchestrator.GetBuildFileExistsRequest
 //   - opts ...grpc.CallOption
-func (_e *MockChunkServiceClient_Expecter) GetBuildFileExists(ctx interface{}, in interface{}, opts ...interface{}) *MockChunkServiceClient_GetBuildFileExists_Call {
+func (_e *MockChunkServiceClient_Expecter) GetBuildFileExists(ctx any, in any, opts ...any) *MockChunkServiceClient_GetBuildFileExists_Call {
 	return &MockChunkServiceClient_GetBuildFileExists_Call{Call: _e.mock.On("GetBuildFileExists",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockChunkServiceClient_GetBuildFileExists_Call) Run(run func(ctx context.Context, in *orchestrator.GetBuildFileExistsRequest, opts ...grpc.CallOption)) *MockChunkServiceClient_GetBuildFileExists_Call {
@@ -248,9 +257,9 @@ type MockChunkServiceClient_GetBuildFileSize_Call struct {
 //   - ctx context.Context
 //   - in *orchestrator.GetBuildFileSizeRequest
 //   - opts ...grpc.CallOption
-func (_e *MockChunkServiceClient_Expecter) GetBuildFileSize(ctx interface{}, in interface{}, opts ...interface{}) *MockChunkServiceClient_GetBuildFileSize_Call {
+func (_e *MockChunkServiceClient_Expecter) GetBuildFileSize(ctx any, in any, opts ...any) *MockChunkServiceClient_GetBuildFileSize_Call {
 	return &MockChunkServiceClient_GetBuildFileSize_Call{Call: _e.mock.On("GetBuildFileSize",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockChunkServiceClient_GetBuildFileSize_Call) Run(run func(ctx context.Context, in *orchestrator.GetBuildFileSizeRequest, opts ...grpc.CallOption)) *MockChunkServiceClient_GetBuildFileSize_Call {
@@ -331,9 +340,9 @@ type MockChunkServiceClient_ReadAtBuildSeekable_Call struct {
 //   - ctx context.Context
 //   - in *orchestrator.ReadAtBuildSeekableRequest
 //   - opts ...grpc.CallOption
-func (_e *MockChunkServiceClient_Expecter) ReadAtBuildSeekable(ctx interface{}, in interface{}, opts ...interface{}) *MockChunkServiceClient_ReadAtBuildSeekable_Call {
+func (_e *MockChunkServiceClient_Expecter) ReadAtBuildSeekable(ctx any, in any, opts ...any) *MockChunkServiceClient_ReadAtBuildSeekable_Call {
 	return &MockChunkServiceClient_ReadAtBuildSeekable_Call{Call: _e.mock.On("ReadAtBuildSeekable",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockChunkServiceClient_ReadAtBuildSeekable_Call) Run(run func(ctx context.Context, in *orchestrator.ReadAtBuildSeekableRequest, opts ...grpc.CallOption)) *MockChunkServiceClient_ReadAtBuildSeekable_Call {

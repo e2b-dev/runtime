@@ -90,6 +90,7 @@ func (b *EnsureFreeDiskBuilder) Layer(
 	// This disk-only layer is an intermediate build artifact. Its default cold
 	// boot size is the build's online count; finalize chooses the final VM size.
 	finalMetadata.VcpuCount = b.Config.VCpuCount
+	// No VM boots here, so the region stays the source lineage's; finalize sizes its own.
 	finalMetadata.Template = metadata.TemplateMetadata{
 		BuildID:            uuid.NewString(),
 		KernelVersion:      b.Config.KernelVersion,

@@ -90,6 +90,7 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
+| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation service on the API's Redis data; no callers yet |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -121,6 +122,23 @@ image, which E2B Embed runs on port 3001 against the API alone.
   `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
   and temporal-claim verification remain required.
   Backed by an auth DB (Postgres) with a Redis team cache.
+- **Telemetry names**: `GET /unstable/management/telemetry/names` returns the display names of
+  assigned teams, from the regional database, and of clusters not being deleted, from the cluster
+  service (none without one). Cluster registration stores the telemetry client ID on the cluster
+  record, so collectors can resolve the verified token subject without opening another database
+  connection. The endpoint requires a direct
+  mutual TLS connection whose verified peer matches `TELEMETRY_READER_ID`; the HTTP listener
+  must also allow that identity. Bearer tokens and forwarded identity headers cannot authorize
+  name reads. An unset reader identity denies every request.
+- **Validation errors**: a request the OpenAPI validator refuses gets the first line of the
+  validator's message. For a body field it names the field and the rule it failed, not the value;
+  a parameter of a non-string type that cannot be parsed has its value quoted. The body of a
+  refused request is never logged. Fields that carry credentials (webhook signing secrets,
+  registry credentials, secret values) are marked `format: password` in the spec.
+- **Request URLs in telemetry**: the shared access log and tracing middleware record the route
+  template (e.g. `/sandboxes/:sandboxID`) instead of the path, and no query, so no value a client
+  put in the URL is recorded. A request that matches no route is recorded as `<unmatched route>`.
+  Handlers add the IDs worth recording, such as `sandbox.id`, as span attributes.
 - **API-group rate limits**: operations declare a group through the `x-api-group` OpenAPI
   extension. After authentication succeeds, its callback wrapper reads the validator's
   already-matched operation and stores the API group directly in Gin's context. The rate limiter
@@ -128,7 +146,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   require team-identifying authentication; public operations do not populate an API group.
   The `list` group uses `api_team_rps_list`; the `delete` group uses `api_team_rps_delete` only
   for sandbox and template deletion. Other DELETE operations are ungrouped.
-  Delete rates default to zero until configured.
+  The deployment defaults start at 10 list and 20 delete requests per second.
   A group's rate is one of the team's limits and resolves with the rest of them in the statement
   that loads the team, which authentication caches; it has no source of its own.
   Propagated project limits carry both rates, and each accepted revision replaces
@@ -182,7 +200,9 @@ image, which E2B Embed runs on port 3001 against the API alone.
   orchestrator in `SandboxConfig.iam`. The API mints no credential and delivers nothing into the
   sandbox; file-based delivery is rejected at admission. Definitions are persisted in the
   running-sandbox (Redis) and paused-snapshot (Postgres) state so they survive pause/resume and
-  orchestrator re-sync; a fork starts a new workload and does not inherit them.
+  orchestrator re-sync. A fork inherits them from the original's snapshot as a resume does, but
+  runs under its own sandbox ID and a fresh execution ID, so its tokens name the fork, never the
+  original.
 - **Placement**: keeps a live map of orchestrator nodes (discovered via Nomad, Kubernetes, or a
   static list). Chooses a node per sandbox with a **best-of-K** algorithm
   (`internal/orchestrator/placement/`): sample K ready nodes, score by the
@@ -229,7 +249,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   crosses that hop, and no response - here or in a log, a span or an error - carries a secret
   value. What a caller stores is a runtime marker, not a resolved secret; orchestrator-ee resolves
   a marker to a value at sandbox egress, never here. Without a configured address, or with the flag
-  off, the routes stay registered and answer 403. Responses are `Cache-Control: no-store`, request bodies are capped at 512 KiB, and values
+  off, the routes stay registered and answer 403. The handlers mark their responses
+  `Cache-Control: no-store`, request bodies are capped at 512 KiB, and values
   at 64 KiB. A create carries the cap on live secrets the backend enforces: `max_secrets` is one
   of the team's limits and resolves with the rest of them in the statement that loads the team (its
   `project_limits` value, else the deployment's `default_limits`).
@@ -244,9 +265,24 @@ image, which E2B Embed runs on port 3001 against the API alone.
   does not depend on how a deployment is wired. A backend failure the caller cannot act on is
   answered with the endpoint's own message; the outcomes that keep their identity are
   not-found, a rejected request, the webhook-count limit, and a timeout. A create or update
-  body carries the webhook's signing secret, so a request rejected before the handler has its
-  body kept out of the response, the access log and the span. Reads are capped at 100
+  body carries the webhook's signing secret; like every refused request's body, it is kept out
+  of the response, the access log and the span. Reads are capped at 100
   deliveries per page.
+- **Cluster records**: the API keeps no remote cluster record itself. It reads and writes them
+  (endpoint, edge token, sandbox domain, auth organization, deletion protection and request,
+  telemetry identity) over a unary gRPC contract (`e2b.clusters.management.v1`) on the cluster
+  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`, which stores them in the `clusters` table. The
+  `cluster_service` client hop is on unless `E2B_TLS_CLUSTER_SERVICE_CLIENT_MODE` says otherwise,
+  and may be off only with `ENVIRONMENT=local` or a loopback address, because the service hands its
+  callers every cluster's edge token. Team assignment, template cleanup and the shared-cluster
+  check stay in the API's own queries. The cluster sync connects to the stored clusters a team
+  references; the admin team view reads the team's cluster name from the service, and the sandbox
+  record reads its domain from the cluster pool. Without a configured address the API runs on the
+  local cluster alone, and the cluster admin and management routes that read or write a record
+  answer 503, as do assignments to a remote cluster; it refuses to start that way while a live team
+  is assigned to one. At startup a cluster service that fails three lists in a row stops holding
+  the API back: it starts with the local cluster, and the background sync adds the remote clusters
+  once the service answers.
 - **Rig passthrough**: admin endpoints under `/clusters/{clusterID}/rigs` manage a cluster's
   orchestrator node pools ("rigs"). They list rigs, change rig capacity, list and terminate
   instances, and read recent scaling errors. Every handler delegates to the cluster's edge service
@@ -260,14 +296,18 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Extra listeners**: internal gRPC :5009 and edge gRPC :5109 expose `ResumeSandbox` so
   client-proxy can wake paused sandboxes on incoming traffic. The internal listener also
   serves `SandboxPlacementService` (`e2b.sandbox.placement.v1`) for the sandbox migration
-  manager: `GetSandboxPlacement` admits a move between two local nodes, `HoldExecution`
-  holds a running execution's record so pause, kill and timeout refuse it, and
-  `ResolveExecutionHold` moves the record to the target, releases it, or ends it. Only a
-  chain-verified caller named in `E2B_TLS_PLACEMENT_ALLOW` is served; the listener's own
-  allow-list is not enough, since client-proxy shares it. Every call is safe to repeat.
+  manager: `GetSandboxPlacement` admits a move between two local nodes and reports the
+  execution's network mode and whether managed volumes are attached, for the manager to
+  decide whether the sandbox can move. `HoldExecution` holds a running execution's record
+  so pause, kill and timeout refuse it, and `ResolveExecutionHold` moves the record to the
+  target, releases it, or ends it. Only a chain-verified caller named in
+  `E2B_TLS_PLACEMENT_ALLOW` is served; the listener's own allow-list is not enough, since
+  client-proxy shares it. Every call is safe to repeat.
 - **Node sandboxes**: admin `GET /nodes/{nodeID}/sandboxes` lists the sandboxes a node runs
   that the store records as running on it with the same execution, with the deadline of an
-  operation holding each, for the operator view that picks a sandbox to migrate.
+  operation holding each, its network mode and whether managed volumes are attached, for
+  the operator view that picks a sandbox to migrate. The migration manager decides whether
+  a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
   works jobs that need the orchestrator connections. Its job arguments live in
   `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted
@@ -308,6 +348,13 @@ image, which E2B Embed runs on port 3001 against the API alone.
   defined there); a LaunchDarkly value wins. LaunchDarkly feature flags also gate placement
   parameters, rate limits, and rollouts.
 
+Administrators can update only an existing cluster's telemetry identity with
+`PUT /unstable/management/clusters/{clusterID}/telemetry`, authenticated using the
+existing admin service JWT. The update sends the cluster service only the telemetry
+identity, so credentials, endpoints, display names and assignments stay as stored. It
+refuses a deleting or missing cluster, a cluster that already has a different
+identity, and an identity another cluster holds.
+
 #### Project management writes (`/unstable/management`)
 
 `PUT /unstable/management/projects/{projectID}/settings` applies a revisioned settings
@@ -342,7 +389,16 @@ retries.
   per-project/user revision in `projection.project_members`; a duplicate or older revision
   succeeds without changing target state. A present projection carries the user's OIDC
   issuer/subject identities. Every projected user has at least one, and an identity already owned
-  by a different user returns 409. A revocation removes only that user's `users_teams` row;
+  by a different user returns 409. A present projection may carry the user's role (`owner`,
+  `member` or `viewer`), stored in `users_teams.role` and loaded with the team when a user session is
+  authenticated; an omitted role keeps the stored one, and a new member without one is stored as
+  `member`. `owner` and `member` grant the same access. A `viewer`, or any role the API does not
+  know, is read-only: the API refuses that user's session every method but GET, HEAD and OPTIONS
+  with 403, refuses the two reads that hand out a write (the template build file upload link and
+  volume detail, which returns a volume content token), and withholds from sandbox detail the envd access token and the headers egress rules add to
+  outbound requests. The team list issues such a user no API key. API keys carry no role and are
+  not restricted: they belong to the team, so a key a user created keeps working whatever that
+  user's role becomes. A revocation removes only that user's `users_teams` row;
   projected users and identities are retained. Auth caches member authorization, so each accepted
   command evicts that user's authorization for the project after commit.
 - `PUT .../limits` syncs the project's effective limits into `project_limits`, which the team
@@ -437,10 +493,14 @@ The owning management service also drives a replay-safe cluster lifecycle under
 registers a stable cluster UUID, assigns it only to the named project, detaches that exact
 assignment before provider cleanup, and deletes the cluster only after no project references it.
 Replaying the same registration or assignment succeeds. Registering the cluster again with the same
-name and auth organization may change its endpoint, TLS setting, sandbox proxy domain and token, for
-example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
-sync and gives sandboxes the new domain. A changed name or auth organization, a different
-assignment, an inexact detach, or deletion of a referenced cluster returns a conflict. The
+auth organization preserves its stored display name and may change its endpoint, TLS setting, sandbox
+proxy domain and token, for example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
+sync and gives sandboxes the new domain. That update carries the stored record's etag, and a
+registration that races another write starts over, a bounded number of times. A second update
+then sets a telemetry identity the cluster does not have yet, so a refused identity never costs
+the cluster its new token. A changed auth organization, a different telemetry
+identity, a different assignment, an inexact detach, or deletion of a referenced cluster returns
+a conflict. The
 assignment does not check the project's tier; the caller decides which projects may use a cluster.
 A cluster first registered through this surface starts without deletion protection; one created any
 other way starts protected, a later registration never changes it, and deleting a protected cluster
@@ -449,14 +509,18 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
-request locks the cluster row, returns a conflict while deletion protection is on, and sets
-`clusters.deletion_requested_at`; it succeeds for an absent cluster and on repeat. From then on a
+request has the cluster service set `clusters.deletion_requested_at`, returns a conflict while
+deletion protection is on, and succeeds for an absent cluster and on repeat. From then on a
 check constraint keeps deletion protection off, and a trigger on `teams` refuses to newly assign a
 team to the cluster (`cluster_assignment_cluster_deleting` from the assignment route, a conflict
 from the project upsert carrying the cluster ID). The trigger takes a key-share lock on the cluster
 row before it checks, so an assignment either commits before the deletion is recorded, where the
-caller's next listing finds it, or is refused. Deleting each project clears its team's cluster,
-the cluster delete clears it from any team deleted earlier, and then succeeds.
+caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
+The cluster delete then checks deletion protection with the cluster service, and in one
+transaction refuses a cluster a live team still uses, soft-deletes its templates and clears
+it from teams and templates deleted earlier; last, the cluster service removes the record. A team
+assigned between those steps makes that last step return a conflict with the templates
+already deleted, and a retry once the team is detached finishes the delete.
 Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
 `cluster_assignment_*`) in the shared error response; callers use that code rather than the
 human-readable message, and treat uncoded or unknown reasons as generic errors.
@@ -464,8 +528,9 @@ human-readable message, and treat uncoded or unknown reasons as generic errors.
 The operator dashboard manages clusters through `/unstable/admin/clusters`, with an admin token or
 a service JWT: it lists clusters with their team counts, reads one cluster with its teams, creates
 a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
-its token, and deletes it with the same checks as the management delete. No route returns a
-cluster's token.
+its token, and deletes it with the same checks as the management delete. The list filters, sorts
+and pages the cluster service's records in memory, comparing text without regard to case. No
+route returns a cluster's token.
 
 ### Orchestrator (`packages/orchestrator`)
 
@@ -517,7 +582,8 @@ by itself authorize node deletion.
 
 `InfoService.ServiceInfo.max_sandboxes` reports the cached node limit for every service role.
 Admin `/nodes` and `/nodes/{nodeID}` return required `maxSandboxes`, including zero. Admission,
-metrics, and node info share the value refreshed from node-scoped flags every 30 seconds.
+metrics, and node info share the value refreshed from node-scoped flags every 30 seconds. The
+flag's fallback reads `MAX_SANDBOXES_PER_NODE`.
 
 Key mechanisms (all under `pkg/sandbox/`):
 
@@ -574,7 +640,10 @@ Key mechanisms (all under `pkg/sandbox/`):
   handles before slot reuse. Physical root-descriptor cleanup runs independently and stays
   tracked by `nfs.retirements.gauge` until it finishes; a stuck backing operation does not
   retain the network slot. Pool shutdown removes retained networks while preserving failed
-  release-notification and teardown errors.
+  release-notification and teardown errors. It also removes the pooled ones and those still
+  being returned, except that, when startup reclaim is enabled, a reuse pool raised above its
+  default (`NETWORK_REUSED_SLOTS_POOL_SIZE`) stops at the shutdown's teardown deadline and
+  leaves the rest for that reclaim.
   The `/init` caller supplies NFS exports as `/lifecycle_id/volume_name`; the proxy
   checks the request lifecycle against the current IP route before MOUNT admission.
   This prevents a queued or retried old MOUNT from inheriting a reused IP's owner;
@@ -738,10 +807,16 @@ answers 408.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `tiers` and `addons` (legacy; no limit is read from them), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` |
+| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
+
+The scheduling listener requires mTLS by default. `E2B_TLS_GRPC_ALLOW` names
+the API SPIFFE identities allowed to call it. The shared TLS loader reads the
+certificate, key and CA bundle and reloads them every minute. Plaintext is
+limited to gRPC health probes. An isolated local run can explicitly set
+`E2B_TLS_GRPC_MODE=off`.
 
 The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
 `_migrations` table. This includes `env_defaults`, which migration `20260915204740`
@@ -834,122 +909,26 @@ that guest on its worker's network or break its own trust store.
 
 #### Opt-in request idempotency
 
-Participating API routes accept an optional, team-scoped `Idempotency-Key` to prevent retries from
-repeating the operation while a Redis reservation exists. Which routes honour the key is
-controlled by the `api-idempotency-routes` feature flag rather than listed here; a route can be
-enabled once its handler calls the executor and its OpenAPI schema declares the header. A generic
-executor owns reservation and response replay across API replicas. Participating handlers parse and authorize the request,
-then call `idempotency.Execute(c, requestContent, operation)` with all mutations inside the callback.
-The callback writes its success response and returns `nil`, or returns an `*apierrors.APIError`
-for the executor to send. Returning `CanRetry` promises that a fresh execution is safe: the
-failed attempt has no possible committed side effects. The executor uses this typed result,
-not the HTTP status or response header, to allow re-execution. A response already written by
-the callback is replay-only, even if the callback subsequently returns a retryable error.
-The executor buffers finite HTTP responses, so streaming and connection upgrades cannot use it.
+Every API handler that accepts an idempotency token uses the same shared idempotency mechanism.
+Clients send an optional `Idempotency-Key` and reuse it when retrying the same operation.
+Idempotency is enabled per route, and keys are scoped to a team across participating routes.
+Requests still pass the usual authentication, validation, and access checks on every attempt.
 
-##### Admission and request identity
+Handlers define the inputs that identify an operation and delegate execution to a shared
+executor. Redis coordinates reservations across API replicas so that concurrent requests with
+the same key cannot independently execute the operation while its reservation exists. Reusing
+a key with different inputs is rejected. A matching request receives the recorded response,
+or an in-progress result if the original attempt is still running.
 
-The `api-idempotency-routes` JSON flag enables participating handlers by HTTP method and Gin route
-pattern, for example:
+The handler owns its business logic and determines whether a failed attempt is safe to repeat.
+The executor permits a fresh attempt only after an explicitly classified failure with no
+possible committed side effects. If the outcome is uncertain, it preserves the reservation
+rather than risking duplicate work. Response replay does not rerun the handler's operation.
 
-```json
-{"POST /v2/sandboxes": true}
-```
-
-The flag defaults to null, which disables idempotency. The idempotency middleware bypasses requests
-without a key, an authenticated team, or an enabled route. Authentication, schema validation,
-rate limits, and blocked-team checks apply before the executor, including on retries. A key is
-1 to 255 lowercase ASCII letters, digits, or hyphens (`a-z`, `0-9`, `-`), so a lowercase UUID is
-valid as is. Only the route's OpenAPI schema defines that format, and it applies regardless of the
-flag, so a participating route must declare the header with the same schema. The validator checks
-only the first header value; the generated parameter binding rejects a repeated header before the
-handler runs.
-
-The request fingerprint hashes the HTTP method, concrete URI including query string, and
-handler-supplied JSON-serializable content with SHA-256. Handlers include behavior-affecting
-headers or caller information in that content. Sandbox creation fingerprints its parsed request
-after schema defaults, so whitespace and map ordering do not change identity; array order and
-parsed field values do. Template aliases and business configuration resolve during execution.
-
-##### Reservation and replay
-
-The executor reserves a Redis hash keyed by team ID and the SHA-256 digest of the idempotency key.
-The namespace spans participating routes within a team. An atomic reservation script selects one
-owner across API replicas and stores the request fingerprint, a random owner token, and the
-response deadline in `expected_response_at`. The owner token also guards completion and cleanup,
-so an expired request cannot modify a replacement reservation.
-
-Reservation and execution share the request context's deadline. The response deadline adds a
-five-second persistence budget and uses Redis's clock for comparison. The executor reads the
-reservation and server time together, then selects the response:
-
-| Reservation state | Result |
-|---|---|
-| New reservation | Run the operation callback. |
-| Different request fingerprint | Return 409 with `error_code: idempotency_request_mismatch`. |
-| Matching fingerprint with a retryable result and enough retention remaining | Atomically acquire a new owner token and run the operation again. |
-| Matching fingerprint with a completed result, or insufficient retention for another attempt | Replay its status, body, and allowlisted headers. |
-| Matching fingerprint with an unfinished current attempt, before its deadline | Return 409 with `error_code: idempotency_in_progress`. |
-| Matching fingerprint with an unfinished current attempt and an elapsed or unreadable deadline | Return 422 with `error_code: idempotency_outcome_unknown`. |
-| Redis failure, invalid retention configuration, or missing request deadline | Return 503. |
-
-Retries against an active reservation do not wait for or repeat the operation. The `error_code` field
-distinguishes the two conflict cases without requiring clients to parse messages. An unknown
-outcome means the API cannot establish the result, so retrying with a new key can duplicate work.
-A late response from the owner remains replayable while the reservation exists. Admission and
-retry errors do not replace the owner's cached result.
-
-##### Response storage and delivery
-
-The executor captures the handler's status and body, then attempts to persist them before
-delivery. Redis stores one JSON value containing the status, base64-encoded body, and allowlisted
-headers, alongside the attempt's state. Base64 preserves arbitrary response bytes; the separate
-serialized buffer lets Redis finish a write after the HTTP capture buffer has been released.
-Successful, permanent, and unclassified results become complete and remain replayable. A returned
-`CanRetry` error becomes retryable. Its request fingerprint and original expiry remain fixed.
-
-The reservation script atomically claims a retryable record for one new owner and sets a fresh
-response deadline. Other matching requests see an in-progress attempt. The previous error stays
-stored while that attempt runs, but is not replayed by this executor unless the attempt is canceled
-before execution and releases ownership. A panic or uncertain completion therefore cannot turn
-the previous safe failure into permission to repeat an operation that may now have succeeded.
-Older API replicas replay the stored error; they cannot acquire retryable records for execution.
-Records written before retryable states were supported retain their original replay behavior.
-
-The handler edits response headers in place while the executor buffers status and body writes.
-`Content-Type` and `Should-Retry`, when present, enter the cache. Replay applies those headers over the current
-request's headers, preserving fresh request IDs, rate limits, and cross-origin resource sharing
-(CORS) values. The capture pool reuses allocations up to 64 KiB and erases body contents before
-reuse because responses can contain credentials.
-
-Persistence has a detached five-second wait budget and retains request context values for
-tracing. If it fails, the API logs the failure and delivers the handler's response: a caller should
-receive a known creation result even when Redis cannot store it. Subsequent retries can replay
-a completed result or acquire a retryable result only if Redis stored it, even when its
-acknowledgement was lost. Otherwise they receive the pending or unknown-outcome error.
-
-##### Cancellation and retention
-
-Before execution starts, cancellation or a reservation error triggers best-effort cleanup. The
-reservation worker waits for its Redis call to return before attempting cleanup because socket
-I/O can outlive request cancellation. Cleanup gets its own five-second timeout and checks the
-owner token. It deletes a new, unused reservation or returns an unused retry attempt to the
-retryable state, preserving the earlier request fingerprint and response. Failed cleanup or an
-ambiguous Redis write can leave the reservation until expiry.
-
-Once execution starts, cancellation, a panic, or failed persistence leaves the reservation in
-place. An operation can have side effects before writing any response, so releasing its key
-would allow duplicate work. The executor does not reconcile an unknown operation outcome.
-
-The `api-idempotency-ttl-seconds` flag sets retention, defaulting to 86,400 seconds when
-unavailable. Configured values must be positive integers. The executor sets the time to live
-(TTL) at reservation; completion, retries, flag changes, and deleting the sandbox do not extend
-or remove it. A retryable record is reclaimed only when its remaining TTL exceeds the next
-request's remaining deadline plus the five-second persistence budget; otherwise its previous
-error is replayed. Operators must choose retention longer than the operation window: expiry permits
-a new owner even if the first operation is still running. Redis eviction or data loss, a different
-key, and feature bypass also permit another execution. Redis capacity and access controls must
-account for cached response volume and the sandbox credentials those responses can contain.
+This protection lasts only while the Redis record is retained; it is not a permanent
+exactly-once guarantee. Expiry, data loss, a new key, or disabling idempotency can allow another
+execution. Retention must cover the expected operation and retry window. The shared mechanism
+supports buffered responses, not streaming or connection upgrades.
 
 #### Sandbox creation retry hints
 
@@ -1133,9 +1112,11 @@ sequenceDiagram
   ten-second budget. Snapshot uploads and sandbox teardown retain their separate background
   lifetimes. Shutdown drains pauses still in flight — after the HTTP and gRPC drains, before the
   database and Redis clients close — so a deploy cannot cut a snapshot short. The drain stops
-  admitting pauses first, so the eviction sweep cannot start one behind it; a refused pause
-  leaves the sandbox running for another replica. The wait is bounded by the pause budget plus
-  the terminal build-status write it falls through to, plus a short grace.
+  admitting pauses first, then stops the eviction sweep and the node sync and waits for the
+  round and the evictions they have in flight; a refused pause leaves the sandbox running for
+  another replica. The wait is bounded by the pause budget plus the terminal build-status write
+  it falls through to, plus a short grace. The Redis client closes last, after every other
+  shutdown step has returned.
   - **Deferred rootfs export** (gated by the `deferred-rootfs-export` flag in
     `packages/shared/pkg/featureflags`): instead of diffing the rootfs on the pause critical
     path, the orchestrator ejects the writable COW cache during pause and returns, then seals it
@@ -1239,7 +1220,12 @@ sequenceDiagram
   the build row records a failure the node may have gone on to complete.
 - **Fork**: checkpoints the original in place, then starts each fork from that snapshot as a
   new sandbox rather than a resume — like a sandbox created from a snapshot template — so
-  placement spreads the forks across nodes instead of preferring the original's node.
+  placement spreads the forks across nodes instead of preferring the original's node. Each fork
+  carries the configuration saved with that snapshot, as a resume does: metadata, internet
+  access, the network config including egress rules and their transforms, the workload-token
+  definitions, volume mounts, and the auto-pause and auto-resume settings. New for each fork are
+  the timeout from the fork request, its own sandbox ID, a fresh execution ID, and, for a secured
+  sandbox, an envd access token scoped to the fork.
 - **Filesystem-only checkpoint**: `memory: false` on snapshot-template creation exports the
   rootfs and no memfile, resumes the same Firecracker process, and produces a template whose
   sandboxes cold-boot; the source keeps running. Routed by its own flag,
@@ -1390,6 +1376,15 @@ sequenceDiagram
     API->>API: mark build ready in Postgres
 ```
 
+A template a build creates is private to its team unless the api runs with
+`TEMPLATES_DEFAULT_PUBLIC=true`; then it is public, so any team on the same cluster can start it by
+template ID or `<team-slug>/<alias>`. A rebuild keeps the visibility the template already has.
+
+The API sends each build to the least CPU-loaded of three eligible template builders sampled at
+random, scored from the host CPU use and allocated VM vCPUs each builder reports in `ServiceInfo`.
+A build's vCPUs count against the builder it was sent to for a minute, until the builder's own
+reports show its VMs, so a burst of builds between reports spreads instead of following one report.
+
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
 with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies
@@ -1496,6 +1491,7 @@ packages/
   orchestrator/         Sandbox runtime + template builder (one binary, per-node)
   client-proxy/         Edge router for sandbox traffic
   envd/                 In-VM agent (pkg/version.go is release-please's; see Envd)
+  scheduling-api/       gRPC start reservation service on the API's Redis data (not deployed yet; no callers yet)
   shared/               Protos, telemetry, storage clients, proxy engine, feature flags
   auth/                 AuthN library (API keys, JWT/OIDC) used by api
   db/                   Postgres migrations (goose) + queries (sqlc)
@@ -1509,5 +1505,5 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto`, `packages/scheduling-api/e2b/` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.

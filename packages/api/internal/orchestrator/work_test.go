@@ -12,10 +12,10 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
 
 // Once Drain returns with the counter at zero, nothing may be admitted: a

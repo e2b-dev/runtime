@@ -8,7 +8,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -56,7 +57,7 @@ func (m *PartialDrive) validateDriveID(formats strfmt.Registry) error {
 }
 
 func (m *PartialDrive) validateRateLimiter(formats strfmt.Registry) error {
-	if swag.IsZero(m.RateLimiter) { // not required
+	if typeutils.IsZero(m.RateLimiter) { // not required
 		return nil
 	}
 
@@ -96,7 +97,7 @@ func (m *PartialDrive) contextValidateRateLimiter(ctx context.Context, formats s
 
 	if m.RateLimiter != nil {
 
-		if swag.IsZero(m.RateLimiter) { // not required
+		if typeutils.IsZero(m.RateLimiter) { // not required
 			return nil
 		}
 
@@ -122,13 +123,13 @@ func (m *PartialDrive) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *PartialDrive) UnmarshalBinary(b []byte) error {
 	var res PartialDrive
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PatchBalloonStatsIntervalReader is a Reader for the PatchBalloonStatsInterval structure.
@@ -51,11 +50,9 @@ func NewPatchBalloonStatsIntervalNoContent() *PatchBalloonStatsIntervalNoContent
 	return &PatchBalloonStatsIntervalNoContent{}
 }
 
-/*
-PatchBalloonStatsIntervalNoContent describes a response with status code 204, with default header values.
-
-Balloon statistics interval updated
-*/
+// PatchBalloonStatsIntervalNoContent describes a response with status code 204, with default header values.
+//
+// Balloon statistics interval updated
 type PatchBalloonStatsIntervalNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPatchBalloonStatsIntervalBadRequest() *PatchBalloonStatsIntervalBadReque
 	return &PatchBalloonStatsIntervalBadRequest{}
 }
 
-/*
-PatchBalloonStatsIntervalBadRequest describes a response with status code 400, with default header values.
-
-Balloon statistics interval cannot be updated due to bad input
-*/
+// PatchBalloonStatsIntervalBadRequest describes a response with status code 400, with default header values.
+//
+// Balloon statistics interval cannot be updated due to bad input
 type PatchBalloonStatsIntervalBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPatchBalloonStatsIntervalDefault(code int) *PatchBalloonStatsIntervalDef
 	}
 }
 
-/*
-PatchBalloonStatsIntervalDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PatchBalloonStatsIntervalDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PatchBalloonStatsIntervalDefault struct {
 	_statusCode int
 

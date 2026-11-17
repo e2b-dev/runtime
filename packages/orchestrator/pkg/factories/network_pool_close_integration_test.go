@@ -184,15 +184,15 @@ func TestNetworkPoolCloserDrainsFullKernelPool(t *testing.T) { //nolint:parallel
 				closed := make(chan error, 1)
 				joined := make(chan error, 1)
 				go func() {
-					closed <- networkPoolCloser(pool).close(closeCtx)
+					closed <- networkPoolCloser(pool, cfg, false).close(closeCtx)
 					joined <- services.Wait()
 				}()
 				select {
 				case <-storage.entered:
 				case err := <-closed:
-					t.Fatalf("mandatory closer returned before kernel drain: %v", err)
+					require.Failf(t, "mandatory closer returned before kernel drain", "err: %v", err)
 				case <-time.After(15 * time.Second):
-					t.Fatal("closer did not reach real kernel teardown")
+					require.Fail(t, "closer did not reach real kernel teardown")
 				}
 				require.Empty(t, closed, "Close must join storage release after kernel removal")
 				require.Empty(t, joined, "shutdown must not finish before mandatory Close")
@@ -204,13 +204,13 @@ func TestNetworkPoolCloserDrainsFullKernelPool(t *testing.T) { //nolint:parallel
 				case err := <-closed:
 					require.NoError(t, err)
 				case <-time.After(15 * time.Second):
-					t.Fatal("mandatory Close failed to join")
+					require.Fail(t, "mandatory Close failed to join")
 				}
 				select {
 				case err := <-joined:
 					require.NoError(t, err)
 				case <-time.After(15 * time.Second):
-					t.Fatal("service group failed to join")
+					require.Fail(t, "service group failed to join")
 				}
 				settled = true
 				require.NoError(t, producerCtx.Err(), "producer cancellation must not supply completion")

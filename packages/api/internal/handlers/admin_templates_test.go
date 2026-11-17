@@ -17,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
@@ -232,7 +233,7 @@ func TestGetUnstableAdminTemplatesLookup_ResolvesBuildTemplateIDAndNames(t *test
 	testutils.CreateTestTemplateAliasWithName(t, testDB, templateID, "promoted-worker", nil)
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
-	buildID := insertTestBuild(t, ctx, testDB, templateID, "ready", 2, baseTime)
+	buildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 2, baseTime)
 	insertTemplateTagAssignment(t, ctx, testDB, templateID, buildID, "default", baseTime)
 
 	for _, tc := range []struct {

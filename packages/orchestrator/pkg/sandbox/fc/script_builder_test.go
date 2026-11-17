@@ -121,24 +121,16 @@ func TestStartScriptBuilder_Build(t *testing.T) {
 
 			// Test that script contains expected content
 			for _, expected := range tt.expectedScriptContent {
-				if !strings.Contains(result.Value, expected) {
-					t.Errorf("Script should contain expected content: %s\nActual script:\n%s", expected, result.Value)
-				}
+				assert.Contains(t, result.Value, expected, "Script should contain expected content")
 			}
 
 			// Test script structure - should have all major sections
-			if !strings.Contains(result.Value, "mount --make-rprivate /") {
-				t.Error("Script should start with mount command")
-			}
-			if !strings.Contains(result.Value, "ip netns exec") {
-				t.Error("Script should end with firecracker execution")
-			}
+			assert.Contains(t, result.Value, "mount --make-rprivate /", "Script should start with mount command")
+			assert.Contains(t, result.Value, "ip netns exec", "Script should end with firecracker execution")
 
 			// Test that the script has proper formatting (should not have extra spaces or newlines)
 			lines := strings.Split(result.Value, "\n")
-			if len(lines) <= 1 {
-				t.Error("Script should have multiple lines")
-			}
+			assert.Greater(t, len(lines), 1, "Script should have multiple lines")
 		})
 	}
 }

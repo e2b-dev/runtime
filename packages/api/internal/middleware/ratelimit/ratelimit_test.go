@@ -341,7 +341,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 		case http.StatusTooManyRequests:
 			denied++
 		default:
-			t.Errorf("unexpected status code: %d", code)
+			assert.Failf(t, "unexpected status code", "%d", code)
 		}
 	}
 
@@ -372,7 +372,7 @@ func TestSandboxCreateRetryRateLimit(t *testing.T) {
 			router.Use(func(c *gin.Context) {
 				auth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: uuid.New()}})
 			}, newTestMiddleware(t, limiter, Config{FailOpen: true}, flags))
-			router.POST(tc.path, func(*gin.Context) { t.Error("rate-limited request executed") })
+			router.POST(tc.path, func(*gin.Context) { assert.Fail(t, "rate-limited request executed") })
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, tc.path, nil)
 			if tc.key != "" {
 				req.Header.Set("Idempotency-Key", tc.key)
@@ -457,7 +457,7 @@ func groupRouter(t *testing.T, limiter requestLimiter, mode string, team *types.
 		"/sandboxes", "/v2/sandboxes", "/sandboxes/metrics", "/snapshots",
 		"/templates", "/v2/templates", "/templates/:templateID", "/templates/:templateID/tags",
 		"/api-keys", "/volumes", "/secrets",
-		"/unmapped-group", "/unlimited", "/teams", "/nodes", "/sandboxes/:sandboxID",
+		"/unmapped-group", "/unlimited", "/nodes", "/sandboxes/:sandboxID",
 	} {
 		r.GET(path, ok)
 	}
@@ -560,7 +560,6 @@ func TestAPIGroupBypass(t *testing.T) {
 		{"negative", "enabled", http.MethodGet, "/sandboxes", groupTeam(-1)},
 		{"sandbox creation", "enabled", http.MethodPost, "/sandboxes", groupTeam(1)},
 		{"individual sandbox", "enabled", http.MethodGet, "/sandboxes/sbx-a", groupTeam(1)},
-		{"user-wide teams", "enabled", http.MethodGet, "/teams", groupTeam(1)},
 		{"admin node list", "enabled", http.MethodGet, "/nodes", groupTeam(1)},
 		{"ungrouped route", "enabled", http.MethodGet, "/unlimited?api-group=list", groupTeam(1)},
 		{"unmapped group", "enabled", http.MethodGet, "/unmapped-group", groupTeam(1)},
@@ -570,7 +569,7 @@ func TestAPIGroupBypass(t *testing.T) {
 			t.Parallel()
 
 			limiter := groupLimiterFunc(func(context.Context, string, redis_rate.Limit) (*redis_rate.Result, error) {
-				t.Fatal("bypassed request reached Redis")
+				require.Fail(t, "bypassed request reached Redis")
 
 				return nil, nil
 			})

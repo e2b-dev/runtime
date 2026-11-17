@@ -179,7 +179,7 @@ The codebase uses several code generators:
 
 ### Testing Patterns
 
-- **Unit tests**: Use `testify/assert` and `testify/require`
+- **Unit tests**: Use `testify/assert` and `testify/require`: `require` for checks that stop the test, `assert` for checks that let it continue
 - **Database tests**: `packages/db/pkg/testutils.SetupDatabase` gives each test its own database on the PostgreSQL server `PG_TEST_DATABASE_URL` names (see [DEV-LOCAL.md](DEV-LOCAL.md#unit-tests-that-need-postgresql))
 - **Integration tests**: `tests/integration/` with shared test utilities
 - **Mocking**: Generated mocks in `mocks/` directories
@@ -197,7 +197,7 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 ## Important Development Notes
 
 ### Working with Proto/gRPC
-- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`
+- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`, scheduling protos at `packages/scheduling-api/e2b/` (`make -C packages/scheduling-api generate`)
 - Shared protos: `packages/shared/pkg/grpc/`
 - After editing proto files, run `make generate/orchestrator` and `make generate/shared`
 
@@ -224,6 +224,7 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 - Local stack includes Grafana + Loki + Tempo + Mimir
 - Telemetry setup: `packages/shared/pkg/telemetry/`
 - Logger: `packages/shared/pkg/logger/` (Zap with OTEL)
+- Log field keys are lower snake_case (`transition_id`; dots allowed, as in `sandbox.id`); revive's `string-format` rule enforces it
 - Profiling: API exposes pprof on `/debug/pprof/` (see `packages/api/Makefile` profiler target)
 
 ### CI/CD Workflows

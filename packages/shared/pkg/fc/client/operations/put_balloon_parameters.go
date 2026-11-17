@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutBalloonParams creates a new PutBalloonParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutBalloonParams() *PutBalloonParams {
-	return &PutBalloonParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutBalloonParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutBalloonParamsWithTimeout creates a new PutBalloonParams object
 // with the ability to set a timeout on a request.
 func NewPutBalloonParamsWithTimeout(timeout time.Duration) *PutBalloonParams {
 	return &PutBalloonParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutBalloonParamsWithContext creates a new PutBalloonParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutBalloonParams].
 func NewPutBalloonParamsWithContext(ctx context.Context) *PutBalloonParams {
 	return &PutBalloonParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutBalloonParams contains all the parameters to send to the API endpoint
 */
 type PutBalloonParams struct {
 
-	/* Body.
-
-	   Balloon properties
-	*/
+	// Body.
+	//
+	// Balloon properties
 	Body *models.Balloon
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put balloon params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutBalloonParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put balloon params
+// WithTimeout adds the timeout to the put balloon params.
 func (o *PutBalloonParams) WithTimeout(timeout time.Duration) *PutBalloonParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put balloon params
+// SetTimeout adds the timeout to the put balloon params.
 func (o *PutBalloonParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put balloon params
+// WithContext adds the context to the put balloon params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutBalloonParams].
 func (o *PutBalloonParams) WithContext(ctx context.Context) *PutBalloonParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put balloon params
+// SetContext adds the context to the put balloon params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutBalloonParams].
 func (o *PutBalloonParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put balloon params
+// WithHTTPClient adds the HTTPClient to the put balloon params.
 func (o *PutBalloonParams) WithHTTPClient(client *http.Client) *PutBalloonParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put balloon params
+// SetHTTPClient adds the HTTPClient to the put balloon params.
 func (o *PutBalloonParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put balloon params
+// WithBody adds the body to the put balloon params.
 func (o *PutBalloonParams) WithBody(body *models.Balloon) *PutBalloonParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put balloon params
+// SetBody adds the body to the put balloon params.
 func (o *PutBalloonParams) SetBody(body *models.Balloon) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutBalloonParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

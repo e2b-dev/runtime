@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // DescribeBalloonHintingReader is a Reader for the DescribeBalloonHinting structure.
@@ -51,11 +50,9 @@ func NewDescribeBalloonHintingOK() *DescribeBalloonHintingOK {
 	return &DescribeBalloonHintingOK{}
 }
 
-/*
-DescribeBalloonHintingOK describes a response with status code 200, with default header values.
-
-The balloon free page hinting statistics
-*/
+// DescribeBalloonHintingOK describes a response with status code 200, with default header values.
+//
+// The balloon free page hinting statistics
 type DescribeBalloonHintingOK struct {
 	Payload *models.BalloonHintingStatus
 }
@@ -121,11 +118,9 @@ func NewDescribeBalloonHintingBadRequest() *DescribeBalloonHintingBadRequest {
 	return &DescribeBalloonHintingBadRequest{}
 }
 
-/*
-DescribeBalloonHintingBadRequest describes a response with status code 400, with default header values.
-
-The balloon free hinting was not enabled when the device was configured.
-*/
+// DescribeBalloonHintingBadRequest describes a response with status code 400, with default header values.
+//
+// The balloon free hinting was not enabled when the device was configured.
 type DescribeBalloonHintingBadRequest struct {
 	Payload *models.Error
 }
@@ -193,11 +188,9 @@ func NewDescribeBalloonHintingDefault(code int) *DescribeBalloonHintingDefault {
 	}
 }
 
-/*
-DescribeBalloonHintingDefault describes a response with status code -1, with default header values.
-
-Internal Server Error
-*/
+// DescribeBalloonHintingDefault describes a response with status code -1, with default header values.
+//
+// Internal Server Error
 type DescribeBalloonHintingDefault struct {
 	_statusCode int
 

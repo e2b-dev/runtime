@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewDescribeBalloonReportingParams() *DescribeBalloonReportingParams {
-	return &DescribeBalloonReportingParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewDescribeBalloonReportingParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewDescribeBalloonReportingParamsWithTimeout creates a new DescribeBalloonReportingParams object
 // with the ability to set a timeout on a request.
 func NewDescribeBalloonReportingParamsWithTimeout(timeout time.Duration) *DescribeBalloonReportingParams {
 	return &DescribeBalloonReportingParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewDescribeBalloonReportingParamsWithContext creates a new DescribeBalloonReportingParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonReportingParams].
 func NewDescribeBalloonReportingParamsWithContext(ctx context.Context) *DescribeBalloonReportingParams {
 	return &DescribeBalloonReportingParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ DescribeBalloonReportingParams contains all the parameters to send to the API en
 	Typically these are written to a http.Request.
 */
 type DescribeBalloonReportingParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the describe balloon reporting params (not the query body).
@@ -77,43 +81,46 @@ func (o *DescribeBalloonReportingParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the describe balloon reporting params
+// WithTimeout adds the timeout to the describe balloon reporting params.
 func (o *DescribeBalloonReportingParams) WithTimeout(timeout time.Duration) *DescribeBalloonReportingParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the describe balloon reporting params
+// SetTimeout adds the timeout to the describe balloon reporting params.
 func (o *DescribeBalloonReportingParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the describe balloon reporting params
+// WithContext adds the context to the describe balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonReportingParams].
 func (o *DescribeBalloonReportingParams) WithContext(ctx context.Context) *DescribeBalloonReportingParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the describe balloon reporting params
+// SetContext adds the context to the describe balloon reporting params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [DescribeBalloonReportingParams].
 func (o *DescribeBalloonReportingParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the describe balloon reporting params
+// WithHTTPClient adds the HTTPClient to the describe balloon reporting params.
 func (o *DescribeBalloonReportingParams) WithHTTPClient(client *http.Client) *DescribeBalloonReportingParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the describe balloon reporting params
+// SetHTTPClient adds the HTTPClient to the describe balloon reporting params.
 func (o *DescribeBalloonReportingParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *DescribeBalloonReportingParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutLoggerParams creates a new PutLoggerParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutLoggerParams() *PutLoggerParams {
-	return &PutLoggerParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutLoggerParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutLoggerParamsWithTimeout creates a new PutLoggerParams object
 // with the ability to set a timeout on a request.
 func NewPutLoggerParamsWithTimeout(timeout time.Duration) *PutLoggerParams {
 	return &PutLoggerParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutLoggerParamsWithContext creates a new PutLoggerParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutLoggerParams].
 func NewPutLoggerParamsWithContext(ctx context.Context) *PutLoggerParams {
 	return &PutLoggerParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutLoggerParams contains all the parameters to send to the API endpoint
 */
 type PutLoggerParams struct {
 
-	/* Body.
-
-	   Logging system description
-	*/
+	// Body.
+	//
+	// Logging system description
 	Body *models.Logger
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put logger params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutLoggerParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put logger params
+// WithTimeout adds the timeout to the put logger params.
 func (o *PutLoggerParams) WithTimeout(timeout time.Duration) *PutLoggerParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put logger params
+// SetTimeout adds the timeout to the put logger params.
 func (o *PutLoggerParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put logger params
+// WithContext adds the context to the put logger params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutLoggerParams].
 func (o *PutLoggerParams) WithContext(ctx context.Context) *PutLoggerParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put logger params
+// SetContext adds the context to the put logger params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutLoggerParams].
 func (o *PutLoggerParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put logger params
+// WithHTTPClient adds the HTTPClient to the put logger params.
 func (o *PutLoggerParams) WithHTTPClient(client *http.Client) *PutLoggerParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put logger params
+// SetHTTPClient adds the HTTPClient to the put logger params.
 func (o *PutLoggerParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put logger params
+// WithBody adds the body to the put logger params.
 func (o *PutLoggerParams) WithBody(body *models.Logger) *PutLoggerParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put logger params
+// SetBody adds the body to the put logger params.
 func (o *PutLoggerParams) SetBody(body *models.Logger) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutLoggerParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

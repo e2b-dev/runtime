@@ -31,8 +31,12 @@ func TestAdminJWTAuthenticatorRetainsVerifiedIssuer(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"jwt":[{"issuer":{"url":"`+keys.URL+`"}}]}`), &config))
 	verifier, err := auth.NewJWKSVerifier(t.Context(), config, keys.Client())
 	require.NoError(t, err)
-	sign := func(issuer string, expires time.Time, key ed25519.PrivateKey) string {
-		token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims{"iss": issuer, "exp": expires.Unix()})
+	sign := func(issuer string, expires time.Time, key ed25519.PrivateKey, scopes ...string) string {
+		scope := ""
+		if len(scopes) > 0 {
+			scope = scopes[0]
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims{"iss": issuer, "exp": expires.Unix(), "scope": scope})
 		token.Header["kid"] = "service-test"
 		signed, err := token.SignedString(key)
 		require.NoError(t, err)
@@ -46,6 +50,8 @@ func TestAdminJWTAuthenticatorRetainsVerifiedIssuer(t *testing.T) {
 		valid       bool
 	}{
 		{"verified", sign(keys.URL, time.Now().Add(time.Minute), privateKey), true},
+		{"telemetry scope", sign(keys.URL, time.Now().Add(time.Minute), privateKey, "telemetry:read"), false},
+		{"mixed telemetry scope", sign(keys.URL, time.Now().Add(time.Minute), privateKey, "admin telemetry:read"), false},
 		{"missing", "", false},
 		{"malformed", "invalid", false},
 		{"foreign issuer", sign("https://foreign.example", time.Now().Add(time.Minute), privateKey), false},

@@ -490,7 +490,7 @@ func TestPool_GetFailureReturnsSlotWithSandboxDSCP(t *testing.T) { //nolint:para
 	case reused := <-pool.reusedSlots:
 		require.Equal(t, slot.Idx, reused.Idx)
 	case <-time.After(10 * time.Second):
-		t.Fatal("slot was not returned to the pool after a failed Get")
+		require.Fail(t, "slot was not returned to the pool after a failed Get")
 	}
 
 	requireSingleDSCPRule(t, slot, "0x08")
@@ -542,7 +542,7 @@ func TestPool_RecycleRestoresSandboxDSCP(t *testing.T) { //nolint:paralleltest /
 	case reused := <-pool.reusedSlots:
 		require.Equal(t, slot.Idx, reused.Idx)
 	default:
-		t.Fatal("recycled slot must go back to the reuse queue, not be torn down")
+		require.Fail(t, "recycled slot must go back to the reuse queue, not be torn down")
 	}
 
 	// The next tenant is a regular sandbox: no change, and no duplicate rule.

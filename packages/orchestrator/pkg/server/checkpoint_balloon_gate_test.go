@@ -280,7 +280,7 @@ func checkpointMetricAttrs(t *testing.T, reader *sdkmetric.ManualReader, name st
 					out = append(out, attrsAsMap(t, p.Attributes))
 				}
 			default:
-				t.Fatalf("%s: unexpected data type %T", name, m.Data)
+				require.Failf(t, "unexpected data type", "%s: %T", name, m.Data)
 			}
 		}
 	}
@@ -370,7 +370,7 @@ func TestCheckpoint_FilesystemOnlyGoesInPlaceOnItsOwnFlag(t *testing.T) {
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
 	s.featureFlags = ff
 	sbx := liveRouteSandbox(t, s, "ckpt-fs-only", 43, func(context.Context) (fc.BalloonCaps, error) {
-		t.Error("a filesystem-only checkpoint must not read the balloon")
+		assert.Fail(t, "a filesystem-only checkpoint must not read the balloon")
 
 		return fc.BalloonCaps{}, nil
 	})

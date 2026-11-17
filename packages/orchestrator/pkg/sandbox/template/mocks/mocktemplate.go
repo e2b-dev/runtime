@@ -22,10 +22,19 @@ func NewMockTemplate(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockTemplate {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockTemplate{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -67,7 +76,7 @@ type MockTemplate_Close_Call struct {
 
 // Close is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockTemplate_Expecter) Close(ctx interface{}) *MockTemplate_Close_Call {
+func (_e *MockTemplate_Expecter) Close(ctx any) *MockTemplate_Close_Call {
 	return &MockTemplate_Close_Call{Call: _e.mock.On("Close", ctx)}
 }
 
@@ -173,7 +182,7 @@ type MockTemplate_Memfile_Call struct {
 
 // Memfile is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockTemplate_Expecter) Memfile(ctx interface{}) *MockTemplate_Memfile_Call {
+func (_e *MockTemplate_Expecter) Memfile(ctx any) *MockTemplate_Memfile_Call {
 	return &MockTemplate_Memfile_Call{Call: _e.mock.On("Memfile", ctx)}
 }
 
@@ -387,7 +396,7 @@ type MockTemplate_UpdateMetadata_Call struct {
 
 // UpdateMetadata is a helper method to define mock.On call
 //   - meta metadata.Template
-func (_e *MockTemplate_Expecter) UpdateMetadata(meta interface{}) *MockTemplate_UpdateMetadata_Call {
+func (_e *MockTemplate_Expecter) UpdateMetadata(meta any) *MockTemplate_UpdateMetadata_Call {
 	return &MockTemplate_UpdateMetadata_Call{Call: _e.mock.On("UpdateMetadata", meta)}
 }
 

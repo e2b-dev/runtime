@@ -120,16 +120,16 @@ func CreateTestTemplateWithAlias(t *testing.T, db *Database, teamID uuid.UUID) (
 	return templateID, alias
 }
 
-// CreateTestBuild creates a build for a template with the given status
-func CreateTestBuild(t *testing.T, ctx context.Context, db *Database, templateID string, status string) uuid.UUID {
+// CreateTestBuild creates a build for a template with the given status group
+func CreateTestBuild(t *testing.T, ctx context.Context, db *Database, templateID string, statusGroup types.BuildStatusGroup) uuid.UUID {
 	t.Helper()
 	buildID := uuid.New()
 
 	err := db.SqlcClient.TestsRawSQL(ctx,
 		`INSERT INTO public.env_builds 
-		(id, env_id, team_id, status, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
+		(id, env_id, team_id, status_group, vcpu, ram_mb, free_disk_size_mb, kernel_version, firecracker_version, cluster_node_id, created_at, updated_at)
 		VALUES ($1, $2, (SELECT team_id FROM public.envs WHERE id = $2), $3, 2, 2048, 512, '6.1.0', '1.4.0', 'test-node', NOW(), NOW())`,
-		buildID, templateID, status,
+		buildID, templateID, statusGroup,
 	)
 	require.NoError(t, err, "Failed to create test build")
 
@@ -148,25 +148,25 @@ func CreateTestBuildAssignment(t *testing.T, ctx context.Context, db *Database, 
 	require.NoError(t, err, "Failed to create build assignment")
 }
 
-// GetBuildStatus retrieves the status of a build
-func GetBuildStatus(t *testing.T, ctx context.Context, db *Database, buildID uuid.UUID) string {
+// GetBuildStatusGroup retrieves the status group of a build
+func GetBuildStatusGroup(t *testing.T, ctx context.Context, db *Database, buildID uuid.UUID) types.BuildStatusGroup {
 	t.Helper()
-	var status string
+	var group types.BuildStatusGroup
 
 	err := db.SqlcClient.TestsRawSQLQuery(ctx,
-		"SELECT status FROM public.env_builds WHERE id = $1",
+		"SELECT status_group FROM public.env_builds WHERE id = $1",
 		func(rows pgx.Rows) error {
 			if rows.Next() {
-				return rows.Scan(&status)
+				return rows.Scan(&group)
 			}
 
 			return nil
 		},
 		buildID,
 	)
-	require.NoError(t, err, "Failed to get build status")
+	require.NoError(t, err, "Failed to get build status group")
 
-	return status
+	return group
 }
 
 // DeleteTriggerBuildAssignment deletes a trigger-created build assignment
@@ -199,11 +199,11 @@ func CreateSnapshotRecord(t *testing.T, ctx context.Context, db *Database, templ
 func UpsertTestSnapshot(t *testing.T, ctx context.Context, db *Database, templateID, sandboxID string, teamID uuid.UUID, baseTemplateID string) queries.UpsertSnapshotRow {
 	t.Helper()
 
-	return UpsertTestSnapshotWithStatus(t, ctx, db, templateID, sandboxID, teamID, baseTemplateID, types.BuildStatusSuccess)
+	return UpsertTestSnapshotWithStatus(t, ctx, db, templateID, sandboxID, teamID, baseTemplateID, types.BuildStatusGroupReady)
 }
 
-// UpsertTestSnapshotWithStatus creates/updates a snapshot with a specific status
-func UpsertTestSnapshotWithStatus(t *testing.T, ctx context.Context, db *Database, templateID, sandboxID string, teamID uuid.UUID, baseTemplateID string, status types.BuildStatus) queries.UpsertSnapshotRow {
+// UpsertTestSnapshotWithStatus creates/updates a snapshot with a specific status group
+func UpsertTestSnapshotWithStatus(t *testing.T, ctx context.Context, db *Database, templateID, sandboxID string, teamID uuid.UUID, baseTemplateID string, statusGroup types.BuildStatusGroup) queries.UpsertSnapshotRow {
 	t.Helper()
 
 	totalDiskSize := int64(1024)
@@ -227,7 +227,7 @@ func UpsertTestSnapshotWithStatus(t *testing.T, ctx context.Context, db *Databas
 		AllowInternetAccess: &allowInternet,
 		AutoPause:           true,
 		OriginNodeID:        "test-node",
-		Status:              status,
+		StatusGroup:         statusGroup,
 	})
 	require.NoError(t, err, "Failed to upsert test snapshot")
 

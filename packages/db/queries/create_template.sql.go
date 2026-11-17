@@ -51,7 +51,7 @@ INSERT INTO "public"."env_builds" (
     env_id,
     team_id,
     updated_at,
-    status,
+    status_group,
     ram_mb,
     vcpu,
     kernel_version,
@@ -84,7 +84,7 @@ INSERT INTO "public"."env_builds" (
 type CreateTemplateBuildParams struct {
 	BuildID            uuid.UUID
 	TemplateID         string
-	Status             types.BuildStatus
+	StatusGroup        types.BuildStatusGroup
 	RamMb              int64
 	Vcpu               int64
 	KernelVersion      string
@@ -108,7 +108,7 @@ func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBui
 	_, err := q.db.Exec(ctx, createTemplateBuild,
 		arg.BuildID,
 		arg.TemplateID,
-		arg.Status,
+		arg.StatusGroup,
 		arg.RamMb,
 		arg.Vcpu,
 		arg.KernelVersion,
@@ -126,7 +126,7 @@ func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBui
 const invalidateUnstartedTemplateBuilds = `-- name: InvalidateUnstartedTemplateBuilds :exec
 WITH invalidated AS (
     UPDATE "public"."env_builds" eb
-    SET status = 'failed',
+    SET status_group = 'failed',
         reason = $1,
         updated_at = NOW(),
         finished_at = NOW()

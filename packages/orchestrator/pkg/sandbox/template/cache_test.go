@@ -223,7 +223,7 @@ func waitSwap(t *testing.T, swapDone <-chan struct{}) {
 	select {
 	case <-swapDone:
 	case <-time.After(15 * time.Second):
-		t.Fatal("swap goroutine did not complete")
+		require.Fail(t, "swap goroutine did not complete")
 	}
 }
 
@@ -304,7 +304,7 @@ func TestAddSnapshot_CountsMisorderedUpload(t *testing.T) {
 	select {
 	case <-swapDone:
 	default:
-		t.Fatal("AddSnapshot returned without signalling the swap")
+		require.Fail(t, "AddSnapshot returned without signalling the swap")
 	}
 
 	tmpl := onlyTemplate(t, c)

@@ -100,6 +100,17 @@ same way, in an api release that reads it: a pause the node refuses — it is
 still persisting the sandbox's parent — keeps the sandbox running and
 answers 503 to retry, instead of killing it.
 
+The orchestrator's node limits work the same way: `MAX_SANDBOXES_PER_NODE`
+and `MAX_STARTING_INSTANCES_PER_NODE` set its `max-sandboxes-per-node` and
+`max-starting-instances-per-node` flags, 200 sandboxes on the node and 3
+starting at once when unset, and `NETWORK_REUSED_SLOTS_POOL_SIZE` sets how
+many network slots returned by ended sandboxes its pool keeps, 100 when
+unset. Compose takes the three from `.env`, where an unset pool size follows
+the sandbox limit, and Kubernetes from the `e2b-settings` ConfigMap, where it
+does not. The orchestrator logs the three in effect once at start, in a line
+that says `node limits`. The Compose guide's
+[Limits](../compose/README.md#limits) says what each bounds.
+
 Every service also writes its own log to stdout, which is what
 `docker compose logs <service>` and `kubectl -n e2b logs e2b-0 -c <container>`
 print. None of this needs a collector.

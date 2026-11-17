@@ -12,7 +12,7 @@ RETURNING id;
 -- name: InvalidateUnstartedTemplateBuilds :exec
 WITH invalidated AS (
     UPDATE "public"."env_builds" eb
-    SET status = 'failed',
+    SET status_group = 'failed',
         reason = @reason,
         updated_at = NOW(),
         finished_at = NOW()
@@ -39,7 +39,7 @@ INSERT INTO "public"."env_builds" (
     env_id,
     team_id,
     updated_at,
-    status,
+    status_group,
     ram_mb,
     vcpu,
     kernel_version,
@@ -55,7 +55,7 @@ INSERT INTO "public"."env_builds" (
     sqlc.arg(template_id)::text,
     (SELECT team_id FROM "public"."envs" WHERE id = sqlc.arg(template_id)::text),
     NOW(),
-    @status,
+    @status_group,
     @ram_mb,
     @vcpu,
     @kernel_version,

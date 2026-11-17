@@ -43,6 +43,22 @@ func teamMembers(t *testing.T, db *testutils.Database, teamID uuid.UUID) []uuid.
 	return members
 }
 
+func teamMemberRole(t *testing.T, db *testutils.Database, teamID, userID uuid.UUID) string {
+	t.Helper()
+
+	var role string
+	err := db.AuthDB.TestsRawSQLQuery(t.Context(),
+		"SELECT role FROM public.users_teams WHERE team_id = $1 AND user_id = $2",
+		func(rows pgx.Rows) error {
+			rows.Next()
+
+			return rows.Scan(&role)
+		}, teamID, userID)
+	require.NoError(t, err)
+
+	return role
+}
+
 func teamMemberIsDefault(t *testing.T, db *testutils.Database, teamID, userID uuid.UUID) bool {
 	t.Helper()
 

@@ -19,7 +19,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc/cputemplate"
@@ -36,9 +35,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
-	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
-	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -110,6 +107,16 @@ func rebootCPUTemplate(meta metadata.Template, override ldvalue.Value) (*cputemp
 
 // rebootMaxVcpus inherits recorded capacity only when no maximum was requested.
 func rebootMaxVcpus(requested, recorded int64) int64 {
+	if requested != 0 {
+		return requested
+	}
+
+	return recorded
+}
+
+// rebootMemoryHotplugMB is the hotplug region of a cold boot: an explicit one may resize the
+// fresh VM, and omission keeps the region its lineage recorded.
+func rebootMemoryHotplugMB(requested, recorded int64) int64 {
 	if requested != 0 {
 		return requested
 	}
@@ -322,6 +329,7 @@ func (f *Factory) prepareColdBoot(
 
 	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
 	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
+	config.MemoryHotplugMB = rebootMemoryHotplugMB(config.MemoryHotplugMB, meta.MemoryHotplugMB)
 	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
 	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
 
@@ -382,11 +390,7 @@ func (f *Factory) prepareColdBoot(
 
 	// The masked empty memfile is used only for sizing NoopMemory — guest RAM
 	// is FC's own fresh anonymous memory.
-	pageSize := int64(header.PageSize)
-	if config.HugePages {
-		pageSize = int64(header.HugepageSize)
-	}
-	memfile, err := block.NewEmpty(units.MBToBytes(config.RamMB), pageSize, buildID)
+	memfile, err := NewColdBootMemfile(config, buildID)
 	if err != nil {
 		return coldBoot{}, fmt.Errorf("create empty memfile: %w", err)
 	}

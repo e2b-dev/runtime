@@ -233,7 +233,7 @@ func TestProxyEndsConnectStreamWhenSandboxStops(t *testing.T) {
 	select {
 	case <-sentFirstFrame:
 	case <-t.Context().Done():
-		t.Fatalf("backend never sent the first frame: %v", t.Context().Err())
+		require.Failf(t, "backend never sent the first frame", "%v", t.Context().Err())
 	}
 
 	require.NoError(t, owner.Load().Close(t.Context()))

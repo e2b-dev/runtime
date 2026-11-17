@@ -1,0 +1,102 @@
+edition = "2024";
+
+package e2b.scheduling.v1;
+
+import "buf/validate/validate.proto";
+
+option features.field_presence = IMPLICIT;
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling";
+
+// Start reservations of sandboxes per team. Expected results are outcomes in
+// the response; a status other than OK is a failed call.
+service ReservationService {
+  // RESERVED makes the caller the owner of the start: it must end it with
+  // FinishStart or Release.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+
+  rpc FinishStart(FinishStartRequest) returns (FinishStartResponse);
+
+  // Long poll: answers WAITING after the server's maximum wait; call again.
+  rpc WaitForStart(WaitForStartRequest) returns (WaitForStartResponse);
+
+  // Ends the pending start without a result: waiters get NO_RESULT.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  // Blocks new starts of the sandbox while the claim lasts: Reserve answers
+  // KILLED. Not claimed when a start is pending or the sandbox is stored.
+  rpc ClaimKill(ClaimKillRequest) returns (ClaimKillResponse);
+
+  rpc ReleaseKillClaim(ReleaseKillClaimRequest) returns (ReleaseKillClaimResponse);
+}
+
+message ReserveRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+  // Negative means no limit.
+  int64 limit = 3;
+}
+
+enum ReserveOutcome {
+  RESERVE_OUTCOME_UNSPECIFIED = 0;
+  RESERVE_OUTCOME_RESERVED = 1;
+  RESERVE_OUTCOME_ALREADY_PENDING = 2;
+  RESERVE_OUTCOME_ALREADY_EXISTS = 3;
+  RESERVE_OUTCOME_LIMIT_EXCEEDED = 4;
+  RESERVE_OUTCOME_KILLED = 5;
+}
+
+message ReserveResponse {
+  ReserveOutcome outcome = 1;
+}
+
+message FinishStartRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+  // Opaque to the service.
+  bytes result = 3;
+}
+
+message FinishStartResponse {}
+
+message WaitForStartRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+}
+
+enum WaitForStartOutcome {
+  WAIT_FOR_START_OUTCOME_UNSPECIFIED = 0;
+  WAIT_FOR_START_OUTCOME_FINISHED = 1;
+  WAIT_FOR_START_OUTCOME_WAITING = 2;
+  // No start is pending and no result is stored.
+  WAIT_FOR_START_OUTCOME_NO_RESULT = 3;
+}
+
+message WaitForStartResponse {
+  WaitForStartOutcome outcome = 1;
+  bytes result = 2;
+}
+
+message ReleaseRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+}
+
+message ReleaseResponse {}
+
+message ClaimKillRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+}
+
+message ClaimKillResponse {
+  bool claimed = 1;
+  string claim_id = 2;
+}
+
+message ReleaseKillClaimRequest {
+  string team_id = 1 [(buf.validate.field).string.uuid = true];
+  string sandbox_id = 2 [(buf.validate.field).string.pattern = "^[^{}]+$"];
+  string claim_id = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+message ReleaseKillClaimResponse {}

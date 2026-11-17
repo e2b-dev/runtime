@@ -108,7 +108,7 @@ func TestCommandKillNextApp(t *testing.T) {
 
 	assert.Empty(t, finalListResp.Msg.GetProcesses(), "Expected no processes running")
 	for _, proc := range finalListResp.Msg.GetProcesses() {
-		t.Errorf("remaining process: PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
+		assert.Fail(t, "remaining process", "PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
 	}
 }
 
@@ -187,7 +187,7 @@ func TestCommandKillWithAnd(t *testing.T) {
 
 	assert.Empty(t, finalListResp.Msg.GetProcesses(), "Expected no processes running")
 	for _, proc := range finalListResp.Msg.GetProcesses() {
-		t.Errorf("remaining process: PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
+		assert.Fail(t, "remaining process", "PID=%d CMD=%s", proc.GetPid(), proc.GetConfig().GetCmd())
 	}
 }
 

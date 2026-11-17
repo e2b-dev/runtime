@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
@@ -24,9 +25,9 @@ func TestGetTemplateWithBuildByTag_AssignmentOrderDifferentFromBuildOrder(t *tes
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create builds: build1 (older), build2 (newer)
-	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	time.Sleep(10 * time.Millisecond)
-	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 
 	// Assign in REVERSE order: build2 first, then build1
 	// Even though build2 was created later, build1 has the latest assignment
@@ -57,8 +58,8 @@ func TestGetTemplateWithBuildByTag_AssignmentOrderSameAsBuildOrder(t *testing.T)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create two builds
-	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
-	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
+	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 
 	// Assign both to 'default' tag - build2 should be latest
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build1ID, "default")
@@ -89,8 +90,8 @@ func TestGetTemplateWithBuildByTag_OnlyReturnsUploadedBuilds(t *testing.T) {
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create an uploaded build and a waiting build
-	uploadedBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
-	waitingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "waiting")
+	uploadedBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
+	waitingBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupPending)
 
 	// Assign uploaded first, then waiting (latest)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, uploadedBuildID, "default")
@@ -121,8 +122,8 @@ func TestGetTemplateWithBuildByTag_SpecificTag(t *testing.T) {
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create two builds
-	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
-	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	defaultBuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
+	v1BuildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 
 	// Assign to different tags
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, defaultBuildID, "default")
@@ -153,9 +154,9 @@ func TestGetTeamTemplates_AssignmentOrderDifferentFromBuildOrder(t *testing.T) {
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
 
 	// Create builds: build1 (older), build2 (newer)
-	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	build1ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 	time.Sleep(10 * time.Millisecond)
-	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, "uploaded")
+	build2ID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
 
 	// Assign in REVERSE order: build2 first, then build1 (latest assignment)
 	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, build2ID, "default")

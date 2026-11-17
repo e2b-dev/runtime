@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutGuestVsockParams creates a new PutGuestVsockParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutGuestVsockParams() *PutGuestVsockParams {
-	return &PutGuestVsockParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutGuestVsockParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutGuestVsockParamsWithTimeout creates a new PutGuestVsockParams object
 // with the ability to set a timeout on a request.
 func NewPutGuestVsockParamsWithTimeout(timeout time.Duration) *PutGuestVsockParams {
 	return &PutGuestVsockParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutGuestVsockParamsWithContext creates a new PutGuestVsockParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestVsockParams].
 func NewPutGuestVsockParamsWithContext(ctx context.Context) *PutGuestVsockParams {
 	return &PutGuestVsockParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutGuestVsockParams contains all the parameters to send to the API endpoint
 */
 type PutGuestVsockParams struct {
 
-	/* Body.
-
-	   Guest vsock properties
-	*/
+	// Body.
+	//
+	// Guest vsock properties
 	Body *models.Vsock
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put guest vsock params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutGuestVsockParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put guest vsock params
+// WithTimeout adds the timeout to the put guest vsock params.
 func (o *PutGuestVsockParams) WithTimeout(timeout time.Duration) *PutGuestVsockParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put guest vsock params
+// SetTimeout adds the timeout to the put guest vsock params.
 func (o *PutGuestVsockParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put guest vsock params
+// WithContext adds the context to the put guest vsock params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestVsockParams].
 func (o *PutGuestVsockParams) WithContext(ctx context.Context) *PutGuestVsockParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put guest vsock params
+// SetContext adds the context to the put guest vsock params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestVsockParams].
 func (o *PutGuestVsockParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put guest vsock params
+// WithHTTPClient adds the HTTPClient to the put guest vsock params.
 func (o *PutGuestVsockParams) WithHTTPClient(client *http.Client) *PutGuestVsockParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put guest vsock params
+// SetHTTPClient adds the HTTPClient to the put guest vsock params.
 func (o *PutGuestVsockParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put guest vsock params
+// WithBody adds the body to the put guest vsock params.
 func (o *PutGuestVsockParams) WithBody(body *models.Vsock) *PutGuestVsockParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put guest vsock params
+// SetBody adds the body to the put guest vsock params.
 func (o *PutGuestVsockParams) SetBody(body *models.Vsock) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutGuestVsockParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	sbxtemplate "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/template"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/config"
@@ -23,7 +22,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
-	"github.com/e2b-dev/infra/packages/shared/pkg/units"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -117,13 +115,9 @@ func (cs *CreateSandbox) Sandbox(
 	layerExecutor *LayerExecutor,
 	sourceTemplate sbxtemplate.Template,
 ) (s *sandbox.Sandbox, err error) {
-	// Create new memfile with the size of the sandbox RAM, this updates the underlying memfile.
-	// This is ok as the sandbox is started from the beginning.
-	memfile, err := block.NewEmpty(
-		units.MBToBytes(cs.config.RamMB),
-		config.MemfilePageSize(cs.config.HugePages),
-		uuid.MustParse(sourceTemplate.Files().BuildID),
-	)
+	// Create new memfile with the size of the sandbox RAM and any hotplug region, this updates
+	// the underlying memfile. This is ok as the sandbox is started from the beginning.
+	memfile, err := sandbox.NewColdBootMemfile(cs.config, uuid.MustParse(sourceTemplate.Files().BuildID))
 	if err != nil {
 		return nil, fmt.Errorf("create memfile: %w", err)
 	}

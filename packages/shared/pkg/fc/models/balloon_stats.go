@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 	"github.com/go-openapi/validate"
 )
 
@@ -144,7 +144,7 @@ func (m *BalloonStats) validateTargetPages(formats strfmt.Registry) error {
 }
 
 // ContextValidate validates this balloon stats based on context it is used
-func (m *BalloonStats) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *BalloonStats) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -153,13 +153,13 @@ func (m *BalloonStats) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *BalloonStats) UnmarshalBinary(b []byte) error {
 	var res BalloonStats
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

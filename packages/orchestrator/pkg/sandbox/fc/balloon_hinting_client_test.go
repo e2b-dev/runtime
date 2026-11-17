@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
@@ -72,9 +72,7 @@ func newHintProcess(t *testing.T, h *hintStub) *Process {
 	if h.balloon == nil && !h.noBalloon {
 		h.balloon = balloonWithHinting(true)
 	}
-	dir, err := os.MkdirTemp("", "fc") //nolint:usetesting // t.TempDir embeds the subtest name and overflows the unix sun_path limit
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	socket := dir + "/fc.sock"
 	ln, err := new(net.ListenConfig).Listen(t.Context(), "unix", socket)
 	require.NoError(t, err)

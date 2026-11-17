@@ -71,7 +71,7 @@ data: {"path":"/flags/local-bool","data":{"key":"local-bool","on":true,"version"
 				case "/diagnostic":
 					w.WriteHeader(http.StatusAccepted)
 				default:
-					t.Errorf("unexpected SDK request: %s", r.URL.Path)
+					assert.Failf(t, "unexpected SDK request", "path: %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
@@ -100,7 +100,7 @@ data: {"path":"/flags/local-bool","data":{"key":"local-bool","on":true,"version"
 			select {
 			case <-events:
 			case <-time.After(5 * time.Second):
-				t.Fatal("SDK did not send events to the configured endpoint")
+				require.Fail(t, "SDK did not send events to the configured endpoint")
 			}
 		})
 	}

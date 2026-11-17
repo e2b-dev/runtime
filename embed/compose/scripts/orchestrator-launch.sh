@@ -8,6 +8,8 @@
 # `docker stop` leave no sandbox behind and lets the drain finish at once.
 # It sweeps again when the child dies on its own, so `restart: unless-stopped`
 # cannot start a fresh orchestrator beside a crashed one's sandboxes.
+# Before the start it refuses a node limit set to a value the orchestrator
+# would ignore, stop on or run no sandbox with.
 # Compose pre_stop hooks were verified not to fire on v5.5.0.
 # Test hooks: OL_CGROUP_ROOT (fake cgroup tree), OL_COMMAND (child command line).
 set -euo pipefail
@@ -15,6 +17,7 @@ set -euo pipefail
 OL_CGROUP_ROOT="${OL_CGROUP_ROOT:-/sys/fs/cgroup/e2b}"
 
 log() { echo "orchestrator-launch: $*"; }
+die() { echo "orchestrator-launch: $1" >&2; echo "FIX: $2" >&2; exit 1; }
 
 # shellcheck disable=SC2329  # invoked from the SIGTERM trap
 sweep() {
@@ -30,6 +33,31 @@ sweep() {
   done
   log "sweep: ended $ended sandbox cgroup(s), $failed not writable"
 }
+
+# limit <variable> <pattern> <what it has to be>. Left to the orchestrator,
+# text in either MAX_* limit, or a number too long for it to read, keeps the
+# default without a word, a sandbox limit of zero or less refuses every
+# create, and a start limit of zero or less or a pool size that is not a whole
+# number stops it at start. Empty keeps the orchestrator's default.
+limit() {
+  local value="${!1:-}"
+  [ -z "$value" ] || [[ "$value" =~ $2 ]] ||
+    die "$1=$value is not $3" "set $1 to $3 in .env or the e2b-settings map, or leave it empty for the default"
+}
+# The pool size last: Compose hands it the sandbox limit's value when only
+# that one is set, and the FIX line has to name the variable the operator set.
+limit MAX_SANDBOXES_PER_NODE '^0*[1-9][0-9]{0,17}$' "a whole number above zero, of at most 18 digits"
+limit MAX_STARTING_INSTANCES_PER_NODE '^0*[1-9][0-9]{0,17}$' "a whole number above zero, of at most 18 digits"
+limit NETWORK_REUSED_SLOTS_POOL_SIZE '^[0-9]+$' "a whole number"
+# A node has 32766 network slots, and the orchestrator stops at start on a pool
+# above that, in a message that names only the pool. Under Compose a sandbox
+# limit above it lands here too, so the FIX line names both.
+pool="${NETWORK_REUSED_SLOTS_POOL_SIZE:-}"
+pool="${pool#"${pool%%[!0]*}"}"
+if [ "${#pool}" -gt 5 ] || { [ -n "$pool" ] && [ "$pool" -gt 32766 ]; }; then
+  die "NETWORK_REUSED_SLOTS_POOL_SIZE=${NETWORK_REUSED_SLOTS_POOL_SIZE} is more than the 32766 network slots a node has" \
+    "set NETWORK_REUSED_SLOTS_POOL_SIZE to 32766 or less in .env or the e2b-settings map; under Compose it takes the value of MAX_SANDBOXES_PER_NODE unless it is set itself"
+fi
 
 if [ -n "${OL_COMMAND:-}" ]; then
   # Test hook: a command line with shell quoting, evaluated on purpose.

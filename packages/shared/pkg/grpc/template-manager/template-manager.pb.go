@@ -705,7 +705,12 @@ type TemplateConfig struct {
 	// Capacity of the final template VM, of which vCpuCount are online.
 	// Provisioning and step VMs boot with vCpuCount; absent means the final VM does too.
 	// On x86, both counts must be 1 or even because each is a physical VM size.
-	MaxVCpuCount  *int32 `protobuf:"varint,18,opt,name=maxVCpuCount,proto3,oneof" json:"maxVCpuCount,omitempty"`
+	MaxVCpuCount *int32 `protobuf:"varint,18,opt,name=maxVCpuCount,proto3,oneof" json:"maxVCpuCount,omitempty"`
+	// Memory size the final template VM can grow to, in MiB, of which memoryMB is
+	// boot RAM and the rest a hotplug region with nothing plugged. Provisioning and
+	// step VMs boot without it; absent or equal to memoryMB means no hotplug region.
+	// The region (maxMemoryMB - memoryMB) must be a multiple of 128 MiB.
+	MaxMemoryMB   *int32 `protobuf:"varint,19,opt,name=maxMemoryMB,proto3,oneof" json:"maxMemoryMB,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -876,6 +881,13 @@ func (x *TemplateConfig) GetFreeDiskSizeMB() int32 {
 func (x *TemplateConfig) GetMaxVCpuCount() int32 {
 	if x != nil && x.MaxVCpuCount != nil {
 		return *x.MaxVCpuCount
+	}
+	return 0
+}
+
+func (x *TemplateConfig) GetMaxMemoryMB() int32 {
+	if x != nil && x.MaxMemoryMB != nil {
+		return *x.MaxMemoryMB
 	}
 	return 0
 }
@@ -1424,7 +1436,7 @@ const file_template_manager_proto_rawDesc = "" +
 	"\x03aws\x18\x01 \x01(\v2\f.AWSRegistryH\x00R\x03aws\x12 \n" +
 	"\x03gcp\x18\x02 \x01(\v2\f.GCPRegistryH\x00R\x03gcp\x12,\n" +
 	"\ageneral\x18\x03 \x01(\v2\x10.GeneralRegistryH\x00R\ageneralB\x06\n" +
-	"\x04type\"\x8a\x06\n" +
+	"\x04type\"\xc1\x06\n" +
 	"\x0eTemplateConfig\x12\x1e\n" +
 	"\n" +
 	"templateID\x18\x01 \x01(\tR\n" +
@@ -1448,12 +1460,14 @@ const file_template_manager_proto_rawDesc = "" +
 	"\x11fromImageRegistry\x18\x0f \x01(\v2\x12.FromImageRegistryH\x02R\x11fromImageRegistry\x88\x01\x01\x12\x16\n" +
 	"\x06teamID\x18\x10 \x01(\tR\x06teamID\x12+\n" +
 	"\x0efreeDiskSizeMB\x18\x11 \x01(\x05H\x03R\x0efreeDiskSizeMB\x88\x01\x01\x12'\n" +
-	"\fmaxVCpuCount\x18\x12 \x01(\x05H\x04R\fmaxVCpuCount\x88\x01\x01B\b\n" +
+	"\fmaxVCpuCount\x18\x12 \x01(\x05H\x04R\fmaxVCpuCount\x88\x01\x01\x12%\n" +
+	"\vmaxMemoryMB\x18\x13 \x01(\x05H\x05R\vmaxMemoryMB\x88\x01\x01B\b\n" +
 	"\x06sourceB\b\n" +
 	"\x06_forceB\x14\n" +
 	"\x12_fromImageRegistryB\x11\n" +
 	"\x0f_freeDiskSizeMBB\x0f\n" +
-	"\r_maxVCpuCount\"\xa3\x01\n" +
+	"\r_maxVCpuCountB\x0e\n" +
+	"\f_maxMemoryMB\"\xa3\x01\n" +
 	"\x15TemplateCreateRequest\x12+\n" +
 	"\btemplate\x18\x01 \x01(\v2\x0f.TemplateConfigR\btemplate\x12#\n" +
 	"\n" +

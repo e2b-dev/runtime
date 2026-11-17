@@ -150,7 +150,7 @@ func TestDelete_RetryDuringTheBootsTeardownPublishesNothing(t *testing.T) {
 		synctest.Wait()
 		select {
 		case err := <-retry:
-			t.Fatalf("the retry answered while the boot still held the sandbox: %v", err)
+			require.Failf(t, "the retry answered while the boot still held the sandbox", "err: %v", err)
 		default:
 		}
 
@@ -160,7 +160,7 @@ func TestDelete_RetryDuringTheBootsTeardownPublishesNothing(t *testing.T) {
 		case err := <-retry:
 			require.NoError(t, err, "the retry that waited the boot out is success")
 		case <-time.After(testWait):
-			t.Fatal("the retry did not return once the boot ended")
+			require.Fail(t, "the retry did not return once the boot ended")
 		}
 		synctest.Wait()
 		assert.Empty(t, f.kills.killed(), "the retry publishes nothing: the boot does")

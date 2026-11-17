@@ -53,7 +53,7 @@ func TestDispatch_BackendFailureCarriesSandboxIdentity(t *testing.T) {
 	case resp := <-conn.replies:
 		require.NotZero(t, resp.Error, "a failing backend read must reply with an NBD error")
 	case <-time.After(5 * time.Second):
-		t.Fatal("no reply for the failing read")
+		require.Fail(t, "no reply for the failing read")
 	}
 
 	close(conn.reqCh) // Handle sees io.EOF and exits
@@ -61,7 +61,7 @@ func TestDispatch_BackendFailureCarriesSandboxIdentity(t *testing.T) {
 	case err := <-done:
 		require.ErrorIs(t, err, io.EOF)
 	case <-time.After(5 * time.Second):
-		t.Fatal("dispatch loop did not exit")
+		require.Fail(t, "dispatch loop did not exit")
 	}
 
 	var fields map[string]any

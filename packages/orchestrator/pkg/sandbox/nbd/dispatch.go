@@ -178,6 +178,8 @@ type Dispatch struct {
 	// them inline lets a blocked reply writer holding writeLock stall the whole
 	// read loop; see cmdWriteZeroes.
 	asyncWriteZeroes bool
+	// inflight holds this dispatcher's backend calls while they wait.
+	inflight *inflightTracker
 }
 
 func NewDispatch(fp io.ReadWriter, prov Provider, asyncWriteZeroes bool, lg logger.Logger) *Dispatch {
@@ -188,6 +190,7 @@ func NewDispatch(fp io.ReadWriter, prov Provider, asyncWriteZeroes bool, lg logg
 		logger:           lg.With(zap.String("nbd_provider", fmt.Sprintf("%T", prov))),
 		fatal:            make(chan error, 1),
 		asyncWriteZeroes: asyncWriteZeroes,
+		inflight:         nbdInflight,
 	}
 
 	binary.BigEndian.PutUint32(d.responseHeader, NBDResponseMagic)
@@ -397,12 +400,14 @@ func (d *Dispatch) cmdRead(ctx context.Context, cmd command) error {
 		nbdReadConncurent.Add(ctx, 1)
 
 		go func() {
+			id := d.inflight.begin(opRead)
 			start := time.Now()
 			err := block.RunFaultSafe(ctx, func() error {
 				_, readErr := d.prov.ReadAt(ctx, data, int64(cmd.offset))
 
 				return readErr
 			})
+			d.inflight.end(id)
 
 			attrs := nbdReadSuccess
 			if err != nil {
@@ -457,10 +462,12 @@ func (d *Dispatch) cmdWrite(ctx context.Context, cmd command, cmdData []byte) er
 		go func() {
 			// Even a write can fault: a store to a non-resident page pages
 			// it in first.
-			errchan <- block.RunFaultSafe(ctx, func() error {
-				_, writeErr := d.prov.WriteAt(cmdData, int64(cmd.offset))
+			errchan <- d.track(cmd.op, func() error {
+				return block.RunFaultSafe(ctx, func() error {
+					_, writeErr := d.prov.WriteAt(cmdData, int64(cmd.offset))
 
-				return writeErr
+					return writeErr
+				})
 			})
 		}()
 
@@ -508,10 +515,12 @@ func (d *Dispatch) cmdWriteZeroes(ctx context.Context, cmd command) error {
 		go func() {
 			// The punch-hole fallback clears the mmap in-process, so this
 			// can fault like a write.
-			errchan <- block.RunFaultSafe(ctx, func() error {
-				_, zeroErr := d.prov.WriteZeroesAt(int64(cmd.offset), cmd.length)
+			errchan <- d.track(cmd.op, func() error {
+				return block.RunFaultSafe(ctx, func() error {
+					_, zeroErr := d.prov.WriteZeroesAt(int64(cmd.offset), cmd.length)
 
-				return zeroErr
+					return zeroErr
+				})
 			})
 		}()
 

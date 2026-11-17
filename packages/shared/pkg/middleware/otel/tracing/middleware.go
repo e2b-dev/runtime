@@ -61,7 +61,9 @@ type config struct {
 
 // Middleware returns middleware that will trace incoming requests.
 // The service parameter should describe the name of the (virtual)
-// server handling the request.
+// server handling the request. The span's http.target is the route the
+// request matched, not its path and query, so no value a client put in the
+// URL is recorded.
 func Middleware(tracerProvider oteltrace.TracerProvider, service string) gin.HandlerFunc {
 	cfg := config{}
 	if cfg.TracerProvider == nil {
@@ -88,10 +90,18 @@ func Middleware(tracerProvider oteltrace.TracerProvider, service string) gin.Han
 		if c.Request.Header.Get("traceparent") != "" {
 			c.Request.Header.Del("traceparent")
 		}
+		serverAttrs := semconv.HTTPServerAttributesFromHTTPRequest(service, c.FullPath(), c.Request)
+		// The route is known before the request is handled, so the span
+		// starts with it: samplers and span processors never see the URL.
+		for i, attr := range serverAttrs {
+			if attr.Key == semconv.HTTPTargetKey {
+				serverAttrs[i] = semconv.HTTPTargetKey.String(sharedmiddleware.RouteTemplateOf(c))
+			}
+		}
 		opts := []oteltrace.SpanStartOption{
 			oteltrace.WithAttributes(semconv.NetAttributesFromHTTPRequest("tcp", c.Request)...),
 			oteltrace.WithAttributes(semconv.EndUserAttributesFromHTTPRequest(c.Request)...),
-			oteltrace.WithAttributes(semconv.HTTPServerAttributesFromHTTPRequest(service, c.FullPath(), c.Request)...),
+			oteltrace.WithAttributes(serverAttrs...),
 			oteltrace.WithSpanKind(oteltrace.SpanKindServer),
 		}
 

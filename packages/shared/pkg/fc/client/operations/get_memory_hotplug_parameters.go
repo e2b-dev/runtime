@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetMemoryHotplugParams() *GetMemoryHotplugParams {
-	return &GetMemoryHotplugParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetMemoryHotplugParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetMemoryHotplugParamsWithTimeout creates a new GetMemoryHotplugParams object
 // with the ability to set a timeout on a request.
 func NewGetMemoryHotplugParamsWithTimeout(timeout time.Duration) *GetMemoryHotplugParams {
 	return &GetMemoryHotplugParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetMemoryHotplugParamsWithContext creates a new GetMemoryHotplugParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryHotplugParams].
 func NewGetMemoryHotplugParamsWithContext(ctx context.Context) *GetMemoryHotplugParams {
 	return &GetMemoryHotplugParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetMemoryHotplugParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type GetMemoryHotplugParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get memory hotplug params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetMemoryHotplugParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get memory hotplug params
+// WithTimeout adds the timeout to the get memory hotplug params.
 func (o *GetMemoryHotplugParams) WithTimeout(timeout time.Duration) *GetMemoryHotplugParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get memory hotplug params
+// SetTimeout adds the timeout to the get memory hotplug params.
 func (o *GetMemoryHotplugParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get memory hotplug params
+// WithContext adds the context to the get memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryHotplugParams].
 func (o *GetMemoryHotplugParams) WithContext(ctx context.Context) *GetMemoryHotplugParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get memory hotplug params
+// SetContext adds the context to the get memory hotplug params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetMemoryHotplugParams].
 func (o *GetMemoryHotplugParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get memory hotplug params
+// WithHTTPClient adds the HTTPClient to the get memory hotplug params.
 func (o *GetMemoryHotplugParams) WithHTTPClient(client *http.Client) *GetMemoryHotplugParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get memory hotplug params
+// SetHTTPClient adds the HTTPClient to the get memory hotplug params.
 func (o *GetMemoryHotplugParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetMemoryHotplugParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

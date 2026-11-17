@@ -43,9 +43,7 @@ func TestVerifierRefreshesValidMethodsWithJWKS(t *testing.T) {
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	mux.HandleFunc(defaultJWKSPath, func(w http.ResponseWriter, _ *http.Request) {
-		if encodeErr := json.NewEncoder(w).Encode(keySet.Load().(jose.JSONWebKeySet)); encodeErr != nil {
-			t.Errorf("encode JWKS: %v", encodeErr)
-		}
+		assert.NoError(t, json.NewEncoder(w).Encode(keySet.Load().(jose.JSONWebKeySet)), "encode JWKS")
 	})
 
 	verifier, err := NewVerifierFromIssuerJWKS(t.Context(), Config{

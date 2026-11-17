@@ -57,9 +57,7 @@ func nomadStub(t *testing.T, fleet nomadFleet) string {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(body); err != nil {
-			t.Errorf("encoding nomad stub response: %v", err)
-		}
+		assert.NoError(t, json.NewEncoder(w).Encode(body))
 	}))
 	t.Cleanup(srv.Close)
 

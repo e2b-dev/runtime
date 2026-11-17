@@ -9,7 +9,8 @@ import (
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
+	"github.com/go-openapi/swag/typeutils"
 )
 
 // FullVMConfiguration full Vm configuration
@@ -120,7 +121,7 @@ func (m *FullVMConfiguration) Validate(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateBalloon(formats strfmt.Registry) error {
-	if swag.IsZero(m.Balloon) { // not required
+	if typeutils.IsZero(m.Balloon) { // not required
 		return nil
 	}
 
@@ -143,7 +144,7 @@ func (m *FullVMConfiguration) validateBalloon(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateBootSource(formats strfmt.Registry) error {
-	if swag.IsZero(m.BootSource) { // not required
+	if typeutils.IsZero(m.BootSource) { // not required
 		return nil
 	}
 
@@ -166,7 +167,7 @@ func (m *FullVMConfiguration) validateBootSource(formats strfmt.Registry) error 
 }
 
 func (m *FullVMConfiguration) validateCPUConfig(formats strfmt.Registry) error {
-	if swag.IsZero(m.CPUConfig) { // not required
+	if typeutils.IsZero(m.CPUConfig) { // not required
 		return nil
 	}
 
@@ -189,12 +190,12 @@ func (m *FullVMConfiguration) validateCPUConfig(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateDrives(formats strfmt.Registry) error {
-	if swag.IsZero(m.Drives) { // not required
+	if typeutils.IsZero(m.Drives) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.Drives); i++ {
-		if swag.IsZero(m.Drives[i]) { // not required
+		if typeutils.IsZero(m.Drives[i]) { // not required
 			continue
 		}
 
@@ -219,7 +220,7 @@ func (m *FullVMConfiguration) validateDrives(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateEntropy(formats strfmt.Registry) error {
-	if swag.IsZero(m.Entropy) { // not required
+	if typeutils.IsZero(m.Entropy) { // not required
 		return nil
 	}
 
@@ -242,7 +243,7 @@ func (m *FullVMConfiguration) validateEntropy(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateLogger(formats strfmt.Registry) error {
-	if swag.IsZero(m.Logger) { // not required
+	if typeutils.IsZero(m.Logger) { // not required
 		return nil
 	}
 
@@ -265,7 +266,7 @@ func (m *FullVMConfiguration) validateLogger(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateMachineConfig(formats strfmt.Registry) error {
-	if swag.IsZero(m.MachineConfig) { // not required
+	if typeutils.IsZero(m.MachineConfig) { // not required
 		return nil
 	}
 
@@ -288,7 +289,7 @@ func (m *FullVMConfiguration) validateMachineConfig(formats strfmt.Registry) err
 }
 
 func (m *FullVMConfiguration) validateMemoryHotplug(formats strfmt.Registry) error {
-	if swag.IsZero(m.MemoryHotplug) { // not required
+	if typeutils.IsZero(m.MemoryHotplug) { // not required
 		return nil
 	}
 
@@ -311,7 +312,7 @@ func (m *FullVMConfiguration) validateMemoryHotplug(formats strfmt.Registry) err
 }
 
 func (m *FullVMConfiguration) validateMetrics(formats strfmt.Registry) error {
-	if swag.IsZero(m.Metrics) { // not required
+	if typeutils.IsZero(m.Metrics) { // not required
 		return nil
 	}
 
@@ -334,7 +335,7 @@ func (m *FullVMConfiguration) validateMetrics(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateMmdsConfig(formats strfmt.Registry) error {
-	if swag.IsZero(m.MmdsConfig) { // not required
+	if typeutils.IsZero(m.MmdsConfig) { // not required
 		return nil
 	}
 
@@ -357,12 +358,12 @@ func (m *FullVMConfiguration) validateMmdsConfig(formats strfmt.Registry) error 
 }
 
 func (m *FullVMConfiguration) validateNetworkInterfaces(formats strfmt.Registry) error {
-	if swag.IsZero(m.NetworkInterfaces) { // not required
+	if typeutils.IsZero(m.NetworkInterfaces) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.NetworkInterfaces); i++ {
-		if swag.IsZero(m.NetworkInterfaces[i]) { // not required
+		if typeutils.IsZero(m.NetworkInterfaces[i]) { // not required
 			continue
 		}
 
@@ -387,12 +388,12 @@ func (m *FullVMConfiguration) validateNetworkInterfaces(formats strfmt.Registry)
 }
 
 func (m *FullVMConfiguration) validatePmem(formats strfmt.Registry) error {
-	if swag.IsZero(m.Pmem) { // not required
+	if typeutils.IsZero(m.Pmem) { // not required
 		return nil
 	}
 
 	for i := 0; i < len(m.Pmem); i++ {
-		if swag.IsZero(m.Pmem[i]) { // not required
+		if typeutils.IsZero(m.Pmem[i]) { // not required
 			continue
 		}
 
@@ -417,7 +418,7 @@ func (m *FullVMConfiguration) validatePmem(formats strfmt.Registry) error {
 }
 
 func (m *FullVMConfiguration) validateVsock(formats strfmt.Registry) error {
-	if swag.IsZero(m.Vsock) { // not required
+	if typeutils.IsZero(m.Vsock) { // not required
 		return nil
 	}
 
@@ -505,7 +506,7 @@ func (m *FullVMConfiguration) contextValidateBalloon(ctx context.Context, format
 
 	if m.Balloon != nil {
 
-		if swag.IsZero(m.Balloon) { // not required
+		if typeutils.IsZero(m.Balloon) { // not required
 			return nil
 		}
 
@@ -530,7 +531,7 @@ func (m *FullVMConfiguration) contextValidateBootSource(ctx context.Context, for
 
 	if m.BootSource != nil {
 
-		if swag.IsZero(m.BootSource) { // not required
+		if typeutils.IsZero(m.BootSource) { // not required
 			return nil
 		}
 
@@ -555,7 +556,7 @@ func (m *FullVMConfiguration) contextValidateCPUConfig(ctx context.Context, form
 
 	if m.CPUConfig != nil {
 
-		if swag.IsZero(m.CPUConfig) { // not required
+		if typeutils.IsZero(m.CPUConfig) { // not required
 			return nil
 		}
 
@@ -582,8 +583,8 @@ func (m *FullVMConfiguration) contextValidateDrives(ctx context.Context, formats
 
 		if m.Drives[i] != nil {
 
-			if swag.IsZero(m.Drives[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.Drives[i]) { // not required
+				continue
 			}
 
 			if err := m.Drives[i].ContextValidate(ctx, formats); err != nil {
@@ -609,7 +610,7 @@ func (m *FullVMConfiguration) contextValidateEntropy(ctx context.Context, format
 
 	if m.Entropy != nil {
 
-		if swag.IsZero(m.Entropy) { // not required
+		if typeutils.IsZero(m.Entropy) { // not required
 			return nil
 		}
 
@@ -634,7 +635,7 @@ func (m *FullVMConfiguration) contextValidateLogger(ctx context.Context, formats
 
 	if m.Logger != nil {
 
-		if swag.IsZero(m.Logger) { // not required
+		if typeutils.IsZero(m.Logger) { // not required
 			return nil
 		}
 
@@ -659,7 +660,7 @@ func (m *FullVMConfiguration) contextValidateMachineConfig(ctx context.Context, 
 
 	if m.MachineConfig != nil {
 
-		if swag.IsZero(m.MachineConfig) { // not required
+		if typeutils.IsZero(m.MachineConfig) { // not required
 			return nil
 		}
 
@@ -684,7 +685,7 @@ func (m *FullVMConfiguration) contextValidateMemoryHotplug(ctx context.Context, 
 
 	if m.MemoryHotplug != nil {
 
-		if swag.IsZero(m.MemoryHotplug) { // not required
+		if typeutils.IsZero(m.MemoryHotplug) { // not required
 			return nil
 		}
 
@@ -709,7 +710,7 @@ func (m *FullVMConfiguration) contextValidateMetrics(ctx context.Context, format
 
 	if m.Metrics != nil {
 
-		if swag.IsZero(m.Metrics) { // not required
+		if typeutils.IsZero(m.Metrics) { // not required
 			return nil
 		}
 
@@ -734,7 +735,7 @@ func (m *FullVMConfiguration) contextValidateMmdsConfig(ctx context.Context, for
 
 	if m.MmdsConfig != nil {
 
-		if swag.IsZero(m.MmdsConfig) { // not required
+		if typeutils.IsZero(m.MmdsConfig) { // not required
 			return nil
 		}
 
@@ -761,8 +762,8 @@ func (m *FullVMConfiguration) contextValidateNetworkInterfaces(ctx context.Conte
 
 		if m.NetworkInterfaces[i] != nil {
 
-			if swag.IsZero(m.NetworkInterfaces[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.NetworkInterfaces[i]) { // not required
+				continue
 			}
 
 			if err := m.NetworkInterfaces[i].ContextValidate(ctx, formats); err != nil {
@@ -790,8 +791,8 @@ func (m *FullVMConfiguration) contextValidatePmem(ctx context.Context, formats s
 
 		if m.Pmem[i] != nil {
 
-			if swag.IsZero(m.Pmem[i]) { // not required
-				return nil
+			if typeutils.IsZero(m.Pmem[i]) { // not required
+				continue
 			}
 
 			if err := m.Pmem[i].ContextValidate(ctx, formats); err != nil {
@@ -817,7 +818,7 @@ func (m *FullVMConfiguration) contextValidateVsock(ctx context.Context, formats 
 
 	if m.Vsock != nil {
 
-		if swag.IsZero(m.Vsock) { // not required
+		if typeutils.IsZero(m.Vsock) { // not required
 			return nil
 		}
 
@@ -843,13 +844,13 @@ func (m *FullVMConfiguration) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *FullVMConfiguration) UnmarshalBinary(b []byte) error {
 	var res FullVMConfiguration
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

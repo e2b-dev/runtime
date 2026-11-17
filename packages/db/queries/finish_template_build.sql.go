@@ -18,7 +18,7 @@ WITH finished AS (
     SET
         finished_at = NOW(),
         total_disk_size_mb = $1,
-        status = $2,
+        status_group = $2,
         envd_version = $3,
         kernel_version = COALESCE(NULLIF($4::text, ''), kernel_version),
         firecracker_version = COALESCE(NULLIF($5::text, ''), firecracker_version)
@@ -33,7 +33,7 @@ WHERE build_id IN (SELECT id FROM finished)
 
 type FinishTemplateBuildParams struct {
 	TotalDiskSizeMb    *int64
-	Status             types.BuildStatus
+	StatusGroup        types.BuildStatusGroup
 	EnvdVersion        *string
 	KernelVersion      string
 	FirecrackerVersion string
@@ -51,7 +51,7 @@ type FinishTemplateBuildParams struct {
 func (q *Queries) FinishTemplateBuild(ctx context.Context, arg FinishTemplateBuildParams) error {
 	_, err := q.db.Exec(ctx, finishTemplateBuild,
 		arg.TotalDiskSizeMb,
-		arg.Status,
+		arg.StatusGroup,
 		arg.EnvdVersion,
 		arg.KernelVersion,
 		arg.FirecrackerVersion,

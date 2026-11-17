@@ -253,6 +253,6 @@ func TestContainBannedTeamRunsThroughTheOutboxClient(t *testing.T) {
 	case event := <-snoozed:
 		require.Equal(t, inserted.Job.ID, event.Job.ID)
 	case <-time.After(30 * time.Second):
-		t.Fatal("the containment job did not run")
+		require.Fail(t, "the containment job did not run")
 	}
 }

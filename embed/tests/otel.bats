@@ -110,7 +110,7 @@ endpoints() {
   svc() { printf '%s' "$json" | jq -r ".services[\"otel-collector\"]$1"; }
   # Pinned in compose.yaml like the four stores, not through .env.
   grep -qx '    image: otel/opentelemetry-collector-contrib:[0-9][0-9.]*' compose/compose.yaml
-  [ "$(svc .image)" = otel/opentelemetry-collector-contrib:0.163.2 ]
+  [ "$(svc .image)" = otel/opentelemetry-collector-contrib:0.164.0 ]
   [ "$(svc '.profiles | join(" ")')" = otel ]
   [ "$(svc .network_mode)" = host ]
   [ "$(svc '.ports // [] | length')" = 0 ]

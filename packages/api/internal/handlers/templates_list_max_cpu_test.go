@@ -24,14 +24,14 @@ func TestTemplateListsMaxCpuCount(t *testing.T) {
 	teamID := testutils.CreateTestTeam(t, db)
 
 	resizableID := testutils.CreateTestTemplate(t, db, teamID)
-	resizableBuild := testutils.CreateTestBuild(t, t.Context(), db, resizableID, "ready")
+	resizableBuild := testutils.CreateTestBuild(t, t.Context(), db, resizableID, dbtypes.BuildStatusGroupReady)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
 		"UPDATE public.env_builds SET max_vcpu = 4 WHERE id = $1", resizableBuild))
 
 	testutils.CreateTestBuildAssignment(t, t.Context(), db, resizableID, resizableBuild, "default")
 
 	fixedID := testutils.CreateTestTemplate(t, db, teamID)
-	fixedBuild := testutils.CreateTestBuild(t, t.Context(), db, fixedID, "ready")
+	fixedBuild := testutils.CreateTestBuild(t, t.Context(), db, fixedID, dbtypes.BuildStatusGroupReady)
 	testutils.CreateTestBuildAssignment(t, t.Context(), db, fixedID, fixedBuild, "default")
 
 	store := newTemplateListStore(t, db, featureflags.UnpaginatedTemplateListCapFlag.Fallback())

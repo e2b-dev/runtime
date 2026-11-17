@@ -103,6 +103,27 @@ type Config struct {
 
 	// VethPrefix is the prefix used for host-side sandbox veth interfaces (e.g. "e2b-").
 	VethPrefix string `env:"NETWORK_VETH_PREFIX" envDefault:"e2b-"`
+
+	// ReusedSlotsPoolSize is how many returned slots the pool keeps for the
+	// next sandbox; unset or 0 keeps the default. A slot returned to a full
+	// pool is torn down and the pool makes new slots one at a time, so a node
+	// that recycles more sandboxes at once than this slows its next burst.
+	// Slots still pooled when the node stops are torn down one at a time. A
+	// pool raised above the default stops at the shutdown's teardown deadline:
+	// the stop then exits non-zero and the next start reclaims the rest before
+	// it serves. With that reclaim disabled it keeps going. Slots on their
+	// way back to the pool when the node stops are held to the same deadline.
+	ReusedSlotsPoolSize int `env:"NETWORK_REUSED_SLOTS_POOL_SIZE"`
+}
+
+// ReusedPoolSize is the reuse pool's capacity: the configured size, or the
+// default when none is set.
+func (c Config) ReusedPoolSize() int {
+	if c.ReusedSlotsPoolSize > 0 {
+		return c.ReusedSlotsPoolSize
+	}
+
+	return ReusedSlotsPoolSize
 }
 
 const (
@@ -204,6 +225,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("BUILD_SANDBOX_EGRESS_DSCP=%d out of range (0..%d)", *c.BuildSandboxEgressDSCP, maxDSCP)
 	}
 
+	if c.ReusedSlotsPoolSize < 0 || c.ReusedSlotsPoolSize > vrtSlotsSize {
+		return fmt.Errorf("NETWORK_REUSED_SLOTS_POOL_SIZE=%d out of range (0..%d)", c.ReusedSlotsPoolSize, vrtSlotsSize)
+	}
+
 	prefix := c.VethPrefix
 	if prefix == "" {
 		prefix = DefaultVethPrefix
@@ -250,6 +275,11 @@ type Pool struct {
 	cleanupErr error
 	// Retained slots cannot be reused, but Close still owns their teardown.
 	retainedSlots map[*Slot]struct{}
+	// handToClose is set from the moment a Close with a teardown deadline
+	// publishes closed until it collects handedSlots: cleanupWith leaves its
+	// slot there instead of tearing it down. Guarded by closeMu.
+	handToClose bool
+	handedSlots []*Slot
 
 	slotStorage Storage
 
@@ -527,6 +557,7 @@ func (p *Pool) tryTrackAdmission() bool {
 // claimSlot is the final handoff linearization point. If Close published
 // closed first, the admission still owns the received slot and must clean it
 // up before returning ErrClosed; Close joins that work through admissionsWG.
+// A Close with a teardown deadline takes the slot instead (see cleanupWith).
 func (p *Pool) claimSlot(ctx context.Context, slot *Slot) error {
 	p.closeMu.RLock()
 	closed := p.closed
@@ -557,7 +588,8 @@ func (p *Pool) tryTrackReturn() bool {
 
 // ReturnAsync recycles a slot in the background, logging errors instead of
 // returning them. Close waits for all in-flight returns before draining the
-// pool. If the pool is already closed the slot is cleaned up synchronously.
+// pool. If the pool is already closed the slot is cleaned up synchronously,
+// unless a Close with a teardown deadline takes it (see cleanupWith).
 func (p *Pool) ReturnAsync(ctx context.Context, slot *Slot, releasedFn ReleaseNotify, returnDelay time.Duration) error {
 	p.modeFollower.TakeBack(slot)
 
@@ -632,9 +664,25 @@ func (p *Pool) tryReuse(ctx context.Context, slot *Slot) (reused bool, cause err
 	}
 }
 
-// cleanupWith tears the slot down and attaches any cleanup error to cause.
+// cleanupWith tears the slot down and attaches any cleanup error to cause. A
+// Close with a teardown deadline takes the slot instead and tears it down
+// itself, so the slots of many returns ending at once meet that deadline too.
 func (p *Pool) cleanupWith(ctx context.Context, slot *Slot, cause error) error {
-	if cerr := p.cleanup(ctx, slot); cerr != nil {
+	p.closeMu.Lock()
+	handed := p.handToClose
+	if handed {
+		p.handedSlots = append(p.handedSlots, slot)
+	}
+	p.closeMu.Unlock()
+
+	// A handed slot keeps its network for Close and has only its firewall
+	// closed here: a return cut short by the shutdown has not read its tenant's
+	// counters, and nothing reads them if Close leaves the slot.
+	cleanup := p.cleanup
+	if handed {
+		cleanup = func(ctx context.Context, slot *Slot) error { return slot.CloseFirewall(ctx) }
+	}
+	if cerr := cleanup(ctx, slot); cerr != nil {
 		cleanupErr := fmt.Errorf("cleanup slot '%d': %w", slot.Idx, cerr)
 		p.closeMu.Lock()
 		if p.cleanupErr == nil {
@@ -668,7 +716,9 @@ func (p *Pool) cleanup(ctx context.Context, slot *Slot) error {
 
 // Close leaves the pool unchanged when ctx is canceled before Close publishes
 // closed. Once it has published closed, Close ignores later cancellation so it
-// can join admissions and returns before removing shared network state.
+// can join admissions and returns before removing shared network state. Past a
+// teardown deadline on ctx, the slots it has not torn down stay in place and
+// Close returns ErrSlotsLeft.
 func (p *Pool) Close(ctx context.Context) error {
 	p.closeMu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -677,6 +727,7 @@ func (p *Pool) Close(ctx context.Context) error {
 		return err
 	}
 	p.closed = true
+	p.handToClose = HasTeardownDeadline(ctx)
 	p.doneOnce.Do(func() {
 		close(p.done)
 	})
@@ -697,16 +748,38 @@ func (p *Pool) Close(ctx context.Context) error {
 	errs := []error{p.releaseErr, p.cleanupErr}
 	retained := p.retainedSlots
 	p.retainedSlots = nil
+	handed := p.handedSlots
+	p.handedSlots = nil
+	p.handToClose = false
 	p.closeMu.Unlock()
+	// Not bounded by the teardown deadline: this teardown is the only read of
+	// a retained slot's firewall counters.
 	for slot := range retained {
 		if err := p.cleanup(ctx, slot); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup retained slot '%d': %w", slot.Idx, err))
 		}
 	}
 
+	left := 0
+	for _, slot := range handed {
+		if TeardownDeadlinePassed(ctx) {
+			left++
+
+			continue
+		}
+		if err := p.cleanup(ctx, slot); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup slot '%d': %w", slot.Idx, err))
+		}
+	}
+
 	for slot := range p.newSlots {
 		newSlotsAvailableCounter.Add(ctx, -1)
 
+		if TeardownDeadlinePassed(ctx) {
+			left++
+
+			continue
+		}
 		err := p.cleanup(ctx, slot)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup slot '%d': %w", slot.Idx, err))
@@ -719,6 +792,11 @@ drain:
 		case slot := <-p.reusedSlots:
 			reusableSlotsAvailableCounter.Add(ctx, -1)
 
+			if TeardownDeadlinePassed(ctx) {
+				left++
+
+				continue
+			}
 			err := p.cleanup(ctx, slot)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to cleanup slot '%d': %w", slot.Idx, err))
@@ -726,6 +804,10 @@ drain:
 		default:
 			break drain
 		}
+	}
+
+	if left > 0 {
+		errs = append(errs, fmt.Errorf("%w: %d", ErrSlotsLeft, left))
 	}
 
 	return errors.Join(errs...)

@@ -23,7 +23,7 @@ func (f flagsOn) BoolFlag(context.Context, featureflags.BoolFlag, ...ldcontext.C
 type failingFlags struct{ t *testing.T }
 
 func (f failingFlags) BoolFlag(_ context.Context, flag featureflags.BoolFlag, _ ...ldcontext.Context) bool {
-	f.t.Fatalf("the flag %s was read", flag.Key())
+	require.Failf(f.t, "a flag was read", "flag %s", flag.Key())
 
 	return false
 }

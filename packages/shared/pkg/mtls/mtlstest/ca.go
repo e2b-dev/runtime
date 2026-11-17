@@ -3,7 +3,8 @@
 // leaves carrying a SPIFFE URI SAN, all ECDSA P-256, optionally written to a
 // temporary directory laid out the way the chart mounts them.
 //
-// It imports only the standard library so that any module's tests can use it.
+// It imports only the standard library and testify so that any module's tests
+// can use it.
 package mtlstest
 
 import (
@@ -20,6 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // CA is a signing certificate: a root, or an intermediate that remembers the
@@ -143,9 +146,7 @@ func (ca *CA) Leaf(tb testing.TB, spec LeafSpec) *Leaf {
 	}
 	for _, raw := range uris {
 		u, err := url.Parse(raw)
-		if err != nil {
-			tb.Fatalf("mtlstest: parse URI SAN %q: %v", raw, err)
-		}
+		require.NoError(tb, err, "mtlstest: parse URI SAN %q", raw)
 		template.URIs = append(template.URIs, u)
 	}
 
@@ -157,15 +158,11 @@ func (ca *CA) Leaf(tb testing.TB, spec LeafSpec) *Leaf {
 	}
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		tb.Fatalf("mtlstest: marshal key: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: marshal key")
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	tlsCert, err := tls.X509KeyPair(chain, keyPEM)
-	if err != nil {
-		tb.Fatalf("mtlstest: key pair: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: key pair")
 
 	return &Leaf{Cert: cert, Key: key, CertPEM: chain, KeyPEM: keyPEM, TLS: tlsCert}
 }
@@ -209,27 +206,18 @@ func Write(tb testing.TB, path string, data []byte) {
 	tb.Helper()
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		tb.Fatalf("mtlstest: create temp file: %v", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tb.Fatalf("mtlstest: write %s: %v", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		tb.Fatalf("mtlstest: close %s: %v", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		tb.Fatalf("mtlstest: rename into %s: %v", path, err)
-	}
+	require.NoError(tb, err, "mtlstest: create temp file")
+	_, err = tmp.Write(data)
+	require.NoError(tb, err, "mtlstest: write %s", path)
+	require.NoError(tb, tmp.Close(), "mtlstest: close %s", path)
+	require.NoError(tb, os.Rename(tmp.Name(), path), "mtlstest: rename into %s", path)
 }
 
 func newKey(tb testing.TB) *ecdsa.PrivateKey {
 	tb.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		tb.Fatalf("mtlstest: generate key: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: generate key")
 
 	return key
 }
@@ -238,9 +226,7 @@ func serial(tb testing.TB) *big.Int {
 	tb.Helper()
 
 	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 62))
-	if err != nil {
-		tb.Fatalf("mtlstest: serial number: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: serial number")
 
 	return n
 }
@@ -249,13 +235,9 @@ func sign(tb testing.TB, template, parent *x509.Certificate, pub *ecdsa.PublicKe
 	tb.Helper()
 
 	der, err := x509.CreateCertificate(rand.Reader, template, parent, pub, signer)
-	if err != nil {
-		tb.Fatalf("mtlstest: create certificate: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: create certificate")
 	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		tb.Fatalf("mtlstest: parse certificate: %v", err)
-	}
+	require.NoError(tb, err, "mtlstest: parse certificate")
 
 	return cert
 }

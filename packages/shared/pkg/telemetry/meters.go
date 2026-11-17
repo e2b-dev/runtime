@@ -42,6 +42,11 @@ const (
 	// applied that the store then failed to record: the live egress differs
 	// from the stored config until the next update replaces both.
 	ApiOrchestratorNetworkUpdateUnstored CounterType = "api.orchestrator.network_update_unstored"
+	// ApiOrchestratorCreateRefusals counts creates a node refused before
+	// starting them, by cause: status (the node's status admits nothing new) |
+	// capacity (the node is full, or its start slots are taken). Placement
+	// retries each one.
+	ApiOrchestratorCreateRefusals CounterType = "api.orchestrator.create_refusals"
 	// ApiOrchestratorPlacementsWithoutHugepageCeiling counts hugepage sandboxes
 	// placed under a hugepage limit on a node the limit could not bound, by
 	// node.id and reason: no_capacity (the orchestrator reports no pool
@@ -53,6 +58,9 @@ const (
 	// snapshot). The read plus disabled rate is the team's store sweeps per
 	// second; hit over the total is what the snapshot saves.
 	ApiSandboxListReads CounterType = "api.sandbox.list.reads"
+	// ApiTemplateListCapExceeded counts unpaginated template list requests
+	// refused because the team has more templates than the cap, by team.
+	ApiTemplateListCapExceeded CounterType = "api.template.list.cap_exceeded"
 	// ApiEvictorFsOnlyAutoPause counts timeout auto-pauses whose policy asked
 	// for a filesystem-only snapshot. Unlabeled since the fs-only version
 	// gate was dropped: every counted eviction takes the fs-only path.
@@ -127,6 +135,10 @@ const (
 	// path is running for a live sandbox, start for a reset before envd
 	// first answered on a create or resume.
 	OrchestratorSandboxGuestRebootsCounterName CounterType = "orchestrator.sandbox.guest_reboots"
+	// SandboxMemoryHotplugRefused counts starts and in-place reboots refused because their
+	// memory hotplug region cannot run here, by reason and path; reason=firecracker is a
+	// firecracker-versions line below the hotplug release.
+	SandboxMemoryHotplugRefused CounterType = "orchestrator.sandbox.memory_hotplug.refused"
 	// OrchestratorSandboxPauseAdmissionCounterName counts every snapshot-
 	// admission decision. refused is the told-the-caller-to-retry rate;
 	// ready_after_wait counts the grace paying off — their ratio tunes the
@@ -416,9 +428,12 @@ const (
 	// TemplateBuildVcpuSizing counts the VM sizing builds request, before they run;
 	// template.build.result says what they built.
 	TemplateBuildVcpuSizing CounterType = "orchestrator.template.build.vcpu_sizing"
+	// TemplateBuildMemorySizing counts the memory sizing builds request, once per request before
+	// they run; result is absent|equal|resizable|rejected, and a rejection carries its reason.
+	TemplateBuildMemorySizing CounterType = "orchestrator.template.build.memory_sizing"
 
 	// PauseResumePrefetchHarvestAttempts counts pause-resume prefetch harvest
-	// attempts, by result (success|resume_failed|collect_failed|skipped). The
+	// attempts, by result and path; counterDesc holds the result vocabulary. The
 	// throwaway is absent from Prometheus otherwise (registration-skip), so this
 	// is the harvest-activity / failure-rate signal.
 	PauseResumePrefetchHarvestAttempts CounterType = "orchestrator.sandbox.pause_resume_prefetch.harvest.attempts"
@@ -710,6 +725,10 @@ const (
 	//                   later Firecracker words differently.
 	//   unavailable     the API answered a non-400 status, so the load never
 	//                   reached the snapshot.
+	//   guest_memory    the memory handler exited because the hugepage pool
+	//                   could not back the guest: the node is full.
+	//   uffd_exited     the memory handler exited for another reason before
+	//                   Firecracker answered.
 	//   transport       the API socket could not be reached or replied
 	//                   unintelligibly; says nothing about the snapshot.
 	//   timeout         no answer before the request deadline; the load
@@ -895,7 +914,9 @@ var counterDesc = map[CounterType]string{
 	ApiOrchestratorSandboxFeatureUnsupported:     "Sandbox creates refused because no orchestrator in the cluster runs a release implementing a capability the request needs, by feature",
 	ApiOrchestratorPauseRefusalRestore:           "Outcomes of restoring a sandbox whose pause the node refused retryably, by outcome and caller.",
 	ApiOrchestratorNetworkUpdateUnstored:         "Network updates a node applied that the store failed to record.",
+	ApiOrchestratorCreateRefusals:                "Sandbox creates a node refused before starting them, by cause: status | capacity.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
+	ApiTemplateListCapExceeded:                   "Unpaginated template list requests refused because the team has more templates than the cap, by team.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
 	TeamSandboxCreated:                           "Counter of started sandboxes for the team in the interval",
@@ -911,6 +932,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorSandboxKilledCounterName:         "Number of sandboxes killed, labeled by kill reason",
 	OrchestratorSandboxCrashedCounterName:        "Sandbox executions that ended without a recorded stop reason, labeled by cause (guest_reset/guest_crash/guest_poweroff/clean_exit/exit_error/external_signal/fault/memory_handler_failed/requested_signal/unknown) and by the memory handler's page-copy failure (uffd_copy_error=none/enomem/other)",
 	OrchestratorSandboxGuestRebootsCounterName:   "Guest resets the orchestrator handled, labeled by outcome, guest_os and path",
+	SandboxMemoryHotplugRefused:                  "Sandbox starts and in-place reboots refused because their memory hotplug region cannot run here, by reason (firecracker|kernel|invalid) and path (start|reboot)",
 	OrchestratorSandboxPauseAdmissionCounterName: "Snapshot-admission decisions, labeled by outcome (ready/ready_after_wait/refused/latched_error/refused_disk for the durable-header and disk checks; envd_healthy/envd_unhealthy/envd_unhealthy_proceeded for the guest-agent probe, where envd_unhealthy refused the snapshot and envd_unhealthy_proceeded took the memory snapshot anyway and recorded it as taken over an unresponsive agent) and rpc (pause/checkpoint)",
 	OrchestratorSandboxCheckpointCounterName:     "Number of sandbox checkpoints taken, labeled by in_place, fs_only (filesystem-only, no memory export; always in place), route (in_place, or the gate condition that sent it resume-fresh: sync_wp_off, flag_off, fc_unsupported, balloon_reporting, balloon_unknown), balloon_mode, deferred (in-place memory export through the CoW window rather than the synchronous copy; always false on resume-fresh) and success",
 	OrchestratorFPRResumeCounterName:             "Free-page-reporting resumes after a CoW window, labeled by outcome (inline, retry, fenced, fc_exited, abandoned); produced only while in-place-checkpoint-reporting admits reporting balloons to the in-place path",
@@ -936,13 +958,14 @@ var counterDesc = map[CounterType]string{
 	TemplateBuildCmdlineArgs:                     "Template builds by the guest kernel cmdline parameters applied",
 	TemplateBuildCPUTemplate:                     "Template builds by the digest of the custom Firecracker CPU template applied and by result (result=applied|rejected|none|malformed)",
 	TemplateBuildVcpuSizing:                      "Template build VM sizing requested, counted before the build runs, by result (absent|equal|resizable|rejected)",
+	TemplateBuildMemorySizing:                    "Template build memory sizing requested, counted once per request when the template-manager accepts or refuses it (a retry of a registered build is not counted again), by result (absent|equal|resizable|rejected) and, for rejected, reason (invalid|ratio|firecracker|kernel|internal); refusals inside the build show on template.build.result",
 	OrchestratorEnvdUpgradeGated:                 "Resumes where the envd-upgrade-target flag named a target but a gate declined the upgrade, by reason",
 	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss), upgrade path, and on a miss its cause (not_warmed|stalled|cancelled|unreadable|no_cache)",
 	OrchestratorEnvdBinaryCacheDeliveries:        "Host envd binary reads at delivery time, by outcome (copy|stale) and upgrade path",
 	OrchestratorEnvdBinaryCacheWarms:             "Host envd binary cache warms, by result (ok|superseded|suppressed|pinned|already_warming|bad_target|failed)",
 	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher) and result (ok|failed)",
 	PauseResumePrefetchHarvestThaw:               "Harvest throwaways whose envd /init took the held request and was served a 204, by skipped: true when envd answered X-Envd-Thaw: skip and left the workload frozen, false when it thawed inline and the workload ran into the trace (an envd version the gate admitted that does not skip); envd_running_version is the version the gate read, kept when the orchestrator holds it, else other",
-	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | persist_deadline) and path (pause | checkpoint)",
+	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | guest_unresponsive = snapshot taken over a hung guest agent, not harvested | persist_deadline) and path (pause | checkpoint)",
 	TCPFirewallConnectionsTotal:                  "Total number of TCP firewall connections processed",
 	TCPFirewallErrorsTotal:                       "Total number of TCP firewall errors",
 	TCPFirewallDecisionsTotal:                    "Total number of TCP firewall allow/block decisions",
@@ -962,7 +985,7 @@ var counterDesc = map[CounterType]string{
 	SandboxFCBlockFails:         "Total Firecracker VMM block device execution/event failures",
 	SandboxFCBlockNoAvailBuffer: "Total Firecracker VMM block events where no virtqueue buffer was available",
 
-	SandboxFCSnapshotLoadFailures: "Total snapshot loads refused by Firecracker (reason=vcpu_msr|vcpu_other|missing_file|bad_request|unavailable|transport|timeout|canceled), by the digest of the CPU template the snapshot was built with (cpu_template)",
+	SandboxFCSnapshotLoadFailures: "Total snapshot loads refused by Firecracker (reason=vcpu_msr|vcpu_other|missing_file|bad_request|unavailable|guest_memory|uffd_exited|transport|timeout|canceled), by the digest of the CPU template the snapshot was built with (cpu_template)",
 	SandboxVcpuLimit:              "Starts whose VM has spare vCPUs, by how the CPU limit was applied (outcome=confined|cgroup_fallback|failed) on which path (path=boot|resume)",
 	SandboxTemplateLegFaults:      "Sandbox reads and writes its template's backing device failed (leg=memfile|rootfs)",
 
@@ -973,7 +996,7 @@ var counterDesc = map[CounterType]string{
 	ApiRedisStorageExpirationIndexSwept:    "Members removed from the global expiration index by the evictor scan (reason=orphan|dead_execution|invalid)",
 	ApiRedisStorageExpirationIndexRescored: "Live expiration index members re-scored after drifting from the stored EndTime",
 	ApiRedisStorageExpirationIndexDeferred: "Expired expiration index members moved out of the evictor scan window while their sandbox is in a transition",
-	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_record|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
+	ApiRedisScriptCalls:                    "Lua script runs against the sandbox store (script=add_sandbox|remove_record|fenced_set|release_lock|start_transition|finish_transition|restore_sandbox|reserve|finish_start|release|claim_kill, outcome=ok|error)",
 	ApiRedisStorageIndexHeal:               "Repairs the healer made to sandbox records and their index entries (kind=readded|removed|deleted_stale); healthy steady state is zero",
 	ApiRedisStorageWriteAnomalies:          "Sandbox store writes that gave up after their retries (kind=remove_stranded|add_unindexed|add_write_unconfirmed); the healer repairs what they left",
 	ApiRedisStorageErrors:                  "Cluster errors the sandbox store's commands returned (kind=crossslot|moved_exhausted|tryagain|other)",
@@ -997,7 +1020,9 @@ var counterUnits = map[CounterType]string{
 	ApiOrchestratorSandboxFeatureUnsupported:     "{sandbox}",
 	ApiOrchestratorPauseRefusalRestore:           "{pause}",
 	ApiOrchestratorNetworkUpdateUnstored:         "{update}",
+	ApiOrchestratorCreateRefusals:                "{refusal}",
 	ApiSandboxListReads:                          "{request}",
+	ApiTemplateListCapExceeded:                   "{request}",
 	BuildResultCounterName:                       "{build}",
 	BuildCacheResultCounterName:                  "{layer}",
 	TeamSandboxCreated:                           "{sandbox}",
@@ -1013,6 +1038,7 @@ var counterUnits = map[CounterType]string{
 	OrchestratorSandboxKilledCounterName:         "{sandbox}",
 	OrchestratorSandboxCrashedCounterName:        "{sandbox}",
 	OrchestratorSandboxGuestRebootsCounterName:   "{reset}",
+	SandboxMemoryHotplugRefused:                  "{sandbox}",
 	OrchestratorSandboxPauseAdmissionCounterName: "{decision}",
 	OrchestratorSandboxCheckpointCounterName:     "{checkpoint}",
 	OrchestratorFPRResumeCounterName:             "{resume}",
@@ -1038,6 +1064,7 @@ var counterUnits = map[CounterType]string{
 	TemplateBuildCmdlineArgs:                     "{build}",
 	TemplateBuildCPUTemplate:                     "{build}",
 	TemplateBuildVcpuSizing:                      "{build}",
+	TemplateBuildMemorySizing:                    "{build}",
 	OrchestratorEnvdUpgradeGated:                 "{sandbox}",
 	OrchestratorEnvdBinaryCacheReads:             "{read}",
 	OrchestratorEnvdBinaryCacheWarms:             "{warm}",

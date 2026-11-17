@@ -20,24 +20,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewGetExportVMConfigParams() *GetExportVMConfigParams {
-	return &GetExportVMConfigParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewGetExportVMConfigParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewGetExportVMConfigParamsWithTimeout creates a new GetExportVMConfigParams object
 // with the ability to set a timeout on a request.
 func NewGetExportVMConfigParamsWithTimeout(timeout time.Duration) *GetExportVMConfigParams {
 	return &GetExportVMConfigParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewGetExportVMConfigParamsWithContext creates a new GetExportVMConfigParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetExportVMConfigParams].
 func NewGetExportVMConfigParamsWithContext(ctx context.Context) *GetExportVMConfigParams {
 	return &GetExportVMConfigParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -57,9 +61,9 @@ GetExportVMConfigParams contains all the parameters to send to the API endpoint
 	Typically these are written to a http.Request.
 */
 type GetExportVMConfigParams struct {
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the get export Vm config params (not the query body).
@@ -77,43 +81,46 @@ func (o *GetExportVMConfigParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the get export Vm config params
+// WithTimeout adds the timeout to the get export Vm config params.
 func (o *GetExportVMConfigParams) WithTimeout(timeout time.Duration) *GetExportVMConfigParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the get export Vm config params
+// SetTimeout adds the timeout to the get export Vm config params.
 func (o *GetExportVMConfigParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the get export Vm config params
+// WithContext adds the context to the get export Vm config params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetExportVMConfigParams].
 func (o *GetExportVMConfigParams) WithContext(ctx context.Context) *GetExportVMConfigParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the get export Vm config params
+// SetContext adds the context to the get export Vm config params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [GetExportVMConfigParams].
 func (o *GetExportVMConfigParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the get export Vm config params
+// WithHTTPClient adds the HTTPClient to the get export Vm config params.
 func (o *GetExportVMConfigParams) WithHTTPClient(client *http.Client) *GetExportVMConfigParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the get export Vm config params
+// SetHTTPClient adds the HTTPClient to the get export Vm config params.
 func (o *GetExportVMConfigParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *GetExportVMConfigParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

@@ -80,7 +80,7 @@ func TestRunPeriodicHinting_StaticDisabledReturns(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("a static client with hinting disabled must return at once")
+		require.Fail(t, "a static client with hinting disabled must return at once")
 	}
 	assert.Empty(t, o.list())
 }
@@ -219,7 +219,7 @@ func TestRunPeriodicHintingLoop_DrainsAndStops(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("loop did not stop on cancel")
+		require.Fail(t, "loop did not stop on cancel")
 	}
 	for _, oc := range o.list() {
 		assert.Equal(t, "ok", oc)
@@ -458,7 +458,7 @@ func TestRunPeriodicHintingLoop_DisableParksEnableResumes(t *testing.T) {
 	assert.Equal(t, drainsAtDisable, r.drains.Load(), "no runs while disabled")
 	select {
 	case <-done:
-		t.Fatal("a disable must park the loop, not end it")
+		require.Fail(t, "a disable must park the loop, not end it")
 	default:
 	}
 
@@ -488,14 +488,14 @@ func TestRunPeriodicHintingLoop_ZeroIntervalIsDisable(t *testing.T) {
 	assert.Zero(t, r.drains.Load(), "no cycle ran once the flag turned off")
 	select {
 	case <-done:
-		t.Fatal("a disable parks the loop rather than ending it")
+		require.Fail(t, "a disable parks the loop rather than ending it")
 	default:
 	}
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("parked loop did not stop on cancel")
+		require.Fail(t, "parked loop did not stop on cancel")
 	}
 }
 
@@ -601,7 +601,7 @@ func TestRunPeriodicHintingLoop_BalloonReadErrorBacksOff(t *testing.T) {
 	assert.GreaterOrEqual(t, time.Since(at), gates.slow, "after the retries the reads slow down")
 	select {
 	case <-done:
-		t.Fatal("the loop gave up on the balloon")
+		require.Fail(t, "the loop gave up on the balloon")
 	default:
 	}
 	answer.Store(true)
@@ -610,7 +610,7 @@ func TestRunPeriodicHintingLoop_BalloonReadErrorBacksOff(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("loop did not stop on cancel")
+		require.Fail(t, "loop did not stop on cancel")
 	}
 }
 
@@ -632,7 +632,7 @@ func TestRunPeriodicHintingLoop_FcUnsupportedExitsWhileDisabled(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("loop parked on an unsupported Firecracker")
+		require.Fail(t, "loop parked on an unsupported Firecracker")
 	}
 	assert.Empty(t, o.list(), "a fleet with the feature off does not count sandbox starts")
 }
@@ -656,7 +656,7 @@ func TestRunPeriodicHintingLoop_ExitsWithProcess(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("loop outlived the process")
+		require.Fail(t, "loop outlived the process")
 	}
 	assert.Equal(t, int32(1), r.drains.Load())
 	assert.Empty(t, o.list())
@@ -941,7 +941,7 @@ func TestRunPeriodicHintingLoop_NotConfiguredExits(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("loop did not exit on not-configured")
+		require.Fail(t, "loop did not exit on not-configured")
 	}
 	assert.Equal(t, []string{"skipped-not-configured"}, o.list())
 	assert.Equal(t, int32(1), r.drains.Load())

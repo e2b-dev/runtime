@@ -170,6 +170,12 @@ func (b *Backlog) observe(_ context.Context, observer metric.Observer) error {
 	snapshot := b.snapshot
 	b.mu.RUnlock()
 
+	if snapshot.collectedAt.IsZero() {
+		observer.ObserveFloat64(b.snapshotAge, time.Since(b.startedAt).Seconds())
+
+		return nil
+	}
+
 	kinds := slices.Clone(b.config.Kinds)
 	for key := range snapshot.series {
 		kinds = append(kinds, key.kind)
@@ -198,11 +204,7 @@ func (b *Backlog) observe(_ context.Context, observer metric.Observer) error {
 		}
 	}
 
-	collectedAt := snapshot.collectedAt
-	if collectedAt.IsZero() {
-		collectedAt = b.startedAt
-	}
-	observer.ObserveFloat64(b.snapshotAge, time.Since(collectedAt).Seconds())
+	observer.ObserveFloat64(b.snapshotAge, time.Since(snapshot.collectedAt).Seconds())
 
 	return nil
 }

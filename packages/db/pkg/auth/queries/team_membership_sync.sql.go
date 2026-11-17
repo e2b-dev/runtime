@@ -37,15 +37,18 @@ WITH cleared_default AS (
       AND $3::boolean
     RETURNING 1
 )
-INSERT INTO public.users_teams (user_id, team_id, is_default, added_by)
+INSERT INTO public.users_teams (user_id, team_id, is_default, added_by, role)
 SELECT
     $1::uuid,
     $2::uuid,
     $3::boolean,
-    $4::uuid
+    $4::uuid,
+    COALESCE($5::text, 'member')
 WHERE (SELECT count(*) FROM cleared_default) >= 0
 ON CONFLICT (team_id, user_id) DO UPDATE
-SET is_default = EXCLUDED.is_default
+SET
+    is_default = EXCLUDED.is_default,
+    role = COALESCE($5::text, public.users_teams.role)
 `
 
 type UpsertTeamMemberParams struct {
@@ -53,6 +56,7 @@ type UpsertTeamMemberParams struct {
 	TeamID    uuid.UUID
 	IsDefault bool
 	AddedBy   *uuid.UUID
+	Role      *string
 }
 
 func (q *Queries) UpsertTeamMember(ctx context.Context, arg UpsertTeamMemberParams) error {
@@ -61,6 +65,7 @@ func (q *Queries) UpsertTeamMember(ctx context.Context, arg UpsertTeamMemberPara
 		arg.TeamID,
 		arg.IsDefault,
 		arg.AddedBy,
+		arg.Role,
 	)
 	return err
 }

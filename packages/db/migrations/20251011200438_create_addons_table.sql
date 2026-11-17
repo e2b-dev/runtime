@@ -22,9 +22,6 @@ CREATE TABLE IF NOT EXISTS "public"."addons"
     CONSTRAINT "addons_valid_dates_check" CHECK (valid_to IS NULL OR valid_to > valid_from)
 );
 
--- Create system user
-INSERT INTO "auth"."users" (id, email) VALUES ('00000000-0000-0000-0000-000000000000', 'system@e2b.dev');
-
 -- Create index on team_id for faster lookups
 CREATE INDEX IF NOT EXISTS "addons_team_id_idx" ON "public"."addons" ("team_id");
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -93,12 +94,14 @@ func TestNode_UpdateMetricsFromSync_KeepsPlacementsRecordedAfterTheRequest(t *te
 
 	assert.Equal(t, uint64(512), node.Metrics().HugePagesReserved)
 	assert.Equal(t, uint64(units.MBToBytes(1024)), node.Metrics().MemoryAllocatedBytes)
+	assert.Equal(t, uint32(2), node.Metrics().CpuAllocated)
 	assert.Equal(t, uint64(1250), node.Metrics().HugePagesCapacity)
 
 	node.UpdateMetricsFromSync(sample, time.Now().Add(time.Second))
 
 	assert.Zero(t, node.Metrics().HugePagesReserved)
 	assert.Zero(t, node.Metrics().MemoryAllocatedBytes)
+	assert.Zero(t, node.Metrics().CpuAllocated)
 }
 
 // Ordinary pages fault in on use, so until a sync says otherwise a placement
@@ -184,7 +187,7 @@ func TestNode_CompletePlacementWaitsForAPlacementCheck(t *testing.T) {
 
 	select {
 	case <-completed:
-		t.Fatal("the placement completed in the middle of another's check")
+		require.Fail(t, "the placement completed in the middle of another's check")
 	case <-time.After(50 * time.Millisecond):
 	}
 

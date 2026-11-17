@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -24,7 +26,7 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 		for _, node := range o.nodes.Items() {
 			observer.Observe(int64(node.PlacementMetrics.SuccessCount()), metric.WithAttributes(
 				attribute.String("node.id", node.ID),
-			))
+			), withCluster(node.ClusterID))
 		}
 
 		return nil
@@ -37,7 +39,7 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 		for _, node := range o.nodes.Items() {
 			observer.Observe(int64(node.PlacementMetrics.FailsCount()), metric.WithAttributes(
 				attribute.String("node.id", node.ID),
-			))
+			), withCluster(node.ClusterID))
 		}
 
 		return nil
@@ -59,7 +61,7 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 					attribute.String("status", string(node.Status())),
 					attribute.String("node.id", node.ID),
 					attribute.String("backend", node.Backend),
-				))
+				), withCluster(node.ClusterID))
 			}
 
 			for reason, count := range nodesWithoutHugepageCeiling(nodes) {
@@ -135,6 +137,16 @@ func (o *Orchestrator) setupMetrics(meterProvider metric.MeterProvider) error {
 	}
 
 	return nil
+}
+
+// withCluster labels a measurement with its cluster and byoc, true for every
+// cluster but the local one. OTel merges it with the call's other attribute
+// options.
+func withCluster(clusterID uuid.UUID) metric.MeasurementOption {
+	return metric.WithAttributes(
+		telemetry.WithClusterID(clusterID),
+		attribute.Bool("byoc", clusterID != consts.LocalClusterID),
+	)
 }
 
 // nodesWithoutHugepageCeiling counts the ready nodes the hugepage placement

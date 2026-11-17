@@ -27,13 +27,13 @@ images:
     newTag: v0.5.1
   - name: E2B_TOOLS_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/tools
-    newTag: v0.30.0 # x-release-please-version
+    newTag: v0.30.202611111922-12a3f24bd8a # x-release-please-version
   - name: E2B_NODE_E2B_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/node-e2b
-    newTag: v0.30.0 # x-release-please-version
+    newTag: v0.30.202611111922-12a3f24bd8a # x-release-please-version
   - name: E2B_SEED_IMAGE
     newName: us-docker.pkg.dev/e2b-artifacts/embed/seed
-    newTag: v0.30.0 # x-release-please-version
+    newTag: v0.30.202611111922-12a3f24bd8a # x-release-please-version
 
 # Content-hashed names: a changed literal or file renames the map and rolls the
 # pod. Older maps are left behind (kustomize does not prune); delete them by
@@ -41,10 +41,10 @@ images:
 configMapGenerator:
   - name: e2b-versions
     literals:
-      - E2B_ORCHESTRATOR_VERSION=v0.30.0 # x-release-please-version
+      - E2B_ORCHESTRATOR_VERSION=v0.30.202611112209-a4981d7dc00 # x-release-please-version
       - E2B_ENVD_VERSION=v0.10.0
       - E2B_KERNEL_VERSION=vmlinux-6.1.177_5008931
-      - E2B_FIRECRACKER_VERSION=v1.14-0.2.0
+      - E2B_FIRECRACKER_VERSION=v1.17-0.4.1
       - E2B_BUSYBOX_VERSION=1.36.1
   - name: e2b-settings
     literals:
@@ -52,6 +52,14 @@ configMapGenerator:
       # client-proxy export to over OTLP/gRPC, for example 127.0.0.1:4317.
       # Empty exports nothing; set it and re-apply.
       - OTEL_COLLECTOR_GRPC_ENDPOINT=
+      # The orchestrator's node limits, whole numbers: how many sandboxes the
+      # node runs or starts (200 when empty), how many start at once (3 when
+      # empty), and how many network slots returned by ended sandboxes stay
+      # ready for the next ones (100 when 0 or empty). The pool size does not
+      # follow the sandbox limit here as it does under Compose: set both.
+      - MAX_SANDBOXES_PER_NODE=
+      - MAX_STARTING_INSTANCES_PER_NODE=
+      - NETWORK_REUSED_SLOTS_POOL_SIZE=0
   - name: clickhouse-config
     files:
       - config.xml=config/clickhouse-config.xml
@@ -66,5 +74,5 @@ configMapGenerator:
     files:
       - config.yaml=config/otel-collector.yaml
 
-# Uncomment for the built-in collector, then set e2b-settings above to 127.0.0.1:4317.
+# Uncomment for the built-in collector, then set OTEL_COLLECTOR_GRPC_ENDPOINT above to 127.0.0.1:4317.
 # patches: [{ path: patches/otel-collector.yaml, target: { kind: StatefulSet, name: e2b } }]

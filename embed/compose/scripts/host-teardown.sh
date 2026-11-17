@@ -73,7 +73,7 @@ for f in /etc/modules-load.d/e2b.conf /etc/modprobe.d/e2b-nbd.conf \
 done
 if command -v "$HT_UDEVADM" >/dev/null 2>&1; then "$HT_UDEVADM" control --reload || true; fi
 
-# 2. Release the hugepages host-setup reserved. The other two sysctls are
+# 2. Release the hugepages host-setup reserved. The other sysctls are
 #    harmless at their raised values and revert on reboot now that the file is gone.
 "$HT_SYSCTL" -q -w vm.nr_hugepages=0 ||
   die "could not set vm.nr_hugepages=0" "check that nothing still maps hugepages (pgrep firecracker), then run docker compose --profile purge run --rm host-teardown again"

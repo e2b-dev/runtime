@@ -14,20 +14,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/mocks"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/uffd"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
 func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	t.Parallel()
-	// Real Unix paths are limited independently of the long test name.
-	dir, err := os.MkdirTemp("", "uffd-owner-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	file, err := os.CreateTemp(t.TempDir(), "received")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = file.Close() })
@@ -59,7 +58,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 		select {
 		case <-u.Exit().Done():
 		case <-time.After(time.Second):
-			t.Error("failed to join owned handshake in test cleanup")
+			assert.Fail(t, "failed to join owned handshake in test cleanup")
 		}
 	})
 	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: filepath.Join(dir, "u.sock"), Net: "unix"})
@@ -72,7 +71,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
-		t.Fatal("handshake did not acquire the descriptor before cleanup")
+		require.Fail(t, "handshake did not acquire the descriptor before cleanup")
 	}
 
 	started, done := make(chan struct{}), make(chan error, 1)
@@ -87,11 +86,11 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("cleanup did not start")
+		require.Fail(t, "cleanup did not start")
 	}
 	select {
 	case <-dependentClosed:
-		t.Error("dependent cleanup ran while the memory descriptor owner was active")
+		assert.Fail(t, "dependent cleanup ran while the memory descriptor owner was active")
 	case <-time.After(200 * time.Millisecond):
 	}
 	var cleanupErr error
@@ -99,7 +98,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	select {
 	case cleanupErr = <-done:
 		joined = true
-		t.Error("cleanup returned before the memory descriptor owner joined")
+		assert.Fail(t, "cleanup returned before the memory descriptor owner joined")
 	default:
 	}
 	unblock()
@@ -107,7 +106,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 		select {
 		case cleanupErr = <-done:
 		case <-time.After(time.Second):
-			t.Fatal("cleanup failed to join after the descriptor owner returned")
+			require.Fail(t, "cleanup failed to join after the descriptor owner returned")
 		}
 	}
 	require.NoError(t, cleanupErr, "the handler's operational error is not a cleanup failure")
@@ -116,7 +115,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 	select {
 	case <-u.Exit().Done():
 	default:
-		t.Fatal("cleanup returned before UFFD Exit was published")
+		require.Fail(t, "cleanup returned before UFFD Exit was published")
 	}
 
 	entries, err := os.ReadDir("/proc/self/fd")
@@ -137,9 +136,7 @@ func TestServeMemoryCleanupJoinsReceivedDescriptorOwner(t *testing.T) {
 
 func TestServeMemoryCleanupPreservesCleanupFailure(t *testing.T) {
 	t.Parallel()
-	dir, err := os.MkdirTemp("", "uffd-close-") //nolint:usetesting
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := testutils.SocketDir(t)
 	u := uffd.New(blockmocks.NewMockReadonlyDevice(t), filepath.Join(dir, "u.sock"), logger.L())
 	cleanup := NewCleanup()
 	cleanupFailure := errors.New("dependent cleanup failed")
@@ -150,7 +147,7 @@ func TestServeMemoryCleanupPreservesCleanupFailure(t *testing.T) {
 		select {
 		case <-u.Exit().Done():
 		case <-time.After(time.Second):
-			t.Error("test cleanup failed to join rejected handshake")
+			assert.Fail(t, "test cleanup failed to join rejected handshake")
 		}
 	})
 	conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: filepath.Join(dir, "u.sock"), Net: "unix"})
@@ -161,7 +158,7 @@ func TestServeMemoryCleanupPreservesCleanupFailure(t *testing.T) {
 	select {
 	case <-u.Exit().Done():
 	case <-time.After(time.Second):
-		t.Fatal("rejected handshake did not finish")
+		require.Fail(t, "rejected handshake did not finish")
 	}
 	handlerFailure := u.Exit().Error()
 	require.Error(t, handlerFailure)

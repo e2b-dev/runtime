@@ -24,7 +24,7 @@ func TestEveryManagementOperationAcceptsOnlyTheServiceJWT(t *testing.T) {
 
 	operations := 0
 	for path, item := range swagger.Paths.Map() {
-		if !strings.HasPrefix(path, "/unstable/management/") {
+		if !strings.HasPrefix(path, "/unstable/management/") || path == "/unstable/management/telemetry/names" {
 			continue
 		}
 		for method, operation := range item.Operations() {
@@ -48,7 +48,7 @@ func TestManagementClusterRegistrationContainsOnlyClusterDescriptorFields(t *tes
 	require.NotNil(t, schema)
 
 	require.ElementsMatch(t,
-		[]string{"name", "endpoint", "endpoint_tls", "token", "sandbox_proxy_domain", "auth_org_id"},
+		[]string{"name", "endpoint", "endpoint_tls", "token", "sandbox_proxy_domain", "auth_org_id", "telemetry_client_id"},
 		slices.Collect(maps.Keys(schema.Value.Properties)))
 }
 

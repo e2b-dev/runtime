@@ -17,6 +17,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 )
 
@@ -42,11 +43,18 @@ func (s *updateRejectionStorage) Get(context.Context, uuid.UUID, string) (sandbo
 	return s.sbx, nil
 }
 
-func (s *updateRejectionStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
-	var err error
-	s.sbx, err = update(s.sbx)
+func (s *updateRejectionStorage) BeginUpdate(context.Context, uuid.UUID, string) (sandbox.Sandbox, sandboxtypes.UpdateToken, error) {
+	return s.sbx, "", nil
+}
 
-	return s.sbx, err
+func (s *updateRejectionStorage) CommitUpdate(_ context.Context, _ uuid.UUID, _ string, _ sandboxtypes.UpdateToken, updated sandbox.Sandbox) (sandbox.Sandbox, error) {
+	s.sbx = updated
+
+	return s.sbx, nil
+}
+
+func (s *updateRejectionStorage) AbortUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken) error {
+	return nil
 }
 
 func TestSandboxUpdateRejectionHTTPConsumers(t *testing.T) {

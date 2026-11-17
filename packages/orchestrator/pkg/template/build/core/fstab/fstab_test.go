@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/core/fstab"
 )
@@ -156,8 +157,6 @@ func FuzzParse(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		r := fstab.Parse(data, fstab.DefaultTarget())
-		if r.Blockers+r.SwapMissing+r.Unresolved > r.Entries {
-			t.Fatalf("blockers %d + swap %d + unresolved %d exceed entries %d", r.Blockers, r.SwapMissing, r.Unresolved, r.Entries)
-		}
+		require.LessOrEqual(t, r.Blockers+r.SwapMissing+r.Unresolved, r.Entries, "blockers %d + swap %d + unresolved %d exceed entries", r.Blockers, r.SwapMissing, r.Unresolved)
 	})
 }

@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/runtime"
 	cr "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // NewPutGuestBootSourceParams creates a new PutGuestBootSourceParams object,
@@ -22,24 +21,28 @@ import (
 //
 // To enforce default values in parameter, use SetDefaults or WithDefaults.
 func NewPutGuestBootSourceParams() *PutGuestBootSourceParams {
-	return &PutGuestBootSourceParams{
-		timeout: cr.DefaultTimeout,
-	}
+	return NewPutGuestBootSourceParamsWithTimeout(cr.DefaultTimeout)
 }
 
 // NewPutGuestBootSourceParamsWithTimeout creates a new PutGuestBootSourceParams object
 // with the ability to set a timeout on a request.
 func NewPutGuestBootSourceParamsWithTimeout(timeout time.Duration) *PutGuestBootSourceParams {
 	return &PutGuestBootSourceParams{
-		timeout: timeout,
+		inner: innerParams{
+			timeout: timeout,
+		},
 	}
 }
 
 // NewPutGuestBootSourceParamsWithContext creates a new PutGuestBootSourceParams object
 // with the ability to set a context for a request.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestBootSourceParams].
 func NewPutGuestBootSourceParamsWithContext(ctx context.Context) *PutGuestBootSourceParams {
 	return &PutGuestBootSourceParams{
-		Context: ctx,
+		inner: innerParams{
+			ctx: ctx,
+		},
 	}
 }
 
@@ -60,15 +63,14 @@ PutGuestBootSourceParams contains all the parameters to send to the API endpoint
 */
 type PutGuestBootSourceParams struct {
 
-	/* Body.
-
-	   Guest boot source properties
-	*/
+	// Body.
+	//
+	// Guest boot source properties
 	Body *models.BootSource
 
-	timeout    time.Duration
-	Context    context.Context
 	HTTPClient *http.Client
+
+	inner innerParams
 }
 
 // WithDefaults hydrates default values in the put guest boot source params (not the query body).
@@ -86,54 +88,57 @@ func (o *PutGuestBootSourceParams) SetDefaults() {
 	// no default values defined for this parameter
 }
 
-// WithTimeout adds the timeout to the put guest boot source params
+// WithTimeout adds the timeout to the put guest boot source params.
 func (o *PutGuestBootSourceParams) WithTimeout(timeout time.Duration) *PutGuestBootSourceParams {
 	o.SetTimeout(timeout)
 	return o
 }
 
-// SetTimeout adds the timeout to the put guest boot source params
+// SetTimeout adds the timeout to the put guest boot source params.
 func (o *PutGuestBootSourceParams) SetTimeout(timeout time.Duration) {
-	o.timeout = timeout
+	o.inner.timeout = timeout
 }
 
-// WithContext adds the context to the put guest boot source params
+// WithContext adds the context to the put guest boot source params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestBootSourceParams].
 func (o *PutGuestBootSourceParams) WithContext(ctx context.Context) *PutGuestBootSourceParams {
 	o.SetContext(ctx)
 	return o
 }
 
-// SetContext adds the context to the put guest boot source params
+// SetContext adds the context to the put guest boot source params.
+//
+// Deprecated: use the operation call with context to pass the context instead of [PutGuestBootSourceParams].
 func (o *PutGuestBootSourceParams) SetContext(ctx context.Context) {
-	o.Context = ctx
+	o.inner.ctx = ctx
 }
 
-// WithHTTPClient adds the HTTPClient to the put guest boot source params
+// WithHTTPClient adds the HTTPClient to the put guest boot source params.
 func (o *PutGuestBootSourceParams) WithHTTPClient(client *http.Client) *PutGuestBootSourceParams {
 	o.SetHTTPClient(client)
 	return o
 }
 
-// SetHTTPClient adds the HTTPClient to the put guest boot source params
+// SetHTTPClient adds the HTTPClient to the put guest boot source params.
 func (o *PutGuestBootSourceParams) SetHTTPClient(client *http.Client) {
 	o.HTTPClient = client
 }
 
-// WithBody adds the body to the put guest boot source params
+// WithBody adds the body to the put guest boot source params.
 func (o *PutGuestBootSourceParams) WithBody(body *models.BootSource) *PutGuestBootSourceParams {
 	o.SetBody(body)
 	return o
 }
 
-// SetBody adds the body to the put guest boot source params
+// SetBody adds the body to the put guest boot source params.
 func (o *PutGuestBootSourceParams) SetBody(body *models.BootSource) {
 	o.Body = body
 }
 
-// WriteToRequest writes these params to a swagger request
+// WriteToRequest writes these params to a [runtime.ClientRequest].
 func (o *PutGuestBootSourceParams) WriteToRequest(r runtime.ClientRequest, reg strfmt.Registry) error {
-
-	if err := r.SetTimeout(o.timeout); err != nil {
+	if err := r.SetTimeout(o.inner.timeout); err != nil {
 		return err
 	}
 	var res []error

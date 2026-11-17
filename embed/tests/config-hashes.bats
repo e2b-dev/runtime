@@ -34,3 +34,15 @@ setup() {
     jq -r '.services["otel-collector"].environment.OTEL_CONFIG_SHA256')"
   [ "$got" = "$want" ]
 }
+
+# fetch-artifacts replaces the orchestrator binary on disk, and Compose does
+# not restart a service because a one-shot it depends on ran again. The
+# orchestrator service therefore carries the pinned version in its
+# environment, inert for the process like the hashes above, so the `up` of an
+# upgrade restarts the orchestrator on the new binary.
+@test "a new orchestrator pin changes the orchestrator service's hash" {
+  old="$(E2B_ORCHESTRATOR_VERSION=v0.0.1 docker compose --project-directory compose config --hash orchestrator)"
+  new="$(E2B_ORCHESTRATOR_VERSION=v0.0.2 docker compose --project-directory compose config --hash orchestrator)"
+  [ -n "$old" ]
+  [ "$old" != "$new" ]
+}

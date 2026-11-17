@@ -17,10 +17,19 @@ func NewMockFilesystem(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFilesystem {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFilesystem{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -73,7 +82,7 @@ type MockFilesystem_Chroot_Call struct {
 
 // Chroot is a helper method to define mock.On call
 //   - path string
-func (_e *MockFilesystem_Expecter) Chroot(path interface{}) *MockFilesystem_Chroot_Call {
+func (_e *MockFilesystem_Expecter) Chroot(path any) *MockFilesystem_Chroot_Call {
 	return &MockFilesystem_Chroot_Call{Call: _e.mock.On("Chroot", path)}
 }
 
@@ -135,7 +144,7 @@ type MockFilesystem_Create_Call struct {
 
 // Create is a helper method to define mock.On call
 //   - filename string
-func (_e *MockFilesystem_Expecter) Create(filename interface{}) *MockFilesystem_Create_Call {
+func (_e *MockFilesystem_Expecter) Create(filename any) *MockFilesystem_Create_Call {
 	return &MockFilesystem_Create_Call{Call: _e.mock.On("Create", filename)}
 }
 
@@ -192,9 +201,9 @@ type MockFilesystem_Join_Call struct {
 
 // Join is a helper method to define mock.On call
 //   - elem ...string
-func (_e *MockFilesystem_Expecter) Join(elem ...interface{}) *MockFilesystem_Join_Call {
+func (_e *MockFilesystem_Expecter) Join(elem ...any) *MockFilesystem_Join_Call {
 	return &MockFilesystem_Join_Call{Call: _e.mock.On("Join",
-		append([]interface{}{}, elem...)...)}
+		append([]any{}, elem...)...)}
 }
 
 func (_c *MockFilesystem_Join_Call) Run(run func(elem ...string)) *MockFilesystem_Join_Call {
@@ -257,7 +266,7 @@ type MockFilesystem_Lstat_Call struct {
 
 // Lstat is a helper method to define mock.On call
 //   - filename string
-func (_e *MockFilesystem_Expecter) Lstat(filename interface{}) *MockFilesystem_Lstat_Call {
+func (_e *MockFilesystem_Expecter) Lstat(filename any) *MockFilesystem_Lstat_Call {
 	return &MockFilesystem_Lstat_Call{Call: _e.mock.On("Lstat", filename)}
 }
 
@@ -274,8 +283,8 @@ func (_c *MockFilesystem_Lstat_Call) Run(run func(filename string)) *MockFilesys
 	return _c
 }
 
-func (_c *MockFilesystem_Lstat_Call) Return(v os.FileInfo, err error) *MockFilesystem_Lstat_Call {
-	_c.Call.Return(v, err)
+func (_c *MockFilesystem_Lstat_Call) Return(fileInfo os.FileInfo, err error) *MockFilesystem_Lstat_Call {
+	_c.Call.Return(fileInfo, err)
 	return _c
 }
 
@@ -309,7 +318,7 @@ type MockFilesystem_MkdirAll_Call struct {
 // MkdirAll is a helper method to define mock.On call
 //   - filename string
 //   - perm os.FileMode
-func (_e *MockFilesystem_Expecter) MkdirAll(filename interface{}, perm interface{}) *MockFilesystem_MkdirAll_Call {
+func (_e *MockFilesystem_Expecter) MkdirAll(filename any, perm any) *MockFilesystem_MkdirAll_Call {
 	return &MockFilesystem_MkdirAll_Call{Call: _e.mock.On("MkdirAll", filename, perm)}
 }
 
@@ -376,7 +385,7 @@ type MockFilesystem_Open_Call struct {
 
 // Open is a helper method to define mock.On call
 //   - filename string
-func (_e *MockFilesystem_Expecter) Open(filename interface{}) *MockFilesystem_Open_Call {
+func (_e *MockFilesystem_Expecter) Open(filename any) *MockFilesystem_Open_Call {
 	return &MockFilesystem_Open_Call{Call: _e.mock.On("Open", filename)}
 }
 
@@ -440,7 +449,7 @@ type MockFilesystem_OpenFile_Call struct {
 //   - filename string
 //   - flag int
 //   - perm os.FileMode
-func (_e *MockFilesystem_Expecter) OpenFile(filename interface{}, flag interface{}, perm interface{}) *MockFilesystem_OpenFile_Call {
+func (_e *MockFilesystem_Expecter) OpenFile(filename any, flag any, perm any) *MockFilesystem_OpenFile_Call {
 	return &MockFilesystem_OpenFile_Call{Call: _e.mock.On("OpenFile", filename, flag, perm)}
 }
 
@@ -512,7 +521,7 @@ type MockFilesystem_ReadDir_Call struct {
 
 // ReadDir is a helper method to define mock.On call
 //   - path string
-func (_e *MockFilesystem_Expecter) ReadDir(path interface{}) *MockFilesystem_ReadDir_Call {
+func (_e *MockFilesystem_Expecter) ReadDir(path any) *MockFilesystem_ReadDir_Call {
 	return &MockFilesystem_ReadDir_Call{Call: _e.mock.On("ReadDir", path)}
 }
 
@@ -529,8 +538,8 @@ func (_c *MockFilesystem_ReadDir_Call) Run(run func(path string)) *MockFilesyste
 	return _c
 }
 
-func (_c *MockFilesystem_ReadDir_Call) Return(vs []os.FileInfo, err error) *MockFilesystem_ReadDir_Call {
-	_c.Call.Return(vs, err)
+func (_c *MockFilesystem_ReadDir_Call) Return(fileInfos []os.FileInfo, err error) *MockFilesystem_ReadDir_Call {
+	_c.Call.Return(fileInfos, err)
 	return _c
 }
 
@@ -572,7 +581,7 @@ type MockFilesystem_Readlink_Call struct {
 
 // Readlink is a helper method to define mock.On call
 //   - link string
-func (_e *MockFilesystem_Expecter) Readlink(link interface{}) *MockFilesystem_Readlink_Call {
+func (_e *MockFilesystem_Expecter) Readlink(link any) *MockFilesystem_Readlink_Call {
 	return &MockFilesystem_Readlink_Call{Call: _e.mock.On("Readlink", link)}
 }
 
@@ -623,7 +632,7 @@ type MockFilesystem_Remove_Call struct {
 
 // Remove is a helper method to define mock.On call
 //   - filename string
-func (_e *MockFilesystem_Expecter) Remove(filename interface{}) *MockFilesystem_Remove_Call {
+func (_e *MockFilesystem_Expecter) Remove(filename any) *MockFilesystem_Remove_Call {
 	return &MockFilesystem_Remove_Call{Call: _e.mock.On("Remove", filename)}
 }
 
@@ -675,7 +684,7 @@ type MockFilesystem_Rename_Call struct {
 // Rename is a helper method to define mock.On call
 //   - oldpath string
 //   - newpath string
-func (_e *MockFilesystem_Expecter) Rename(oldpath interface{}, newpath interface{}) *MockFilesystem_Rename_Call {
+func (_e *MockFilesystem_Expecter) Rename(oldpath any, newpath any) *MockFilesystem_Rename_Call {
 	return &MockFilesystem_Rename_Call{Call: _e.mock.On("Rename", oldpath, newpath)}
 }
 
@@ -786,7 +795,7 @@ type MockFilesystem_Stat_Call struct {
 
 // Stat is a helper method to define mock.On call
 //   - filename string
-func (_e *MockFilesystem_Expecter) Stat(filename interface{}) *MockFilesystem_Stat_Call {
+func (_e *MockFilesystem_Expecter) Stat(filename any) *MockFilesystem_Stat_Call {
 	return &MockFilesystem_Stat_Call{Call: _e.mock.On("Stat", filename)}
 }
 
@@ -803,8 +812,8 @@ func (_c *MockFilesystem_Stat_Call) Run(run func(filename string)) *MockFilesyst
 	return _c
 }
 
-func (_c *MockFilesystem_Stat_Call) Return(v os.FileInfo, err error) *MockFilesystem_Stat_Call {
-	_c.Call.Return(v, err)
+func (_c *MockFilesystem_Stat_Call) Return(fileInfo os.FileInfo, err error) *MockFilesystem_Stat_Call {
+	_c.Call.Return(fileInfo, err)
 	return _c
 }
 
@@ -838,7 +847,7 @@ type MockFilesystem_Symlink_Call struct {
 // Symlink is a helper method to define mock.On call
 //   - target string
 //   - link string
-func (_e *MockFilesystem_Expecter) Symlink(target interface{}, link interface{}) *MockFilesystem_Symlink_Call {
+func (_e *MockFilesystem_Expecter) Symlink(target any, link any) *MockFilesystem_Symlink_Call {
 	return &MockFilesystem_Symlink_Call{Call: _e.mock.On("Symlink", target, link)}
 }
 
@@ -906,7 +915,7 @@ type MockFilesystem_TempFile_Call struct {
 // TempFile is a helper method to define mock.On call
 //   - dir string
 //   - prefix string
-func (_e *MockFilesystem_Expecter) TempFile(dir interface{}, prefix interface{}) *MockFilesystem_TempFile_Call {
+func (_e *MockFilesystem_Expecter) TempFile(dir any, prefix any) *MockFilesystem_TempFile_Call {
 	return &MockFilesystem_TempFile_Call{Call: _e.mock.On("TempFile", dir, prefix)}
 }
 

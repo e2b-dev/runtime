@@ -37,6 +37,7 @@ var blockedTeamAllowlist = auth.BlockedTeamAllowlist{
 		"/unstable/teams/:teamID/status":                {},
 		"/templates":                                    {},
 		"/templates/:templateID":                        {},
+		"/templates/:templateID/builds":                 {},
 		"/templates/:templateID/tags":                   {},
 		"/templates/:templateID/tags/count":             {},
 		"/templates/:templateID/tags/exists":            {},
@@ -51,6 +52,7 @@ var blockedTeamAllowlist = auth.BlockedTeamAllowlist{
 		"/templates/:templateID/builds/:buildID/status": {},
 		"/v2/sandboxes":                                 {},
 		"/v2/templates":                                 {},
+		"/v2/templates/:templateID":                     {},
 		"/v2/sandboxes/:sandboxID/logs":                 {},
 		"/volumes":                                      {},
 		"/volumes/:volumeID":                            {},
@@ -70,8 +72,12 @@ func EnforceBlockedTeam() gin.HandlerFunc {
 	return auth.EnforceBlockedTeam(blockedTeamAllowlist)
 }
 
-// CheckTeamAccessForRoute applies CheckTeamBanned + the api blocked-team
-// allowlist to a late-resolved team.
+// CheckTeamAccessForRoute applies CheckTeamBanned, the api blocked-team
+// allowlist and the read-only member check to a late-resolved team.
 func CheckTeamAccessForRoute(c *gin.Context, team *types.Team) error {
-	return auth.CheckTeamAccess(c, team, blockedTeamAllowlist)
+	if err := auth.CheckTeamAccess(c, team, blockedTeamAllowlist); err != nil {
+		return err
+	}
+
+	return auth.CheckReadOnlyMemberForRoute(c, team, readOnlyDeniedReads)
 }

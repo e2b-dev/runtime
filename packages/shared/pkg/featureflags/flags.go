@@ -509,6 +509,13 @@ var (
 	// read, with the same store commands as before.
 	SandboxListMaxLagMsFlag = NewIntFlag("sandbox-list-max-lag-ms", 0)
 
+	// NodeInfoRefreshIntervalSecondsFlag is how often, in seconds, each API
+	// replica asks the local cluster's nodes for their status and metrics
+	// between syncs, so a node that stopped accepting sandboxes is seen that
+	// much sooner. A sync that runs until the next one is due leaves no time
+	// for a refresh. The fallback, zero, leaves the sync as the only refresh.
+	NodeInfoRefreshIntervalSecondsFlag = NewIntFlag("node-info-refresh-interval-seconds", 0)
+
 	// UnpaginatedTemplateListCapFlag caps GET /templates at 5000 templates; a
 	// team above it gets a 400 pointing at GET /v2/templates. Evaluated per team.
 	UnpaginatedTemplateListCapFlag = NewBoolFlag("unpaginated-template-list-cap", true)
@@ -536,6 +543,12 @@ var (
 	// context; the fallback keeps interception at its existing transform span.
 	EgressProxyInterceptTracingFlag = NewBoolFlag("egress-proxy-intercept-tracing", false)
 
+	// EgressProxyBufferedCopyFlag makes the egress proxy copy each direction of
+	// a passthrough connection through a userspace buffer. Target the sandbox
+	// or team context. The fallback leaves the copy eligible for splice. Read
+	// once per connection.
+	EgressProxyBufferedCopyFlag = NewBoolFlag("egress-proxy-buffered-copy", false)
+
 	// SandboxIamTokensFlag gates the sandbox IAM workload token configuration
 	// (iam.tokens) per team during beta.
 	SandboxIamTokensFlag = NewBoolFlag("enable-sandbox-iam-tokens", env.IsDevelopment())
@@ -548,6 +561,15 @@ var (
 	// team's builds that omit maxCpuCount while ResizableTemplatesFlag is on;
 	// 0 applies no default.
 	ResizableTemplateDefaultMaxCpuFlag = NewIntFlag("resizable-template-default-max-cpu", 0)
+
+	// TemplateMemoryHotplugMaxRatioFlag caps a template build's memory hotplug region
+	// (maxMemoryMB - memoryMB) at this many times its boot RAM (memoryMB); 0 is no cap.
+	// The template-manager evaluates it per build with the template and team contexts.
+	// The default 3 matches the guest's auto-movable ratio (301%), within which every
+	// plugged block is onlined movable and so stays unpluggable. It applies only when a
+	// template is built: resumes, cold boots and reboots of templates built under a
+	// looser cap keep working if it is lowered later.
+	TemplateMemoryHotplugMaxRatioFlag = NewIntFlag("template-memory-hotplug-max-ratio", 3)
 
 	// CustomerSecretsFlag gates the customer-facing secret management routes
 	// per project during rollout. It falls back to off, so a deployment that
@@ -666,7 +688,10 @@ var (
 	// below one count as one.
 	RemoteClusterMinConnectionsFlag = NewIntFlag("remote-cluster-min-connections", 4)
 
-	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", 200)
+	// MaxSandboxesPerNode caps the sandboxes running or starting on one
+	// orchestrator node. The fallback reads MAX_SANDBOXES_PER_NODE so a
+	// deployment without LaunchDarkly can set it.
+	MaxSandboxesPerNode      = NewIntFlag("max-sandboxes-per-node", envIntOr("MAX_SANDBOXES_PER_NODE", 200))
 	APIIdempotencyRoutes     = NewJSONFlag("api-idempotency-routes", ldvalue.Null())
 	APIIdempotencyTTLSeconds = NewIntFlag("api-idempotency-ttl-seconds", 86400)
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
@@ -915,8 +940,9 @@ var (
 	BuildBootDiagnosticsFlag = NewBoolFlag("build-boot-diagnostics", false)
 
 	// MaxStartingInstancesPerNode limits concurrent sandbox start/resume operations on a single orchestrator node.
-	// Must be > 0.
-	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", 3)
+	// Must be > 0. The fallback reads MAX_STARTING_INSTANCES_PER_NODE so a
+	// deployment without LaunchDarkly can set it.
+	MaxStartingInstancesPerNode = NewIntFlag("max-starting-instances-per-node", envIntOr("MAX_STARTING_INSTANCES_PER_NODE", 3))
 
 	// MaxConcurrentEvictions caps the number of sandbox evictions that can run
 	// in parallel per API instance. Excess items remain expired in the store

@@ -74,16 +74,36 @@ func TestShutdownFlushesPendingMetrics(t *testing.T) {
 	require.NoError(t, err)
 	counter.Add(ctx, 1)
 
-	// Wired the same way New() builds a real client.
-	client := &Client{
-		MetricExporter: exporter,
-		MeterProvider:  meterProvider,
-		shutdownMeters: meterProvider.Shutdown,
-	}
+	client := meteredClient(exporter, meterProvider)
 
 	assert.Empty(t, exporter.names(), "nothing should be exported before shutdown")
 	require.NoError(t, client.Shutdown(ctx))
 	assert.Contains(t, exporter.names(), "test.batch.runs")
+}
+
+// A flush exports what the reader holds, so it has to drive the meter
+// provider as shutdown does, and it must leave the provider open for the
+// measurements that follow.
+func TestFlushMetricsExportsPendingMetricsAndKeepsRecording(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	exporter := &recordingExporter{}
+	meterProvider, err := NewMeterProvider(exporter, time.Hour, nil)
+	require.NoError(t, err)
+	client := meteredClient(exporter, meterProvider)
+	t.Cleanup(func() { assert.NoError(t, client.Shutdown(context.WithoutCancel(ctx))) })
+
+	counter, err := client.MeterProvider.Meter("github.com/e2b-dev/infra/packages/shared/pkg/telemetry").Int64Counter("test.flushed.runs")
+	require.NoError(t, err)
+	counter.Add(ctx, 1)
+
+	require.NoError(t, client.FlushMetrics(ctx))
+	assert.Equal(t, []string{"test.flushed.runs"}, exporter.names())
+
+	counter.Add(ctx, 1)
+	require.NoError(t, client.FlushMetrics(ctx), "the flush closed the provider")
+	assert.Equal(t, []string{"test.flushed.runs", "test.flushed.runs"}, exporter.names())
 }
 
 type stalledCollector struct {
@@ -134,11 +154,7 @@ func TestShutdownCancelsAnExportInFlight(t *testing.T) {
 		require.Fail(t, "no export reached the collector")
 	}
 
-	client := &Client{
-		MetricExporter: exporter,
-		MeterProvider:  meterProvider,
-		shutdownMeters: meterProvider.Shutdown,
-	}
+	client := meteredClient(exporter, meterProvider)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
@@ -148,12 +164,14 @@ func TestShutdownCancelsAnExportInFlight(t *testing.T) {
 }
 
 // The noop client is what New returns on local setups and whenever the collector
-// endpoint is unset, so its shutdown path runs in normal operation and must not
-// depend on a flush hook being wired up.
-func TestNoopClientShutdownIsSafe(t *testing.T) {
+// endpoint is unset, so its flush and shutdown paths run in normal operation and
+// must not depend on a flush hook being wired up.
+func TestNoopClientFlushAndShutdownAreSafe(t *testing.T) {
 	t.Parallel()
 
 	assert.NotPanics(t, func() {
-		assert.NoError(t, NewNoopClient().Shutdown(t.Context()))
+		client := NewNoopClient()
+		assert.NoError(t, client.FlushMetrics(t.Context()))
+		assert.NoError(t, client.Shutdown(t.Context()))
 	})
 }

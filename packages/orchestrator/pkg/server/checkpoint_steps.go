@@ -66,6 +66,7 @@ func (r serverResumeFreshSteps) resume(ctx context.Context, template sbxtemplate
 		// Defer routing until after the upgrade's post-/init (markSandboxLive).
 		sandbox.WithDeferredLiveRegistration(),
 		sandbox.WithExecutionStartedAt(sbx.GetExecutionStartedAt()),
+		sandbox.WithGuestMemoryReserved(releaseHugePages),
 	)
 }
 

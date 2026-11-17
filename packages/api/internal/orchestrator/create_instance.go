@@ -20,7 +20,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	redisreservations "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/builds"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
@@ -34,6 +33,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/joined"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
+	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	ut "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -68,8 +68,10 @@ type SandboxMetadata struct {
 	EnvdAccessToken         *string
 	// Iam records the sandbox workload identity configuration requested at create
 	// time. Nil means workload identity is disabled.
-	Iam    *types.SandboxIam
-	NodeID *string
+	Iam             *types.SandboxIam
+	PausedTTL       *time.Duration
+	PausedTTLStored bool
+	NodeID          *string
 	// SnapshotSandboxID is the sandbox ID the resume snapshot is stored under.
 	// It differs from the ID of the sandbox being started when forking.
 	SnapshotSandboxID string
@@ -598,7 +600,7 @@ func (o *Orchestrator) CreateSandbox(
 			o.featureUnsupportedCounter.Add(ctx, 1, metric.WithAttributes(
 				telemetry.WithTeamID(team.TeamID()),
 				attribute.String("feature", strings.Join(unsupportedErr.Features, ",")),
-			))
+			), withCluster(nodeClusterID))
 			logger.L().Warn(ctx, "No orchestrator in the cluster supports a feature the sandbox needs",
 				logger.WithTeamID(team.TeamID()),
 				logger.WithTemplateID(sbxData.TemplateID),
@@ -629,13 +631,13 @@ func (o *Orchestrator) CreateSandbox(
 		attribute.Bool("node_affinity_success", affinityRequested && node.ID == *sbxData.NodeID),
 		telemetry.WithTeamID(team.TeamID()),
 	}
-	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
+	o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...), withCluster(node.ClusterID))
 
 	if placed.MissingHugepageCeiling != "" {
 		o.noCeilingPlacementsCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("node.id", node.ID),
 			attribute.String("reason", placed.MissingHugepageCeiling),
-		))
+		), withCluster(node.ClusterID))
 	}
 
 	telemetry.SetAttributes(ctx, attribute.String("node.id", node.ID))
@@ -692,6 +694,8 @@ func (o *Orchestrator) CreateSandbox(
 	)
 	sbx.FirecrackerVersionResolved = resolvedFCVersion
 	sbx.NetworkPlacement = placed.Response.GetNetworkPlacement()
+	sbx.PausedTTL = sbxData.PausedTTL
+	sbx.PausedTTLStored = sbxData.PausedTTLStored
 
 	// An orchestrator that predates the filesystem_boot field ignores it and
 	// memory-restores; only the echo proves the demand was honored. Kill the
@@ -717,6 +721,34 @@ func (o *Orchestrator) CreateSandbox(
 			ErrorCode: ErrCodeFilesystemBootUnconfirmed,
 			ClientMsg: "This cluster cannot resume without memory yet (memory: false); the resume was rolled back and the snapshot is untouched — retry shortly",
 			Err:       fmt.Errorf("filesystem-boot demand for '%s' not confirmed by node %s", sandboxID, node.ID),
+		}
+	}
+
+	// Before the record exists, so no run end can stamp ahead of it. Without
+	// it a failed stamp would leave the previous pause's expiry, and the
+	// sandbox would be deleted right after this run.
+	if isResume {
+		if err := o.boundPausedExpiry(ctx, sbx); err != nil {
+			// Torn down synchronously: the 503 invites a retry, and an async
+			// kill would race it with the sandbox ID still live on the node.
+			killErr := o.removeSandboxFromNode(
+				context.WithoutCancel(ctx),
+				sbx,
+				sandbox.RemoveOpts{Action: sandbox.StateActionKill, Reason: sandbox.KillReasonUnknown},
+			)
+			if killErr != nil {
+				logger.L().Error(ctx, "Error removing resumed sandbox after its expiry bound failed",
+					zap.Error(killErr),
+					logger.WithSandboxID(sbx.SandboxID),
+				)
+			}
+
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusServiceUnavailable,
+				ClientMsg: "Failed to resume sandbox, retry shortly",
+				Err:       fmt.Errorf("failed to bound the paused expiry of '%s': %w", sandboxID, err),
+				Retryable: apierrors.CanRetry,
+			}
 		}
 	}
 
@@ -796,7 +828,7 @@ func (o *Orchestrator) maybeRemapResumeOriginNode(ctx context.Context, sandboxID
 
 	// Drop the cached snapshot so the next resume reads the new origin node.
 	o.snapshotCache.Invalidate(wctx, sandboxID)
-	o.resumeOriginNodeRemapCounter.Add(wctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.TeamID())))
+	o.resumeOriginNodeRemapCounter.Add(wctx, 1, metric.WithAttributes(telemetry.WithTeamID(team.TeamID())), withCluster(newNode.ClusterID))
 
 	oldNodeID := ""
 	if originNodeID != nil {

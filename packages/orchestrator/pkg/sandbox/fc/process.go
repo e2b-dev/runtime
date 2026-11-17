@@ -121,6 +121,12 @@ type ProcessOptions struct {
 	// BootCpus caps the CPUs the guest kernel brings up (maxcpus=); 0 is all. Create sets it.
 	BootCpus int64
 
+	// MemoryHotplugMB is the virtio-mem hotplug region, in MiB above boot RAM, a cold boot
+	// configures before the VM starts, with nothing plugged; 0 configures none. Firecracker
+	// accepts the device only before the first boot, and a memory resume restores it from
+	// the snapshot, so only a boot sets this.
+	MemoryHotplugMB int64
+
 	// ACPIPowerOff declares the ACPI power-off device, so a guest power-off
 	// ends the process instead of halting the vCPUs. A Firecracker without
 	// the device refuses it, and the boot goes on without.
@@ -443,6 +449,11 @@ func (p *Process) Create(
 	ctx, childSpan := tracer.Start(ctx, "create-fc")
 	defer childSpan.End()
 
+	// Before anything starts: no caller may give a VM a region without the capability and the policy.
+	if err := p.Versions.RefuseMemoryHotplug(options.MemoryHotplugMB); err != nil {
+		return err
+	}
+
 	// Symlink /dev/null to the rootfs link path, so we can start the FC process without the rootfs and then symlink the real rootfs.
 	err := utils.SymlinkForce("/dev/null", p.files.SandboxCacheRootfsLinkPath(p.config.StorageConfig))
 	if err != nil {
@@ -554,6 +565,10 @@ func (p *Process) configureGuestDevices(
 	// IPv4 configuration - format: [local_ip]::[gateway_ip]:[netmask]:hostname:iface:dhcp_option:[dns]
 	ipv4 := fmt.Sprintf("%s::%s:%s:instance:%s:off:%s", p.slot.NamespaceIP(), p.slot.TapIPString(), p.slot.TapMaskString(), p.slot.VpeerName(), p.slot.TapName())
 	kernelArgs := buildKernelArgs(ipv4, options).String()
+	if conflicting := MemoryHotplugCmdlineConflicts(options.CmdlineArgs); options.MemoryHotplugMB > 0 && len(conflicting) > 0 {
+		logger.L().Warn(ctx, "the memory hotplug online policy replaces stored guest kernel cmdline parameters",
+			zap.Strings("replaced", conflicting), zap.String("policy", MemoryHotplugOnlinePolicy))
+	}
 	if boot.NoKernelArgs {
 		kernelArgs = ""
 	}
@@ -628,6 +643,16 @@ func (p *Process) configureGuestDevices(
 		telemetry.ReportEvent(ctx, "set fc cpu config",
 			attribute.String("fc.cpu_template", options.CPUTemplate.Digest()),
 		)
+	}
+
+	if options.MemoryHotplugMB > 0 {
+		err = p.client.setMemoryHotplug(ctx, options.MemoryHotplugMB)
+		if err != nil {
+			fcStopErr := p.Stop(ctx)
+
+			return errors.Join(fmt.Errorf("error setting fc memory hotplug: %w", err), fcStopErr)
+		}
+		telemetry.ReportEvent(ctx, "set fc memory hotplug", attribute.Int64("memory.hotplug_mb", options.MemoryHotplugMB))
 	}
 
 	if !boot.NoEntropy {

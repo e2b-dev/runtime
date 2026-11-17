@@ -18,6 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
@@ -227,7 +228,7 @@ func (ppb *PostProcessingBuilder) Build(
 		sandboxCreator = layer.NewResumeSandbox(sbxConfig, ppb.sandboxFactory, finalizeTimeout)
 	}
 
-	actionExecutor := layer.NewFunctionAction(recordMachineVcpus(ppb.postProcessingFn(userLogger)))
+	actionExecutor := layer.NewFunctionAction(recordMachineSize(ppb.postProcessingFn(userLogger)))
 
 	templateProvider := layer.NewCacheSourceTemplateProvider(sourceLayer.Metadata.Template.BuildID)
 
@@ -245,7 +246,7 @@ func (ppb *PostProcessingBuilder) Build(
 		},
 	)
 	if err != nil {
-		return phases.LayerResult{}, fmt.Errorf("error running start and ready commands in sandbox: %w", err)
+		return phases.LayerResult{}, finalizeError(ppb.Metadata(), err)
 	}
 
 	return phases.LayerResult{
@@ -255,12 +256,15 @@ func (ppb *PostProcessingBuilder) Build(
 	}, nil
 }
 
-// sandboxConfig is the finalize VM config, sized from the template's vCPU settings.
+// sandboxConfig is the finalize VM config, sized from the template's vCPU and memory settings.
+// Finalize cold-boots a fresh memfile, so it is the first boot that carries the hotplug region:
+// base and step layers stay at boot RAM and keep sharing their cache with fixed-size builds.
 func (ppb *PostProcessingBuilder) sandboxConfig(defaultUser, defaultWorkdir *string) *sandbox.Config {
 	return sandbox.NewConfig(sandbox.Config{
 		Vcpu:              ppb.Config.VCpuCount,
 		ConfiguredVmVcpus: ppb.Config.MaxVCpuCount,
 		RamMB:             ppb.Config.MemoryMB,
+		MemoryHotplugMB:   ppb.Config.MemoryHotplugMB(),
 		HugePages:         ppb.Config.HugePages,
 		FreePageReporting: ppb.Config.FreePageReporting,
 		FreePageHinting:   ppb.Config.FreePageHinting,
@@ -275,16 +279,29 @@ func (ppb *PostProcessingBuilder) sandboxConfig(defaultUser, defaultWorkdir *str
 	})
 }
 
-// recordMachineVcpus records the size of the VM that booted, as the source layer
-// may be a cached one of another size; optimize re-uploads this metadata.
-func recordMachineVcpus(fn layer.FunctionActionFn) layer.FunctionActionFn {
+// finalizeError wraps a failed finalize boot. A hotplug region whose size or guest cannot carry
+// it is the request's to change, so it is the user's error. A builder whose Firecracker or guest
+// kernel is too old is the fleet's to fix, so that stays an internal error.
+func finalizeError(meta phases.PhaseMeta, err error) error {
+	userCause := errors.Is(err, fc.ErrMemoryHotplugUnsupported) &&
+		!errors.Is(err, fc.ErrMemoryHotplugFirecracker) && !errors.Is(err, fc.ErrMemoryHotplugKernel)
+	if userCause && phases.UnwrapPhaseBuildError(err) == nil {
+		return phases.NewPhaseBuildError(meta, err)
+	}
+
+	return fmt.Errorf("error running start and ready commands in sandbox: %w", err)
+}
+
+// recordMachineSize records the size of the VM that booted, its vCPUs and its hotplug region,
+// as the source layer may be a cached one of another size; optimize re-uploads this metadata.
+func recordMachineSize(fn layer.FunctionActionFn) layer.FunctionActionFn {
 	return func(ctx context.Context, sbx *sandbox.Sandbox, meta metadata.Template) (metadata.Template, error) {
 		meta, err := fn(ctx, sbx, meta)
 		if err != nil {
 			return meta, err
 		}
 
-		return meta.WithVcpuCount(sbx.MachineVcpus()), nil
+		return meta.WithVcpuCount(sbx.MachineVcpus()).WithMemoryHotplugMB(sbx.MemoryHotplugMB()), nil
 	}
 }
 

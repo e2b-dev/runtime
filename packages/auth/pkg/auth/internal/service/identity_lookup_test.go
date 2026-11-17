@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/token/oidc"
 )
@@ -47,17 +48,11 @@ func TestCachingIdentityLookup_CachesSuccess(t *testing.T) {
 
 	for range 5 {
 		got, err := lookup.GetUserIdentity(t.Context(), "iss", "sub")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != userID {
-			t.Fatalf("expected %v, got %v", userID, got)
-		}
+		require.NoError(t, err)
+		require.Equal(t, userID, got)
 	}
 
-	if got := base.calls.Load(); got != 1 {
-		t.Fatalf("expected 1 underlying call, got %d", got)
-	}
+	require.Equal(t, int32(1), base.calls.Load(), "underlying calls")
 }
 
 func TestCachingIdentityLookup_DoesNotCacheNotFound(t *testing.T) {
@@ -71,14 +66,10 @@ func TestCachingIdentityLookup_DoesNotCacheNotFound(t *testing.T) {
 
 	for range 3 {
 		_, err := lookup.GetUserIdentity(t.Context(), "iss", "sub")
-		if !errors.Is(err, oidc.ErrIdentityNotFound) {
-			t.Fatalf("expected ErrIdentityNotFound, got %v", err)
-		}
+		require.ErrorIs(t, err, oidc.ErrIdentityNotFound)
 	}
 
-	if got := base.calls.Load(); got != 3 {
-		t.Fatalf("expected 3 underlying calls (no negative caching), got %d", got)
-	}
+	require.Equal(t, int32(3), base.calls.Load(), "underlying calls (no negative caching)")
 }
 
 func TestCachingIdentityLookup_DoesNotCacheError(t *testing.T) {
@@ -95,14 +86,10 @@ func TestCachingIdentityLookup_DoesNotCacheError(t *testing.T) {
 
 	for range 3 {
 		_, err := lookup.GetUserIdentity(t.Context(), "iss", "sub")
-		if !errors.Is(err, sentinel) {
-			t.Fatalf("expected sentinel error, got %v", err)
-		}
+		require.ErrorIs(t, err, sentinel)
 	}
 
-	if got := base.calls.Load(); got != 3 {
-		t.Fatalf("expected 3 underlying calls (no error caching), got %d", got)
-	}
+	require.Equal(t, int32(3), base.calls.Load(), "underlying calls (no error caching)")
 }
 
 func TestCachingIdentityLookup_SeparateKeysPerIssuerAndSubject(t *testing.T) {
@@ -119,16 +106,12 @@ func TestCachingIdentityLookup_SeparateKeysPerIssuerAndSubject(t *testing.T) {
 	lookup := newCachingIdentityLookup(base)
 
 	got, err := lookup.GetUserIdentity(t.Context(), "iss-a", "sub")
-	if err != nil || got != a {
-		t.Fatalf("iss-a: got %v, %v; want %v", got, err, a)
-	}
+	require.NoError(t, err, "iss-a")
+	require.Equal(t, a, got, "iss-a")
 
 	got, err = lookup.GetUserIdentity(t.Context(), "iss-b", "sub")
-	if err != nil || got != b {
-		t.Fatalf("iss-b: got %v, %v; want %v", got, err, b)
-	}
+	require.NoError(t, err, "iss-b")
+	require.Equal(t, b, got, "iss-b")
 
-	if got := base.calls.Load(); got != 2 {
-		t.Fatalf("expected 2 underlying calls, got %d", got)
-	}
+	require.Equal(t, int32(2), base.calls.Load(), "underlying calls")
 }

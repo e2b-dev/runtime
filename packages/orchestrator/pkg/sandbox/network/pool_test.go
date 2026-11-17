@@ -87,7 +87,7 @@ func TestReturn_NoPanicDuringClose(t *testing.T) {
 			wg.Go(func() {
 				defer func() {
 					if r := recover(); r != nil {
-						t.Errorf("Return panicked (run=%d worker=%d): %v", run, w, r)
+						assert.Failf(t, "Return panicked", "run=%d worker=%d: %v", run, w, r)
 					}
 				}()
 
@@ -148,7 +148,7 @@ func TestReturnAsync_DoesNotBlockOnReturnDelay(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(time.Second):
-		t.Fatal("ReturnAsync blocked on the return delay")
+		require.Fail(t, "ReturnAsync blocked on the return delay")
 	}
 
 	// Close short-circuits the hour-long delay into the cleanup path and
@@ -353,12 +353,12 @@ func TestPool_CloseCanceledBeforePublicationLeavesPoolOpen(t *testing.T) {
 		case err := <-closeDone:
 			require.ErrorIs(t, err, context.Canceled)
 		default:
-			t.Fatal("Close did not return the cancellation before publishing closed")
+			require.Fail(t, "Close did not return the cancellation before publishing closed")
 		}
 
 		select {
 		case <-pool.done:
-			t.Fatal("canceled Close published closed")
+			require.Fail(t, "canceled Close published closed")
 		default:
 		}
 
@@ -438,7 +438,7 @@ func TestPool_CloseWinsFinalClaimAndJoinsCleanup(t *testing.T) { //nolint:parall
 		select {
 		case <-cleanupStarted:
 		default:
-			t.Error("post-close claim did not start slot cleanup")
+			assert.Fail(t, "post-close claim did not start slot cleanup")
 		}
 		assert.Empty(t, getDone, "Get returned before rejected-slot cleanup finished")
 		assert.Empty(t, closeDone, "Close returned before admission-owned cleanup finished")

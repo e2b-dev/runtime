@@ -663,7 +663,7 @@ func TestFetchPausedPage_PagesEveryRowOnce(t *testing.T) {
 						params.CursorID = last.SandboxID
 					}
 
-					t.Fatal("pagination did not end")
+					require.Fail(t, "pagination did not end")
 				})
 			}
 		}
@@ -868,7 +868,7 @@ func pagePausedSandboxes(
 		token = &next
 	}
 
-	t.Fatal("pagination did not end")
+	require.Fail(t, "pagination did not end")
 
 	return nil, nil
 }

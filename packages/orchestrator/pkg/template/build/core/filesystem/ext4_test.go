@@ -58,7 +58,7 @@ func filesystemFeatures(t *testing.T, rootfsPath string) []string {
 		}
 	}
 
-	t.Fatalf("no %q line in dumpe2fs output:\n%s", prefix, output)
+	require.Failf(t, "no features line", "no %q line in dumpe2fs output:\n%s", prefix, output)
 
 	return nil
 }

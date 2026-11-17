@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/go-openapi/strfmt"
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 )
 
 // SerialDevice The configuration of the serial device
@@ -19,12 +19,12 @@ type SerialDevice struct {
 }
 
 // Validate validates this serial device
-func (m *SerialDevice) Validate(formats strfmt.Registry) error {
+func (m *SerialDevice) Validate(_ strfmt.Registry) error {
 	return nil
 }
 
 // ContextValidate validates this serial device based on context it is used
-func (m *SerialDevice) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+func (m *SerialDevice) ContextValidate(_ context.Context, _ strfmt.Registry) error {
 	return nil
 }
 
@@ -33,13 +33,13 @@ func (m *SerialDevice) MarshalBinary() ([]byte, error) {
 	if m == nil {
 		return nil, nil
 	}
-	return swag.WriteJSON(m)
+	return jsonutils.WriteJSON(m)
 }
 
 // UnmarshalBinary interface implementation
 func (m *SerialDevice) UnmarshalBinary(b []byte) error {
 	var res SerialDevice
-	if err := swag.ReadJSON(b, &res); err != nil {
+	if err := jsonutils.ReadJSON(b, &res); err != nil {
 		return err
 	}
 	*m = res

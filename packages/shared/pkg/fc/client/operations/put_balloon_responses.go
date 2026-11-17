@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/strfmt"
-
-	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 )
 
 // PutBalloonReader is a Reader for the PutBalloon structure.
@@ -51,11 +50,9 @@ func NewPutBalloonNoContent() *PutBalloonNoContent {
 	return &PutBalloonNoContent{}
 }
 
-/*
-PutBalloonNoContent describes a response with status code 204, with default header values.
-
-Balloon device created/updated
-*/
+// PutBalloonNoContent describes a response with status code 204, with default header values.
+//
+// Balloon device created/updated
 type PutBalloonNoContent struct {
 }
 
@@ -107,11 +104,9 @@ func NewPutBalloonBadRequest() *PutBalloonBadRequest {
 	return &PutBalloonBadRequest{}
 }
 
-/*
-PutBalloonBadRequest describes a response with status code 400, with default header values.
-
-Balloon device cannot be created/updated due to bad input
-*/
+// PutBalloonBadRequest describes a response with status code 400, with default header values.
+//
+// Balloon device cannot be created/updated due to bad input
 type PutBalloonBadRequest struct {
 	Payload *models.Error
 }
@@ -179,11 +174,9 @@ func NewPutBalloonDefault(code int) *PutBalloonDefault {
 	}
 }
 
-/*
-PutBalloonDefault describes a response with status code -1, with default header values.
-
-Internal server error
-*/
+// PutBalloonDefault describes a response with status code -1, with default header values.
+//
+// Internal server error
 type PutBalloonDefault struct {
 	_statusCode int
 

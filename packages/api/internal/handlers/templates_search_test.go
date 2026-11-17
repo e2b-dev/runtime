@@ -34,7 +34,7 @@ func TestSearchTemplates_ListsPublicDefaultsFlaggedWithoutUsage(t *testing.T) {
 	setTemplateTimes(t, ctx, testDB, own, now.Add(-3*time.Hour), now.Add(-3*time.Hour))
 	setTemplateUsage(t, ctx, testDB, own, 5, now.Add(-time.Minute), 2)
 	ownBuildAt := now.Add(-30 * time.Minute)
-	ownBuildID := insertTestBuild(t, ctx, testDB, own, "ready", 2, ownBuildAt)
+	ownBuildID := insertTestBuild(t, ctx, testDB, own, dbtypes.BuildStatusGroupReady, 2, ownBuildAt)
 	insertTemplateTagAssignment(t, ctx, testDB, own, ownBuildID, "default", ownBuildAt)
 
 	ownDefault := testutils.CreateTestTemplate(t, testDB, teamID)

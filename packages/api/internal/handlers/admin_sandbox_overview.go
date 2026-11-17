@@ -123,7 +123,7 @@ func adminSandboxLatestBuild(row queries.ListAdminSandboxOverviewBuildsRow) *api
 		BuildId:       row.BuildID,
 		TemplateId:    row.EnvID,
 		Tag:           row.Tag,
-		Status:        string(row.Status),
+		Status:        string(row.StatusGroup),
 		ClusterNodeId: row.ClusterNodeID,
 		AssignedAt:    row.AssignedAt,
 		IsCurrent:     true,

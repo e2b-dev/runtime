@@ -17,7 +17,7 @@ const getBuildInfoByTeamAndBuildID = `-- name: GetBuildInfoByTeamAndBuildID :one
 SELECT
   b.created_at,
   b.finished_at,
-  b.status,
+  b.status_group,
   b.reason,
   COALESCE(ea.names, ARRAY[]::text[])::text[] AS names
 FROM public.env_builds b
@@ -51,11 +51,11 @@ type GetBuildInfoByTeamAndBuildIDParams struct {
 }
 
 type GetBuildInfoByTeamAndBuildIDRow struct {
-	CreatedAt  time.Time
-	FinishedAt *time.Time
-	Status     types.BuildStatus
-	Reason     types.BuildReason
-	Names      []string
+	CreatedAt   time.Time
+	FinishedAt  *time.Time
+	StatusGroup types.BuildStatusGroup
+	Reason      types.BuildReason
+	Names       []string
 }
 
 func (q *Queries) GetBuildInfoByTeamAndBuildID(ctx context.Context, arg GetBuildInfoByTeamAndBuildIDParams) (GetBuildInfoByTeamAndBuildIDRow, error) {
@@ -64,7 +64,7 @@ func (q *Queries) GetBuildInfoByTeamAndBuildID(ctx context.Context, arg GetBuild
 	err := row.Scan(
 		&i.CreatedAt,
 		&i.FinishedAt,
-		&i.Status,
+		&i.StatusGroup,
 		&i.Reason,
 		&i.Names,
 	)

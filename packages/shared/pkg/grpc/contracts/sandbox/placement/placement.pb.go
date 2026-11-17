@@ -274,14 +274,17 @@ func (b0 Node_builder) Build() *Node {
 // GetSandboxPlacementResponse is the execution's placement and the source and target
 // the API admits a move between.
 type GetSandboxPlacementResponse struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ExecutionId string                 `protobuf:"bytes,1,opt,name=execution_id,json=executionId"`
-	xxx_hidden_NetworkMode string                 `protobuf:"bytes,2,opt,name=network_mode,json=networkMode"`
-	xxx_hidden_RouterId    string                 `protobuf:"bytes,3,opt,name=router_id,json=routerId"`
-	xxx_hidden_Source      *Node                  `protobuf:"bytes,4,opt,name=source"`
-	xxx_hidden_Target      *Node                  `protobuf:"bytes,5,opt,name=target"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ExecutionId     string                 `protobuf:"bytes,1,opt,name=execution_id,json=executionId"`
+	xxx_hidden_NetworkMode     string                 `protobuf:"bytes,2,opt,name=network_mode,json=networkMode"`
+	xxx_hidden_RouterId        string                 `protobuf:"bytes,3,opt,name=router_id,json=routerId"`
+	xxx_hidden_Source          *Node                  `protobuf:"bytes,4,opt,name=source"`
+	xxx_hidden_Target          *Node                  `protobuf:"bytes,5,opt,name=target"`
+	xxx_hidden_VolumesAttached bool                   `protobuf:"varint,6,opt,name=volumes_attached,json=volumesAttached"`
+	XXX_raceDetectHookData     protoimpl.RaceDetectHookData
+	XXX_presence               [1]uint32
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *GetSandboxPlacementResponse) Reset() {
@@ -344,6 +347,13 @@ func (x *GetSandboxPlacementResponse) GetTarget() *Node {
 	return nil
 }
 
+func (x *GetSandboxPlacementResponse) GetVolumesAttached() bool {
+	if x != nil {
+		return x.xxx_hidden_VolumesAttached
+	}
+	return false
+}
+
 func (x *GetSandboxPlacementResponse) SetExecutionId(v string) {
 	x.xxx_hidden_ExecutionId = v
 }
@@ -364,6 +374,11 @@ func (x *GetSandboxPlacementResponse) SetTarget(v *Node) {
 	x.xxx_hidden_Target = v
 }
 
+func (x *GetSandboxPlacementResponse) SetVolumesAttached(v bool) {
+	x.xxx_hidden_VolumesAttached = v
+	protoimpl.X.SetPresent(&(x.XXX_presence[0]), 5, 6)
+}
+
 func (x *GetSandboxPlacementResponse) HasSource() bool {
 	if x == nil {
 		return false
@@ -378,12 +393,24 @@ func (x *GetSandboxPlacementResponse) HasTarget() bool {
 	return x.xxx_hidden_Target != nil
 }
 
+func (x *GetSandboxPlacementResponse) HasVolumesAttached() bool {
+	if x == nil {
+		return false
+	}
+	return protoimpl.X.Present(&(x.XXX_presence[0]), 5)
+}
+
 func (x *GetSandboxPlacementResponse) ClearSource() {
 	x.xxx_hidden_Source = nil
 }
 
 func (x *GetSandboxPlacementResponse) ClearTarget() {
 	x.xxx_hidden_Target = nil
+}
+
+func (x *GetSandboxPlacementResponse) ClearVolumesAttached() {
+	protoimpl.X.ClearPresent(&(x.XXX_presence[0]), 5)
+	x.xxx_hidden_VolumesAttached = false
 }
 
 type GetSandboxPlacementResponse_builder struct {
@@ -394,6 +421,10 @@ type GetSandboxPlacementResponse_builder struct {
 	RouterId    string
 	Source      *Node
 	Target      *Node
+	// Whether the sandbox runs with managed volumes attached. The caller
+	// decides whether that prevents a move. Unset only from an API that
+	// predates the field, which the caller must treat as unknown.
+	VolumesAttached *bool
 }
 
 func (b0 GetSandboxPlacementResponse_builder) Build() *GetSandboxPlacementResponse {
@@ -405,6 +436,10 @@ func (b0 GetSandboxPlacementResponse_builder) Build() *GetSandboxPlacementRespon
 	x.xxx_hidden_RouterId = b.RouterId
 	x.xxx_hidden_Source = b.Source
 	x.xxx_hidden_Target = b.Target
+	if b.VolumesAttached != nil {
+		protoimpl.X.SetPresentNonAtomic(&(x.XXX_presence[0]), 5, 6)
+		x.xxx_hidden_VolumesAttached = *b.VolumesAttached
+	}
 	return m0
 }
 
@@ -817,13 +852,14 @@ const file_e2b_sandbox_placement_v1_placement_proto_rawDesc = "" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12.\n" +
 	"\x13service_instance_id\x18\x02 \x01(\tR\x11serviceInstanceId\x12\x1d\n" +
 	"\n" +
-	"ip_address\x18\x03 \x01(\tR\tipAddress\"\xf0\x01\n" +
+	"ip_address\x18\x03 \x01(\tR\tipAddress\"\xa2\x02\n" +
 	"\x1bGetSandboxPlacementResponse\x12!\n" +
 	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12!\n" +
 	"\fnetwork_mode\x18\x02 \x01(\tR\vnetworkMode\x12\x1b\n" +
 	"\trouter_id\x18\x03 \x01(\tR\brouterId\x126\n" +
 	"\x06source\x18\x04 \x01(\v2\x1e.e2b.sandbox.placement.v1.NodeR\x06source\x126\n" +
-	"\x06target\x18\x05 \x01(\v2\x1e.e2b.sandbox.placement.v1.NodeR\x06target\"\xfe\x01\n" +
+	"\x06target\x18\x05 \x01(\v2\x1e.e2b.sandbox.placement.v1.NodeR\x06target\x120\n" +
+	"\x10volumes_attached\x18\x06 \x01(\bB\x05\xaa\x01\x02\b\x01R\x0fvolumesAttached\"\xfe\x01\n" +
 	"\rExecutionHold\x12!\n" +
 	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x120\n" +
 	"\n" +

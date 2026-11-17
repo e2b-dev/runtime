@@ -148,17 +148,13 @@ func TestAccessAuthorizedPathWithResumedSandboxWithValidAccessToken(t *testing.T
 
 	// stop sandbox
 	_, err := c.PostSandboxesSandboxIDPauseWithResponse(ctx, sbxMeta.SandboxID, api.PostSandboxesSandboxIDPauseJSONRequestBody{}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	sbxIdWithClient := sbxMeta.SandboxID + "-" + sbxMeta.ClientID
 
 	// resume sandbox
 	sbxResume, err := c.PostSandboxesSandboxIDResumeWithResponse(ctx, sbxIdWithClient, api.PostSandboxesSandboxIDResumeJSONRequestBody{}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	require.Equal(t, http.StatusCreated, sbxResume.StatusCode())
 
@@ -168,9 +164,7 @@ func TestAccessAuthorizedPathWithResumedSandboxWithValidAccessToken(t *testing.T
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
 		setup.WithSandbox(t, sbx.JSON201),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	assert.Equal(t, http.StatusOK, fileResponse.StatusCode())
 	assert.Equal(t, fileContent, string(fileResponse.Body))
@@ -203,17 +197,13 @@ func TestAccessAuthorizedPathWithResumedSandboxWithoutAccessToken(t *testing.T) 
 
 	// stop sandbox
 	_, err := c.PostSandboxesSandboxIDPauseWithResponse(ctx, sbxMeta.SandboxID, api.PostSandboxesSandboxIDPauseJSONRequestBody{}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	sbxIdWithClient := sbxMeta.SandboxID + "-" + sbxMeta.ClientID
 
 	// resume sandbox
 	sbxResume, err := c.PostSandboxesSandboxIDResumeWithResponse(ctx, sbxIdWithClient, api.PostSandboxesSandboxIDResumeJSONRequestBody{}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	assert.Equal(t, http.StatusCreated, sbxResume.StatusCode())
 
@@ -222,9 +212,7 @@ func TestAccessAuthorizedPathWithResumedSandboxWithoutAccessToken(t *testing.T) 
 		&envd.GetFilesParams{Path: &filePath, Username: new("user")},
 		setup.WithInsecureSandbox(t, sbx.JSON201.SandboxID),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	assert.Equal(t, http.StatusUnauthorized, fileResponse.StatusCode())
 }

@@ -17,7 +17,7 @@ JOIN LATERAL (
     FROM public.env_build_assignments a
     JOIN public.env_builds eb ON eb.id = a.build_id
     WHERE a.env_id = e.id
-      AND eb.status = 'uploaded'
+      AND eb.status_group = 'ready'
     ORDER BY a.created_at DESC, a.id DESC
     LIMIT 1
 ) latest_assignment ON TRUE

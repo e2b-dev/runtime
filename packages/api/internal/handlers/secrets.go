@@ -25,7 +25,6 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
@@ -34,6 +33,18 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/secretsstore"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+)
+
+// The messages a secrets handler answers with. A caller learns the class of
+// the failure and nothing else.
+const (
+	secretsInvalidRequestMessage = "Invalid secrets request"
+	secretsUnauthorizedMessage   = "You are not authenticated"
+	secretsUnavailableMessage    = "Secrets are not available for this team"
+	secretsNotFoundMessage       = "Secret not found"
+	secretsConflictMessage       = "Secret cannot be modified in its current state"
+	secretsBackendMessage        = "Secrets backend error"
+	secretsBackendTimeoutMessage = "Secrets backend timed out"
 )
 
 const (
@@ -111,6 +122,8 @@ func newReadinessBalancedClient(address string, creds credentials.TransportCrede
 
 // PostSecrets creates a secret with its first version.
 func (a *APIStore) PostSecrets(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+
 	client, projectID, team, ok := a.secretsBackend(c)
 	if !ok {
 		return
@@ -160,6 +173,8 @@ func (a *APIStore) PostSecrets(c *gin.Context) {
 
 // GetSecrets lists the project's secrets.
 func (a *APIStore) GetSecrets(c *gin.Context, params api.GetSecretsParams) {
+	c.Header("Cache-Control", "no-store")
+
 	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
@@ -211,6 +226,8 @@ func (a *APIStore) GetSecrets(c *gin.Context, params api.GetSecretsParams) {
 
 // GetSecretsSecretID returns one secret's metadata.
 func (a *APIStore) GetSecretsSecretID(c *gin.Context, secretID api.SecretID) {
+	c.Header("Cache-Control", "no-store")
+
 	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
@@ -248,6 +265,8 @@ func (a *APIStore) GetSecretsSecretID(c *gin.Context, secretID api.SecretID) {
 
 // PostSecretsSecretID replaces a secret's value by appending a version.
 func (a *APIStore) PostSecretsSecretID(c *gin.Context, secretID api.SecretID) {
+	c.Header("Cache-Control", "no-store")
+
 	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
@@ -303,6 +322,8 @@ func (a *APIStore) PostSecretsSecretID(c *gin.Context, secretID api.SecretID) {
 
 // DeleteSecretsSecretID revokes a secret.
 func (a *APIStore) DeleteSecretsSecretID(c *gin.Context, secretID api.SecretID) {
+	c.Header("Cache-Control", "no-store")
+
 	client, projectID, _, ok := a.secretsBackend(c)
 	if !ok {
 		return
@@ -340,7 +361,7 @@ func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagement
 
 	team, ok := auth.GetTeamInfo(c)
 	if !ok || team == nil {
-		a.sendAPIStoreError(c, http.StatusUnauthorized, middleware.SecretsUnauthorizedMessage)
+		a.sendAPIStoreError(c, http.StatusUnauthorized, secretsUnauthorizedMessage)
 
 		return nil, "", nil, false
 	}
@@ -348,7 +369,7 @@ func (a *APIStore) secretsBackend(c *gin.Context) (managementv1.SecretManagement
 	telemetry.SetAttributes(ctx, telemetry.WithTeamID(team.ID.String()))
 
 	if a.secretsManagement == nil || !a.featureFlags.BoolFlag(ctx, featureflags.CustomerSecretsFlag) {
-		a.sendAPIStoreError(c, http.StatusForbidden, middleware.SecretsUnavailableMessage)
+		a.sendAPIStoreError(c, http.StatusForbidden, secretsUnavailableMessage)
 
 		return nil, "", nil, false
 	}
@@ -370,7 +391,7 @@ func projectSecretsLimit(team *types.Team) int32 {
 // rejectSecretsRequest answers a request the API itself refused. reason is a
 // fixed string chosen by the caller, never derived from the request.
 func (a *APIStore) rejectSecretsRequest(c *gin.Context, reason string) {
-	a.sendAPIStoreError(c, http.StatusBadRequest, middleware.SecretsInvalidRequestMessage)
+	a.sendAPIStoreError(c, http.StatusBadRequest, secretsInvalidRequestMessage)
 	telemetry.ReportError(c.Request.Context(), reason, errSecretsRequestInvalid)
 }
 
@@ -389,7 +410,7 @@ func (a *APIStore) sendSecretsBackendError(c *gin.Context, err error) {
 // sendSecretsBackendResponseError answers a response the API cannot trust. A
 // partially converted secret is never returned.
 func (a *APIStore) sendSecretsBackendResponseError(c *gin.Context) {
-	a.sendAPIStoreError(c, http.StatusBadGateway, middleware.SecretsBackendMessage)
+	a.sendAPIStoreError(c, http.StatusBadGateway, secretsBackendMessage)
 	telemetry.ReportCriticalError(c.Request.Context(), "secrets backend response was unusable", errSecretsBackendResponse)
 }
 
@@ -397,25 +418,25 @@ func (a *APIStore) sendSecretsBackendResponseError(c *gin.Context) {
 func secretsBackendStatus(err error) *apierrors.APIError {
 	st, ok := status.FromError(err)
 	if !ok {
-		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}
 	}
 
 	switch st.Code() {
 	case codes.InvalidArgument:
-		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: middleware.SecretsInvalidRequestMessage}
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage}
 	case codes.NotFound:
-		return &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: middleware.SecretsNotFoundMessage}
+		return &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: secretsNotFoundMessage}
 	case codes.AlreadyExists, codes.Aborted, codes.FailedPrecondition:
-		return &apierrors.APIError{Code: http.StatusConflict, ClientMsg: middleware.SecretsConflictMessage}
+		return &apierrors.APIError{Code: http.StatusConflict, ClientMsg: secretsConflictMessage}
 	case codes.ResourceExhausted:
 		return secretsExhaustedStatus(st)
 	case codes.DeadlineExceeded:
-		return &apierrors.APIError{Code: http.StatusGatewayTimeout, ClientMsg: middleware.SecretsBackendTimeoutMessage}
+		return &apierrors.APIError{Code: http.StatusGatewayTimeout, ClientMsg: secretsBackendTimeoutMessage}
 	default:
 		// Unavailable, Unimplemented, Internal, Unknown and everything else
 		// the backend may grow are one outcome to a client: the backend did
 		// not answer usefully.
-		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}
 	}
 }
 
@@ -428,12 +449,12 @@ func secretsBackendStatus(err error) *apierrors.APIError {
 func secretsExhaustedStatus(st *status.Status) *apierrors.APIError {
 	details := st.Details()
 	if len(details) != 1 {
-		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}
 	}
 
 	detail, ok := details[0].(*managementv1.ManagementErrorDetail)
 	if !ok {
-		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}
 	}
 
 	switch detail.GetReason() {
@@ -449,10 +470,10 @@ func secretsExhaustedStatus(st *status.Status) *apierrors.APIError {
 
 		return publicError
 	case managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_VALUE_TOO_LARGE:
-		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: middleware.SecretsInvalidRequestMessage}
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage}
 	default:
 		// Unspecified today, and whatever the contract grows tomorrow.
-		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: middleware.SecretsBackendMessage}
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}
 	}
 }
 

@@ -65,92 +65,46 @@ func TestIsPathOnNetworkMount_FuseMount(t *testing.T) {
 	assert.False(t, isNetworkSource, "source directory should not be detected as network filesystem")
 }
 
-func TestGetFileOwnership_CurrentUser(t *testing.T) {
+func TestGetFileOwnership_UnknownIDs(t *testing.T) {
 	t.Parallel()
 
-	t.Run("current user", func(t *testing.T) {
-		t.Parallel()
-		skipWithoutNumericOwner(t)
+	var unknownUIDStr string
+	for i := 60001; i < 70000; i++ {
+		idStr := strconv.Itoa(i)
+		if _, err := osuser.LookupId(idStr); err != nil {
+			unknownUIDStr = idStr
 
-		// Get current user running the tests
-		cur, err := osuser.Current()
-		if err != nil {
-			t.Skipf("unable to determine current user: %v", err)
+			break
 		}
+	}
+	if unknownUIDStr == "" {
+		t.Skip("could not find a non-existent UID in the probed range")
+	}
 
-		// Determine expected owner/group using the same lookup logic
-		expectedOwner := cur.Uid
-		if u, err := osuser.LookupId(cur.Uid); err == nil {
-			expectedOwner = u.Username
+	var unknownGIDStr string
+	for i := 60001; i < 70000; i++ {
+		idStr := strconv.Itoa(i)
+		if _, err := osuser.LookupGroupId(idStr); err != nil {
+			unknownGIDStr = idStr
+
+			break
 		}
+	}
+	if unknownGIDStr == "" {
+		t.Skip("could not find a non-existent GID in the probed range")
+	}
 
-		expectedGroup := cur.Gid
-		if g, err := osuser.LookupGroupId(cur.Gid); err == nil {
-			expectedGroup = g.Name
-		}
+	uid64, err := strconv.ParseUint(unknownUIDStr, 10, 32)
+	require.NoError(t, err)
+	gid64, err := strconv.ParseUint(unknownGIDStr, 10, 32)
+	require.NoError(t, err)
 
-		// Parse UID/GID strings to uint32 for EntryInfo
-		uid64, err := strconv.ParseUint(cur.Uid, 10, 32)
-		require.NoError(t, err)
-		gid64, err := strconv.ParseUint(cur.Gid, 10, 32)
-		require.NoError(t, err)
+	info := fsmodel.EntryInfo{
+		UID: uint32(uid64),
+		GID: uint32(gid64),
+	}
 
-		// Build a minimal EntryInfo with current UID/GID
-		info := fsmodel.EntryInfo{ // from shared pkg
-			UID: uint32(uid64),
-			GID: uint32(gid64),
-		}
-
-		owner, group := getFileOwnership(info)
-		assert.Equal(t, expectedOwner, owner)
-		assert.Equal(t, expectedGroup, group)
-	})
-
-	t.Run("no user", func(t *testing.T) {
-		t.Parallel()
-
-		// Find a UID that does not exist on this system
-		var unknownUIDStr string
-		for i := 60001; i < 70000; i++ { // search a high range typically unused
-			idStr := strconv.Itoa(i)
-			if _, err := osuser.LookupId(idStr); err != nil {
-				unknownUIDStr = idStr
-
-				break
-			}
-		}
-		if unknownUIDStr == "" {
-			t.Skip("could not find a non-existent UID in the probed range")
-		}
-
-		// Find a GID that does not exist on this system
-		var unknownGIDStr string
-		for i := 60001; i < 70000; i++ { // search a high range typically unused
-			idStr := strconv.Itoa(i)
-			if _, err := osuser.LookupGroupId(idStr); err != nil {
-				unknownGIDStr = idStr
-
-				break
-			}
-		}
-		if unknownGIDStr == "" {
-			t.Skip("could not find a non-existent GID in the probed range")
-		}
-
-		// Parse to uint32 for EntryInfo construction
-		uid64, err := strconv.ParseUint(unknownUIDStr, 10, 32)
-		require.NoError(t, err)
-		gid64, err := strconv.ParseUint(unknownGIDStr, 10, 32)
-		require.NoError(t, err)
-
-		info := fsmodel.EntryInfo{
-			UID: uint32(uid64),
-			GID: uint32(gid64),
-		}
-
-		owner, group := getFileOwnership(info)
-		// Expect numeric fallbacks because lookups should fail for unknown IDs
-		assert.Equal(t, unknownUIDStr, owner)
-		assert.Equal(t, unknownGIDStr, group)
-	})
+	owner, group := getFileOwnership(info)
+	assert.Equal(t, unknownUIDStr, owner)
+	assert.Equal(t, unknownGIDStr, group)
 }

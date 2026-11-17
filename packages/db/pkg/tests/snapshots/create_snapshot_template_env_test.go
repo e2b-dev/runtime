@@ -27,7 +27,7 @@ func snapshotTemplateFixture(t *testing.T, client *testutils.Database) queries.C
 	ctx := t.Context()
 	teamID := testutils.CreateTestTeam(t, client)
 	baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
-	buildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, "uploaded")
+	buildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
 	originNodeID := "node-1"
 
 	return queries.CreateSnapshotTemplateEnvParams{

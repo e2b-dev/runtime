@@ -212,7 +212,7 @@ func (e *buildStartV2Env) registerRunningBuild(t *testing.T) {
 	t.Helper()
 	running := e.registerBuild(t)
 	require.NoError(t, e.db.SqlcClient.TestsRawSQL(t.Context(),
-		`UPDATE public.env_builds SET status = 'building', cluster_node_id = $2 WHERE id = $1`, uuid.MustParse(running.BuildID), buildStartV2Node))
+		`UPDATE public.env_builds SET status_group = 'in_progress', cluster_node_id = $2 WHERE id = $1`, uuid.MustParse(running.BuildID), buildStartV2Node))
 }
 
 func buildStartV2Path(build *api.TemplateRequestResponseV3) string {
@@ -274,7 +274,7 @@ func (e *buildStartV2Env) waitForPoll(t *testing.T) {
 	select {
 	case <-e.builder.polled:
 	case <-time.After(30 * time.Second):
-		t.Fatal("dispatched build was never polled")
+		require.Fail(t, "dispatched build was never polled")
 	}
 }
 
@@ -468,7 +468,7 @@ func TestPostV2TemplateBuildStartRetriesOnlyFailuresWithoutSideEffects(t *testin
 		// and without a node the running build is never cancelled.
 		setReason := func(reason string) {
 			require.NoError(t, env.db.SqlcClient.TestsRawSQL(t.Context(),
-				`UPDATE public.env_builds SET status = 'building', cluster_node_id = NULL, reason = $2::jsonb WHERE id = $1`, uuid.MustParse(concurrent.BuildID), reason))
+				`UPDATE public.env_builds SET status_group = 'in_progress', cluster_node_id = NULL, reason = $2::jsonb WHERE id = $1`, uuid.MustParse(concurrent.BuildID), reason))
 		}
 
 		setReason(`[]`)

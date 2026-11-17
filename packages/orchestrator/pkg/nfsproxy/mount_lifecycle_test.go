@@ -158,7 +158,7 @@ func TestMountRequestLifecycleAcrossConnectionBoundaries(t *testing.T) { //nolin
 				case err := <-served:
 					require.NoError(t, err)
 				case <-time.After(time.Second):
-					t.Fatal("proxy listener did not join")
+					require.Fail(t, "proxy listener did not join")
 				}
 				require.Eventually(t, func() bool {
 					return accepted.Load() == barrier.delivered.Load() && accepted.Load() == disconnected.Load()
@@ -173,7 +173,7 @@ func TestMountRequestLifecycleAcrossConnectionBoundaries(t *testing.T) { //nolin
 				select {
 				case <-barrier.entered:
 				case <-time.After(time.Second):
-					t.Fatal("the real Accept boundary did not reach its barrier")
+					require.Fail(t, "the real Accept boundary did not reach its barrier")
 				}
 			}
 			writeLifecycleMount(t, oldConn, oldPath)

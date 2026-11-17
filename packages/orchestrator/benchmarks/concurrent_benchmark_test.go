@@ -213,7 +213,7 @@ func BenchmarkConcurrentResume(b *testing.B) {
 
 	slotStorage, err := network.NewStorageLocal(b.Context(), config.NetworkConfig, network.NoopEgressProxy{})
 	require.NoError(b, err)
-	networkPool := network.NewPool(network.NewSlotsPoolSize, network.ReusedSlotsPoolSize, slotStorage, config.NetworkConfig)
+	networkPool := network.NewPool(network.NewSlotsPoolSize, config.NetworkConfig.ReusedPoolSize(), slotStorage, config.NetworkConfig)
 	go func() {
 		networkPool.Populate(b.Context())
 		l.Info(b.Context(), "network pool populated")

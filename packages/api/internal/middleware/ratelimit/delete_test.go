@@ -144,7 +144,7 @@ func TestDeleteGroupExcludesOtherDeleteOperations(t *testing.T) {
 	team := groupTeam(13)
 	team.Limits.APITeamRPSDelete = 1
 	limiter := groupLimiterFunc(func(context.Context, string, redis_rate.Limit) (*redis_rate.Result, error) {
-		t.Fatal("ungrouped delete reached Redis")
+		require.Fail(t, "ungrouped delete reached Redis")
 
 		return nil, nil
 	})

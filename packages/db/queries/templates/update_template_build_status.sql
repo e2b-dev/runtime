@@ -1,6 +1,6 @@
 -- name: UpdateEnvBuildStatus :exec
 UPDATE "public"."env_builds"
-SET status = @status,
+SET status_group = @status_group,
     finished_at = @finished_at,
     reason = sqlc.narg(reason),
     version = @version
@@ -13,7 +13,7 @@ WHERE id = @build_id;
 -- own.
 WITH failed AS (
     UPDATE "public"."env_builds"
-    SET status = @status,
+    SET status_group = @status_group,
         finished_at = @finished_at,
         reason = sqlc.narg(reason),
         version = @version

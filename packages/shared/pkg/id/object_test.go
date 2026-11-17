@@ -1,12 +1,13 @@
 package id
 
 import (
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/sumup/typeid"
 )
 
@@ -30,15 +31,9 @@ func TestObjectIDString(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if tc.got != tc.want {
-				t.Errorf("String() = %q, want %q", tc.got, tc.want)
-			}
-			if len(tc.got) != ObjectIDLen {
-				t.Errorf("len(String()) = %d, want %d", len(tc.got), ObjectIDLen)
-			}
-			if tc.got != strings.ToLower(tc.got) {
-				t.Errorf("String() = %q, want lowercase", tc.got)
-			}
+			assert.Equal(t, tc.want, tc.got)
+			assert.Len(t, tc.got, ObjectIDLen)
+			assert.Equal(t, strings.ToLower(tc.got), tc.got, "want lowercase")
 		})
 	}
 }
@@ -50,28 +45,16 @@ func TestObjectIDRoundTrip(t *testing.T) {
 	v7 := uuid.MustParse("019fa519-bf79-724d-8811-a2bfda9755fa")
 
 	project, err := ParseProjectID(ProjectID(v4).String())
-	if err != nil {
-		t.Fatalf("ParseProjectID(): %v", err)
-	}
-	if got := uuid.UUID(project); got != v4 {
-		t.Errorf("ParseProjectID() = %v, want %v", got, v4)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, v4, uuid.UUID(project))
 
 	workspace, err := ParseWorkspaceID(WorkspaceID(v4).String())
-	if err != nil {
-		t.Fatalf("ParseWorkspaceID(): %v", err)
-	}
-	if got := uuid.UUID(workspace); got != v4 {
-		t.Errorf("ParseWorkspaceID() = %v, want %v", got, v4)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, v4, uuid.UUID(workspace))
 
 	secret, err := ParseSecretID(SecretID(v7).String())
-	if err != nil {
-		t.Fatalf("ParseSecretID(): %v", err)
-	}
-	if got := uuid.UUID(secret); got != v7 {
-		t.Errorf("ParseSecretID() = %v, want %v", got, v7)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, v7, uuid.UUID(secret))
 }
 
 func TestObjectIDParseRejectsInvalidInput(t *testing.T) {
@@ -101,12 +84,8 @@ func TestObjectIDParseRejectsInvalidInput(t *testing.T) {
 			t.Parallel()
 
 			err := tc.parse(tc.input)
-			if err == nil {
-				t.Fatalf("parse(%q) returned no error", tc.input)
-			}
-			if !errors.Is(err, typeid.ErrParse) {
-				t.Errorf("parse(%q) = %v, want typeid.ErrParse", tc.input, err)
-			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, typeid.ErrParse)
 		})
 	}
 }
@@ -120,18 +99,15 @@ func TestObjectIDTypesRemainUUIDBacked(t *testing.T) {
 		reflect.TypeFor[SecretID](),
 	}
 	for _, typ := range types {
-		if typ.Kind() != reflect.Array || typ.Size() != reflect.TypeFor[uuid.UUID]().Size() {
-			t.Errorf("%s is %v of size %d, want a UUID-backed array", typ, typ.Kind(), typ.Size())
-		}
+		assert.Equal(t, reflect.Array, typ.Kind(), "%s should be a UUID-backed array", typ)
+		assert.Equal(t, reflect.TypeFor[uuid.UUID]().Size(), typ.Size(), "%s should be a UUID-backed array", typ)
 	}
-	if types[0] == types[1] || types[0] == types[2] || types[1] == types[2] {
-		t.Fatalf("object ID types are not distinct: %v", types)
-	}
+	require.NotEqual(t, types[0], types[1])
+	require.NotEqual(t, types[0], types[2])
+	require.NotEqual(t, types[1], types[2])
 
 	u := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-	if got := uuid.UUID(ProjectID(u)); got != u {
-		t.Errorf("UUID conversion = %v, want %v", got, u)
-	}
+	assert.Equal(t, u, uuid.UUID(ProjectID(u)))
 }
 
 func TestConvertTeamIDToProjectID(t *testing.T) {
@@ -140,12 +116,8 @@ func TestConvertTeamIDToProjectID(t *testing.T) {
 	teamID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	projectID := ConvertTeamIDToProjectID(teamID)
 
-	if got := uuid.UUID(projectID); got != teamID {
-		t.Errorf("ConvertTeamIDToProjectID() = %v, want %v", got, teamID)
-	}
-	if got, want := projectID.String(), "prj_2n1t201rmv87aae5j4csam8000"; got != want {
-		t.Errorf("ProjectID.String() = %q, want %q", got, want)
-	}
+	assert.Equal(t, teamID, uuid.UUID(projectID))
+	assert.Equal(t, "prj_2n1t201rmv87aae5j4csam8000", projectID.String())
 }
 
 func TestParseTeamIDAcceptsUUIDAndProjectID(t *testing.T) {
@@ -158,12 +130,8 @@ func TestParseTeamIDAcceptsUUIDAndProjectID(t *testing.T) {
 			t.Parallel()
 
 			got, err := ParseTeamID(input)
-			if err != nil {
-				t.Fatalf("ParseTeamID(%q): %v", input, err)
-			}
-			if got != teamID {
-				t.Errorf("ParseTeamID(%q) = %v, want %v", input, got, teamID)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, teamID, got)
 		})
 	}
 }
@@ -181,9 +149,8 @@ func TestParseTeamIDRejectsOtherInput(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
 
-			if got, err := ParseTeamID(input); err == nil {
-				t.Errorf("ParseTeamID(%q) = %v, want an error", input, got)
-			}
+			_, err := ParseTeamID(input)
+			assert.Error(t, err)
 		})
 	}
 }
@@ -194,14 +161,10 @@ func TestLegacyBodyUsesTypeIDInterpretation(t *testing.T) {
 	t.Parallel()
 
 	projectID, err := ParseProjectID("prj_6zhag5xcjyf4sadahkmb6xrfqf")
-	if err != nil {
-		t.Fatalf("ParseProjectID(): %v", err)
-	}
+	require.NoError(t, err)
 
 	want := uuid.MustParse("df8aa05e-b25e-7932-a6aa-33a2cddc3eef")
-	if got := uuid.UUID(projectID); got != want {
-		t.Errorf("ParseProjectID() = %v, want %v", got, want)
-	}
+	assert.Equal(t, want, uuid.UUID(projectID))
 }
 
 func parseProjectError(s string) error {

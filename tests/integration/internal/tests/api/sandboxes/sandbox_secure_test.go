@@ -31,9 +31,7 @@ func TestCreateSandboxWithSecuredEnvd(t *testing.T) {
 		Timeout:    &sbxTimeout,
 		Secure:     &sbxSecure,
 	}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -73,9 +71,7 @@ func TestCreateSandboxV2IsSecured(t *testing.T) {
 		TemplateID: setup.SandboxTemplateID,
 		Timeout:    &sbxTimeout,
 	}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -120,9 +116,7 @@ func TestCreateSandboxV2WithDisabledPublicTraffic(t *testing.T) {
 			AllowPublicTraffic: &sbxAllowPublicTraffic,
 		},
 	}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -161,9 +155,7 @@ func TestCreateSandboxV1IgnoresSecureFalse(t *testing.T) {
 			AllowPublicTraffic: &sbxAllowPublicTraffic,
 		},
 	}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -195,9 +187,7 @@ func TestCreateSandboxV1WithSecureOmitted(t *testing.T) {
 		TemplateID: setup.SandboxTemplateID,
 		Timeout:    &sbxTimeout,
 	}, setup.WithAPIKey())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if t.Failed() {
