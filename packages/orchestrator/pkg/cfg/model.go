@@ -149,6 +149,10 @@ type Config struct {
 	NBDPoolSize                 int               `env:"NBD_POOL_SIZE"                 envDefault:"64"`
 	Services                    []string          `env:"ORCHESTRATOR_SERVICES"         envDefault:"orchestrator"`
 	PersistentVolumeMounts      map[string]string `env:"PERSISTENT_VOLUME_MOUNTS"`
+	// NFSMountNconnect is the number of parallel NFS transport connections
+	// used for volume mounts that do not request one, 0..16. The default of 1
+	// matches the kernel's; 0 mounts without the nconnect option.
+	NFSMountNconnect int `env:"NFS_MOUNT_NCONNECT" envDefault:"1"`
 
 	// TLS is the mutual TLS settings of the shared port and the peer hop.
 	TLS TLSConfig

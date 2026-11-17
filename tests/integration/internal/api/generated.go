@@ -2517,6 +2517,9 @@ type SandboxVolumeMount struct {
 	// Name Name of the volume
 	Name string `json:"name"`
 
+	// Nconnect Number of parallel NFS connections; 0 uses the Linux default, maximum is the kernel limit of 16
+	Nconnect *int `json:"nconnect,omitempty"`
+
 	// Path Path of the volume
 	Path string `json:"path"`
 }

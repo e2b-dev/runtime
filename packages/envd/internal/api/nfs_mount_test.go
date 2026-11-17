@@ -26,16 +26,17 @@ import (
 // fakeNFS records mounts. A path's mount ID changes when it is mounted, unless the
 // path is in noop, which models a mount that reports success but does nothing.
 type fakeNFS struct {
-	ids      map[string]uint64
-	next     uint64
-	mounted  []string
-	ops      []string // "unmount <path>" and "mount <path>", in call order
-	failing  map[string]error
-	noop     map[string]bool
-	timeouts map[string]int    // mounts of the path that time out before one succeeds
-	refusals map[string]int    // mounts of the path that fail at once before one succeeds
-	untimed  []string          // paths whose mount point was created without a deadline
-	covers   map[string]string // mounting the key covers the value's mount
+	ids       map[string]uint64
+	next      uint64
+	mounted   []string
+	nconnects []int    // nconnect of each recorded mount, parallel to mounted
+	ops       []string // "unmount <path>" and "mount <path>", in call order
+	failing   map[string]error
+	noop      map[string]bool
+	timeouts  map[string]int    // mounts of the path that time out before one succeeds
+	refusals  map[string]int    // mounts of the path that fail at once before one succeeds
+	untimed   []string          // paths whose mount point was created without a deadline
+	covers    map[string]string // mounting the key covers the value's mount
 }
 
 func newFakeNFS() *fakeNFS {
@@ -45,8 +46,9 @@ func newFakeNFS() *fakeNFS {
 	}
 }
 
-func (f *fakeNFS) Mount(_ context.Context, _, path string) error {
+func (f *fakeNFS) Mount(_ context.Context, _, path string, nconnect int) error {
 	f.mounted = append(f.mounted, path)
+	f.nconnects = append(f.nconnects, nconnect)
 	f.ops = append(f.ops, "mount "+path)
 	if err := f.failing[path]; err != nil {
 		return err
@@ -116,6 +118,28 @@ func TestSetupNFSMountsParentsBeforeChildren(t *testing.T) {
 
 	want := []string{mounts[2].Path, mounts[3].Path, mounts[1].Path, mounts[0].Path}
 	assert.Equal(t, want, fake.mounted)
+}
+
+func TestNfsMountOptions(t *testing.T) {
+	t.Parallel()
+
+	base := "fg,hard," + nfsOptions
+
+	assert.Equal(t, base, nfsMountOptions(0), "0 keeps the kernel default")
+	assert.Equal(t, base+",nconnect=1", nfsMountOptions(1))
+	assert.Equal(t, base+",nconnect=4", nfsMountOptions(4))
+}
+
+func TestSetupNFSPassesEachVolumeNconnectToTheMount(t *testing.T) {
+	t.Parallel()
+
+	a, fake, root := newNFSTestAPI(t)
+	mounts := volumes(root, "a", "b")
+	mounts[0].Nconnect = new(4)
+
+	require.NoError(t, a.setupNFS(t.Context(), zerolog.Nop(), new("lc-1"), mounts))
+
+	assert.Equal(t, []int{4, 0}, fake.nconnects)
 }
 
 func TestSetupNFSRemountsOnlyForANewLifecycle(t *testing.T) {

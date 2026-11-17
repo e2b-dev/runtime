@@ -646,11 +646,22 @@ func convertAPIVolumesToOrchestratorVolumes(ctx context.Context, sqlClient *sqlc
 		}
 		usedPaths[v.Path] = struct{}{}
 
+		var nconnect uint32
+		if v.Nconnect != nil {
+			if *v.Nconnect < 0 || *v.Nconnect > 16 {
+				invalidVolumeMounts = append(invalidVolumeMounts, InvalidMount{Index: index, Reason: fmt.Sprintf("nconnect must be between 0 and 16, got %d", *v.Nconnect)})
+
+				continue
+			}
+			nconnect = uint32(*v.Nconnect)
+		}
+
 		results = append(results, &orchestrator.SandboxVolumeMount{
-			Id:   actualVolume.ID.String(),
-			Path: v.Path,
-			Type: actualVolume.VolumeType,
-			Name: actualVolume.Name,
+			Id:       actualVolume.ID.String(),
+			Path:     v.Path,
+			Type:     actualVolume.VolumeType,
+			Name:     actualVolume.Name,
+			Nconnect: nconnect,
 		})
 	}
 

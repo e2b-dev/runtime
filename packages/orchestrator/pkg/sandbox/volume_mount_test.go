@@ -22,7 +22,7 @@ import (
 func TestEnvdInitSendsLifecycleQualifiedVolumeTargets(t *testing.T) { //nolint:paralleltest // package-global HTTP client
 	sbx := newTestSandboxWithBundle("")
 	sbx.config.NetworkConfig.OrchestratorInSandboxIPAddress = "169.254.0.21"
-	sbx.Config.VolumeMounts = []VolumeMountConfig{{ID: uuid.New(), Name: "data", Path: "/mnt/data", Type: "test"}}
+	sbx.Config.VolumeMounts = []VolumeMountConfig{{ID: uuid.New(), Name: "data", Path: "/mnt/data", Type: "test", Nconnect: 4}}
 	oldLifecycle, newLifecycle := uuid.NewString(), uuid.NewString()
 	type capture struct {
 		body envd.PostInitJSONBody
@@ -52,5 +52,6 @@ func TestEnvdInitSendsLifecycleQualifiedVolumeTargets(t *testing.T) { //nolint:p
 		require.Len(t, got.body.VolumeMounts, 1)
 		require.Equal(t, "169.254.0.21:/"+lifecycle+"/data", got.body.VolumeMounts[0].NfsTarget)
 		require.Equal(t, "/mnt/data", got.body.VolumeMounts[0].Path)
+		require.Equal(t, 4, got.body.VolumeMounts[0].Nconnect)
 	}
 }

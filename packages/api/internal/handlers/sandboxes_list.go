@@ -701,9 +701,16 @@ func convertFromDBMountsToAPIMounts(mounts []*dbtypes.SandboxVolumeMountConfig) 
 			continue
 		}
 
+		// nconnect is included only when set, so mounts stored before the
+		// field existed serialize exactly as they did then.
+		var nconnect *int
+		if item.Nconnect != 0 {
+			nconnect = &item.Nconnect
+		}
 		results = append(results, api.SandboxVolumeMount{
-			Name: item.Name,
-			Path: item.Path,
+			Name:     item.Name,
+			Path:     item.Path,
+			Nconnect: nconnect,
 		})
 	}
 
