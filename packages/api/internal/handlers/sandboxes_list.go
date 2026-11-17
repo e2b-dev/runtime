@@ -372,7 +372,7 @@ func (a *APIStore) GetSandboxes(c *gin.Context, params api.GetSandboxesParams) {
 
 	a.posthog.IdentifyAnalyticsTeam(ctx, team.ID.String(), team.Name)
 	properties := a.posthog.GetPackageToPosthogProperties(&c.Request.Header)
-	a.posthog.CreateAnalyticsTeamEvent(ctx, team.ID.String(), "listed sandboxes", properties)
+	a.posthog.CountAnalyticsTeamEvent(ctx, team.ID.String(), "listed sandboxes", properties)
 
 	metadataFilter, err := utils.ParseMetadata(ctx, params.Metadata)
 	if err != nil {
@@ -414,7 +414,7 @@ func (a *APIStore) GetV2Sandboxes(c *gin.Context, params api.GetV2SandboxesParam
 
 	a.posthog.IdentifyAnalyticsTeam(ctx, team.ID.String(), team.Name)
 	properties := a.posthog.GetPackageToPosthogProperties(&c.Request.Header)
-	a.posthog.CreateAnalyticsTeamEvent(ctx, team.ID.String(), "listed sandboxes", properties)
+	a.posthog.CountAnalyticsTeamEvent(ctx, team.ID.String(), "listed sandboxes", properties)
 
 	// If no state is provided we want to return both running and paused sandboxes
 	states := make([]api.SandboxState, 0)
