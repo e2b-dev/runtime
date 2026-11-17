@@ -109,3 +109,17 @@ func TestBlockedTeamAllowlistKeepsTemplateTagReads(t *testing.T) {
 		assert.Contains(t, get, route)
 	}
 }
+
+// A blocked team can still read one template and its builds, as it can list
+// its templates.
+func TestBlockedTeamAllowlistKeepsTemplateInfoAndBuildReads(t *testing.T) {
+	t.Parallel()
+
+	get := blockedTeamAllowlist[http.MethodGet]
+	for _, route := range []string{
+		"/v2/templates/:templateID",
+		"/templates/:templateID/builds",
+	} {
+		assert.Contains(t, get, route)
+	}
+}

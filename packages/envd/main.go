@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/authn"
@@ -30,6 +31,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cgroups"
 	"github.com/e2b-dev/infra/packages/envd/internal/services/cpus"
 	filesystemRpc "github.com/e2b-dev/infra/packages/envd/internal/services/filesystem"
+	"github.com/e2b-dev/infra/packages/envd/internal/services/memlimit"
 	processRpc "github.com/e2b-dev/infra/packages/envd/internal/services/process"
 	"github.com/e2b-dev/infra/packages/envd/internal/utils"
 	"github.com/e2b-dev/infra/packages/envd/pkg"
@@ -217,7 +219,14 @@ func run(stop <-chan struct{}) error {
 	fsLogger := l.With().Str("logger", "filesystem").Logger()
 	filesystemService := filesystemRpc.Handle(m, &fsLogger, defaults)
 
-	cgroupManager := createCgroupManager()
+	// Read once: the startup limit is computed from it and the memory limit manager
+	// is seeded with it, so the two agree on what was written.
+	memTotal, memTotalErr := host.MemTotal()
+	var startLimit uint64
+	if memTotalErr == nil {
+		startLimit = memlimit.StartLimit(memTotal)
+	}
+	cgroupManager := createCgroupManager(startLimit, memTotalErr)
 	defer func() {
 		err := cgroupManager.Close()
 		if err != nil {
@@ -287,7 +296,17 @@ func run(stop <-chan struct{}) error {
 
 	var oomWatcher *host.OOMWatcher
 	cpuManager := cpus.NewNoopManager()
+	memLimits := memlimit.NewNoopManager()
 	if !isNotFC {
+		if limiter, ok := cgroupManager.(cgroups.MemoryLimiter); ok && memoryLimitWritten(cgroupManager) {
+			opts := []memlimit.Option{memlimit.WithBaseline(memTotal)}
+			if memoryLimitApplied(cgroupManager, startLimit) {
+				opts = append(opts, memlimit.WithApplied(memTotal, startLimit))
+			}
+			memLimits = memlimit.New(envLogger, limiter, opts...)
+			memLimits.Start(ctx)
+		}
+
 		oomWatcher = host.NewOOMWatcher(&envLogger)
 		go oomWatcher.Watch(ctx)
 
@@ -295,7 +314,7 @@ func run(stop <-chan struct{}) error {
 		cpuManager.Start(ctx)
 	}
 
-	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, cpuManager, logFlusher)
+	service := api.New(&envLogger, defaults, mmdsChan, isNotFC, workloadFreezer, oomWatcher, cpuManager, memLimits, logFlusher)
 	go service.RunCACertCleanup(ctx)
 	if resumeHandover {
 		// Restore the NFS mount ledger carried across the upgrade before the
@@ -502,7 +521,58 @@ func run(stop <-chan struct{}) error {
 	return err
 }
 
-func createCgroupManager() (m cgroups.Manager) {
+// memoryLimitWritten reports whether createCgroupManager could write memory.max on the
+// user and PTY cgroups. It skips the write when the memory controller is not enabled
+// there, and a limit manager seeded with that limit would report one never applied.
+func memoryLimitWritten(m cgroups.Manager) bool {
+	pm, ok := m.(cgroups.PathManager)
+	if !ok {
+		return false
+	}
+	for _, procType := range []cgroups.ProcessType{cgroups.ProcessTypeUser, cgroups.ProcessTypePTY} {
+		path, ok := pm.PathOf(procType)
+		if !ok {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(path, "memory.max")); err != nil {
+			fmt.Fprintf(os.Stderr, "memory limit not managed: %v\n", err)
+
+			return false
+		}
+	}
+
+	return true
+}
+
+// memoryLimitApplied reports whether memory.high and memory.max on the user and PTY
+// cgroups both hold limit. createCgroupManager skips a write it is not permitted to make,
+// so the files can exist with another value; the worker is then seeded as not applied and
+// its first recompute writes the limit, or reports why it cannot.
+func memoryLimitApplied(m cgroups.Manager, limit uint64) bool {
+	pm, ok := m.(interface {
+		PathOf(procType cgroups.ProcessType) (string, bool)
+	})
+	if !ok {
+		return false
+	}
+	want := strconv.FormatUint(limit, 10)
+	for _, procType := range []cgroups.ProcessType{cgroups.ProcessTypeUser, cgroups.ProcessTypePTY} {
+		path, ok := pm.PathOf(procType)
+		if !ok {
+			return false
+		}
+		for _, file := range []string{"memory.high", "memory.max"} {
+			got, err := os.ReadFile(filepath.Join(path, file))
+			if err != nil || strings.TrimSpace(string(got)) != want {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func createCgroupManager(startLimit uint64, memTotalErr error) (m cgroups.Manager) {
 	defer func() {
 		if m == nil {
 			fmt.Fprintf(os.Stderr, "falling back to no-op cgroup manager\n")
@@ -519,16 +589,14 @@ func createCgroupManager() (m cgroups.Manager) {
 		return cgroups.NewNoopManager()
 	}
 
-	metrics, err := host.GetMetrics()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to calculate host metrics: %v\n", err)
+	if memTotalErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to read MemTotal: %v\n", memTotalErr)
 
 		return nil
 	}
 
-	// try to keep 1/8 of the memory free, but no more than 128 MB
-	maxMemoryReserved := min(metrics.MemTotal/8, uint64(128)*megabyte)
-	memoryMax := metrics.MemTotal - maxMemoryReserved
+	// memlimit keeps these two in step with MemTotal once envd is running.
+	memoryMax := startLimit
 	memoryHigh := memoryMax // same as memory.max — OOM-kill immediately when throttling can't reclaim enough
 
 	opts := []cgroups.Cgroup2ManagerOption{

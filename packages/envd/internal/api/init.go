@@ -327,6 +327,14 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 			logger.Info().Dur("clock_correction", correction).Msg("corrected the /init timestamp by the handler's delay")
 		}
 
+		// Before the Timestamp guard and SetData, so neither a stale /init nor one whose
+		// SetData fails skips it: every /init follows a resume, and a sandbox paused
+		// between a memory plug and envd's reaction to it resumes with the memory online
+		// and no event left to fire. Not waited on: the orchestrator gives each /init
+		// attempt tens of milliseconds, and a lowered limit can take longer while the
+		// kernel reclaims.
+		a.memLimits.Request("init")
+
 		// Restore the access token (and env) BEFORE marking the envd initialized.
 		// On a live-upgraded envd, WithAuthorization only fails CLOSED while
 		// !initialized; flipping initialized first, with the token not yet
@@ -381,6 +389,7 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 	// requested. Set before WriteHeader.
 	a.reportEffectiveDefaults(w, logger)
 	a.reportCPUs(w, cpuErr)
+	a.reportMemory(w)
 
 	w.Header().Set("Cache-Control", "no-store")
 

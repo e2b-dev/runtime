@@ -31,6 +31,10 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 
 		return
 	}
+	// Without a cluster service the pool never loads a remote cluster.
+	if body.ClusterId != nil && *body.ClusterId != uuid.Nil && !a.requireClusterService(c) {
+		return
+	}
 
 	stored, created, err := a.managementService.UpsertProject(ctx, management.Project{
 		ClusterID: body.ClusterId,

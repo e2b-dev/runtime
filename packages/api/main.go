@@ -371,12 +371,24 @@ func run() int {
 	}
 
 	var cleanupFns []func(context.Context) error
+	// closeRedis runs after every cleanup function has returned: they still
+	// use Redis while they stop.
+	var closeRedis func() error
 	exitCode := &atomic.Int32{}
 	cleanupOp := func() {
 		// some cleanup functions do work that requires a context. passing shutdown a
 		// specific context here so that all timeout configuration is in one place.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		defer func() {
+			if closeRedis == nil {
+				return
+			}
+			if err := closeRedis(); err != nil {
+				exitCode.Add(1)
+				l.Error(ctx, "Closing the Redis client failed", zap.Error(err))
+			}
+		}()
 
 		start := time.Now()
 		// doing shutdown in parallel to avoid
@@ -426,9 +438,7 @@ func run() int {
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing Redis client", zap.Error(err))
 	}
-	cleanupFns = append(cleanupFns, func(_ context.Context) error {
-		return redisClient.Close()
-	})
+	closeRedis = redisClient.Close
 
 	featureFlags, err := featureflags.NewClient(config.DeploymentEnvironment, serviceName, serviceVersion, featureflags.WithStartOnInitTimeout())
 	if err != nil {
@@ -443,6 +453,12 @@ func run() int {
 	tlsConfig, err := newServiceTLS(tlsProcess, config.TLS, config.AnalyticsCollectorHost != "" && !config.AnalyticsCollectorTLS, false)
 	if err != nil {
 		l.Fatal(ctx, "invalid mutual TLS configuration", zap.Error(err))
+	}
+	if config.ClusterServiceGrpcAddress != "" {
+		tlsConfig.hops.ClusterService, err = newClusterServiceHop(tlsProcess, config.TLS.ClusterService, config.ClusterServiceGrpcAddress, env.IsLocal())
+		if err != nil {
+			l.Fatal(ctx, "invalid mutual TLS configuration for the cluster service hop", zap.Error(err))
+		}
 	}
 
 	// External sandbox logger routes through LaunchDarkly (LogsWriteConfigFlag),

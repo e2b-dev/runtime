@@ -221,3 +221,31 @@ func TestSplitEgressCIDRs(t *testing.T) {
 		require.Equalf(t, tc.wantToolkit, toolkit, "%s: toolkit set", tc.name)
 	}
 }
+
+func TestFirewallInternalCIDRs(t *testing.T) { //nolint:paralleltest // changes the caller's network namespace
+	if os.Geteuid() != 0 {
+		t.Skip("requires root for netns + nftables")
+	}
+	for _, tc := range []struct { //nolint:paralleltest // changes the caller's network namespace
+		name   string
+		cidrs  []string
+		probes []ipv4SetProbe
+	}{
+		{"all addresses", []string{"::/0", "0.0.0.0/0", "240.0.0.0/4"}, []ipv4SetProbe{{netip.MustParseAddr("203.0.113.10"), true}, {maxIPv4, true}}},
+		{"max boundary", []string{"240.0.0.0/4", "fd00::/8"}, []ipv4SetProbe{{netip.MustParseAddr("239.255.255.255"), false}, {maxIPv4, true}}},
+		{"overlaps", []string{"10.1.0.0/16", "10.0.0.0/8", "10.0.0.0/8", "fd00::/8"}, []ipv4SetProbe{{netip.MustParseAddr("10.255.255.255"), true}, {netip.MustParseAddr("11.0.0.0"), false}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := ParseConfig()
+			require.NoError(t, err)
+			config.AllowSandboxInternalCIDRs = tc.cidrs
+			slot, err := NewSlot("fw-internal-test", reserveNSTestIdx(t), config, NewNoopEgressProxy())
+			require.NoError(t, err)
+			require.NoError(t, slot.CreateNetwork(t.Context()))
+			t.Cleanup(func() { _ = slot.RemoveNetwork(context.WithoutCancel(t.Context())) })
+			elements, err := slot.Firewall.conn.GetSetElements(slot.Firewall.predefinedAllowSet.Set())
+			require.NoError(t, err)
+			assertIPv4SetMembership(t, elements, tc.probes)
+		})
+	}
+}

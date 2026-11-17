@@ -11,13 +11,17 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	middleware "github.com/oapi-codegen/gin-middleware"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
 
 // The cluster routes create, reconfigure and delete clusters and rotate their
@@ -46,62 +50,72 @@ func TestEveryAdminClusterOperationAcceptsOnlyAdminCredentials(t *testing.T) {
 func TestAdminCreateClusterCreatesAProtectedClusterWithoutReturningItsToken(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
 	request := adminClusterCreateRequest()
+	created := createdCluster(uuid.New(), request)
+	want := clustersgrpc.CreateClusterRequest_builder{
+		Name:               request.Name,
+		Endpoint:           request.Endpoint,
+		EndpointTls:        new(request.EndpointTls),
+		Token:              request.Token,
+		SandboxProxyDomain: request.SandboxProxyDomain,
+		AuthOrgId:          request.AuthOrgId,
+		DeletionProtection: new(true),
+	}.Build()
+	store, clusterService := newClusterServiceStore(t)
+	clusterService.EXPECT().CreateCluster(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.CreateClusterRequest) bool {
+		return proto.Equal(want, req)
+	})).Return(clustersgrpc.CreateClusterResponse_builder{Cluster: created}.Build(), nil).Once()
 
 	response := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
 
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 	require.NotContains(t, response.Body.String(), request.Token)
-	var created api.ClusterDetail
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+	var detail api.ClusterDetail
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &detail))
 	require.Equal(t, api.ClusterDetail{
-		Id:                 created.Id,
+		Id:                 uuid.MustParse(created.GetClusterId()),
 		Name:               request.Name,
 		Endpoint:           request.Endpoint,
 		EndpointTls:        request.EndpointTls,
 		SandboxProxyDomain: request.SandboxProxyDomain,
 		AuthOrgId:          request.AuthOrgId,
 		DeletionProtection: true,
-	}, created)
-	require.Equal(t, request.Token, clusterToken(t, db, created.Id))
-
-	// Another cluster cannot take the same auth organization.
-	conflict := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
-	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
-	requireClusterErrorCode(t, conflict, clusterRegistrationConflictCode)
+	}, detail)
 }
 
-func TestAdminCreateClusterReusesAStableIDOnlyForAnIdenticalConfiguration(t *testing.T) {
+// The cluster service answers a replay of the same ID and configuration with
+// the stored cluster, and refuses anything else as a conflict.
+func TestAdminCreateClusterSendsTheRequestedIDAndReportsAConflict(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
 	clusterID := uuid.New()
 	request := adminClusterCreateRequest()
 	request.ClusterId = &clusterID
+	store, clusterService := newClusterServiceStore(t)
+	isRequestedID := mock.MatchedBy(func(req *clustersgrpc.CreateClusterRequest) bool {
+		return req.HasClusterId() && req.GetClusterId() == clusterID.String()
+	})
+	clusterService.EXPECT().CreateCluster(mock.Anything, isRequestedID).
+		Return(clustersgrpc.CreateClusterResponse_builder{Cluster: createdCluster(clusterID, request)}.Build(), nil).Once()
+	clusterService.EXPECT().CreateCluster(mock.Anything, isRequestedID).
+		Return(nil, status.Error(codes.AlreadyExists, "a different cluster with this ID exists")).Once()
 
-	for range 2 {
-		response := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
-		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-		var created api.ClusterDetail
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
-		require.Equal(t, clusterID, created.Id)
-	}
+	created := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var detail api.ClusterDetail
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &detail))
+	require.Equal(t, clusterID, detail.Id)
 
-	request.Token = "different-token"
 	conflict := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 	requireClusterErrorCode(t, conflict, clusterRegistrationConflictCode)
-	require.Equal(t, "cluster-token", clusterToken(t, db, clusterID))
 }
 
 func TestAdminCreateClusterRejectsAnInvalidRequest(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
+	// The cluster service is never asked.
+	store, _ := newClusterServiceStore(t)
 
 	for name, tc := range map[string]struct {
 		change func(*api.AdminClusterCreateRequest)
@@ -129,17 +143,14 @@ func TestAdminDeleteClusterRefusesWhatTheManagementDeleteRefuses(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
-	created := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, adminClusterCreateRequest()))
-	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	var protected api.ClusterDetail
-	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &protected))
-	unprotected := uuid.New()
+	store := newAdminClusterStore(t, db)
+	protected, unprotected := uuid.New(), uuid.New()
+	insertCluster(t, db, protected, true)
 	insertCluster(t, db, unprotected, false)
 
-	refused := callAdmin(t, store, http.MethodDelete, "/unstable/admin/clusters/"+protected.Id.String(), "")
+	refused := callAdmin(t, store, http.MethodDelete, "/unstable/admin/clusters/"+protected.String(), "")
 	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
-	require.True(t, clusterExists(t, db, protected.Id))
+	require.True(t, clusterExists(t, db, protected))
 
 	local := callAdmin(t, store, http.MethodDelete, "/unstable/admin/clusters/"+uuid.Nil.String(), "")
 	require.Equal(t, http.StatusBadRequest, local.Code, local.Body.String())
@@ -155,7 +166,7 @@ func TestAdminListClustersSearchesSortsAndPages(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
+	store := newAdminClusterStore(t, db)
 	// A prefix only these clusters carry keeps the list to them.
 	prefix := "list-" + uuid.NewString()[:8]
 	alpha := insertNamedCluster(t, db, prefix+"-alpha", "c.example.test", new("alpha.example.test"))
@@ -225,7 +236,7 @@ func TestAdminGetClusterReturnsItsTeamsAndLiveTemplateCount(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
+	store := newAdminClusterStore(t, db)
 	clusterID := insertNamedCluster(t, db, "detail", "detail.example.test", nil)
 	older, newer := assignTeam(t, db, clusterID), assignTeam(t, db, clusterID)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
@@ -259,7 +270,7 @@ func TestAdminListClusterTeamsSortsAndPagesTheAssignedTeams(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
+	store := newAdminClusterStore(t, db)
 	clusterID := insertNamedCluster(t, db, "teams", "teams.example.test", nil)
 	empty := insertNamedCluster(t, db, "empty", "empty.example.test", nil)
 	first, second := assignTeam(t, db, clusterID), assignTeam(t, db, clusterID)
@@ -319,56 +330,56 @@ func TestAdminListClusterTeamsSortsAndPagesTheAssignedTeams(t *testing.T) {
 func TestAdminUpdateClusterWritesOnlyThePropertiesPresent(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
-
 	for name, tc := range map[string]struct {
 		body string
-		want func(api.ClusterDetail) api.ClusterDetail
+		want func(clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder
 	}{
-		"name": {`{"name":" renamed "}`, func(d api.ClusterDetail) api.ClusterDetail {
-			d.Name = "renamed"
+		"name": {`{"name":" renamed "}`, func(u clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder {
+			u.Name = new("renamed")
 
-			return d
+			return u
 		}},
-		"endpoint and TLS": {`{"endpoint":"moved.example.test","endpointTls":false}`, func(d api.ClusterDetail) api.ClusterDetail {
-			d.Endpoint, d.EndpointTls = "moved.example.test", false
+		"endpoint and TLS": {`{"endpoint":"moved.example.test","endpointTls":false}`, func(u clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder {
+			u.Endpoint, u.EndpointTls = new("moved.example.test"), new(false)
 
-			return d
+			return u
 		}},
-		"proxy domain cleared by null": {`{"sandboxProxyDomain":null}`, func(d api.ClusterDetail) api.ClusterDetail {
-			d.SandboxProxyDomain = nil
+		"proxy domain cleared by null": {`{"sandboxProxyDomain":null}`, func(u clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder {
+			u.SandboxProxyDomain = clustersgrpc.NullableStringUpdate_builder{}.Build()
 
-			return d
+			return u
 		}},
-		"auth organization cleared by an empty string": {`{"authOrgId":""}`, func(d api.ClusterDetail) api.ClusterDetail {
-			d.AuthOrgId = nil
+		"auth organization cleared by an empty string": {`{"authOrgId":""}`, func(u clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder {
+			u.AuthOrgId = clustersgrpc.NullableStringUpdate_builder{}.Build()
 
-			return d
+			return u
 		}},
-		"deletion protection": {`{"deletionProtection":false}`, func(d api.ClusterDetail) api.ClusterDetail {
-			d.DeletionProtection = false
+		"deletion protection": {`{"deletionProtection":false}`, func(u clustersgrpc.UpdateClusterRequest_builder) clustersgrpc.UpdateClusterRequest_builder {
+			u.DeletionProtection = new(false)
 
-			return d
+			return u
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			request := adminClusterCreateRequest()
-			request.AuthOrgId = new("org_" + uuid.NewString())
-			created := callAdmin(t, store, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, request))
-			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-			var before api.ClusterDetail
-			require.NoError(t, json.Unmarshal(created.Body.Bytes(), &before))
+			clusterID := uuid.New()
+			updated := createdCluster(clusterID, adminClusterCreateRequest())
+			want := tc.want(clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String()}).Build()
+			store, clusterService := newClusterServiceStore(t)
+			clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.UpdateClusterRequest) bool {
+				return proto.Equal(want, req)
+			})).Return(clustersgrpc.UpdateClusterResponse_builder{Cluster: updated}.Build(), nil).Once()
 
-			response := callAdmin(t, store, http.MethodPatch, "/unstable/admin/clusters/"+before.Id.String(), tc.body)
+			response := callAdmin(t, store, http.MethodPatch, "/unstable/admin/clusters/"+clusterID.String(), tc.body)
 
 			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-			var updated api.ClusterDetail
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &updated))
-			require.Equal(t, tc.want(before), updated)
-			require.Equal(t, request.Token, clusterToken(t, db, before.Id))
+			require.NotContains(t, response.Body.String(), updated.GetToken())
+			var detail api.ClusterDetail
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &detail))
+			wantDetail, err := clusterDetail(updated)
+			require.NoError(t, err)
+			require.Equal(t, wantDetail, detail)
 		})
 	}
 }
@@ -376,36 +387,36 @@ func TestAdminUpdateClusterWritesOnlyThePropertiesPresent(t *testing.T) {
 func TestAdminUpdateClusterRefusesAnInvalidUpdate(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
-	clusterID := insertNamedCluster(t, db, "refuse", "refuse.example.test", nil)
-	other := insertNamedCluster(t, db, "other", "other.example.test", nil)
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.clusters SET auth_org_id = 'org_taken' WHERE id = $1`, other))
-	deleting := insertNamedCluster(t, db, "deleting", "deleting.example.test", nil)
-	require.Equal(t, http.StatusNoContent, callManagementRequestClusterDeletion(t, &APIStore{sqlcDB: db.SqlcClient}, deleting))
-	before := readClusters(t, db)
-
 	for name, tc := range map[string]struct {
-		clusterID uuid.UUID
-		body      string
-		want      int
+		body   string
+		answer error
+		want   int
 	}{
-		"no property":                              {clusterID, `{}`, http.StatusBadRequest},
-		"a blank name":                             {clusterID, `{"name":"  "}`, http.StatusBadRequest},
-		"a blank endpoint":                         {clusterID, `{"endpoint":"  "}`, http.StatusBadRequest},
-		"a null TLS flag":                          {clusterID, `{"endpointTls":null}`, http.StatusBadRequest},
-		"a null protection flag":                   {clusterID, `{"deletionProtection":null}`, http.StatusBadRequest},
-		"an unknown cluster":                       {uuid.New(), `{"name":"renamed"}`, http.StatusNotFound},
-		"another cluster's auth organization":      {clusterID, `{"authOrgId":"org_taken"}`, http.StatusConflict},
-		"protection on while deletion is underway": {deleting, `{"deletionProtection":true}`, http.StatusConflict},
+		"no property":            {`{}`, nil, http.StatusBadRequest},
+		"a blank name":           {`{"name":"  "}`, nil, http.StatusBadRequest},
+		"a blank endpoint":       {`{"endpoint":"  "}`, nil, http.StatusBadRequest},
+		"a null TLS flag":        {`{"endpointTls":null}`, nil, http.StatusBadRequest},
+		"a null protection flag": {`{"deletionProtection":null}`, nil, http.StatusBadRequest},
+		"an unknown cluster":     {`{"name":"renamed"}`, status.Error(codes.NotFound, "cluster not found"), http.StatusNotFound},
+		"another cluster's auth organization": {
+			`{"authOrgId":"org_taken"}`, status.Error(codes.AlreadyExists, "a cluster with this auth organization exists"), http.StatusConflict,
+		},
+		"protection on while deletion is underway": {
+			`{"deletionProtection":true}`, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED), http.StatusConflict,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			response := callAdmin(t, store, http.MethodPatch, "/unstable/admin/clusters/"+tc.clusterID.String(), tc.body)
+			// A body refused before the call never reaches the cluster service.
+			store, clusterService := newClusterServiceStore(t)
+			if tc.answer != nil {
+				clusterService.EXPECT().UpdateCluster(mock.Anything, mock.Anything).Return(nil, tc.answer).Once()
+			}
+
+			response := callAdmin(t, store, http.MethodPatch, "/unstable/admin/clusters/"+uuid.NewString(), tc.body)
 
 			require.Equal(t, tc.want, response.Code, response.Body.String())
-			require.Equal(t, before, readClusters(t, db))
 		})
 	}
 }
@@ -415,11 +426,8 @@ func TestAdminUpdateClusterRefusesAnInvalidUpdate(t *testing.T) {
 func TestAdminUpdateClusterRefusesANullFlagWithoutTheValidator(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
-	clusterID := uuid.New()
-	insertCluster(t, db, clusterID, true)
-	before := readClusters(t, db)
+	// The cluster service is never asked.
+	store, _ := newClusterServiceStore(t)
 	router := gin.New()
 	api.RegisterHandlers(router, store)
 
@@ -430,13 +438,12 @@ func TestAdminUpdateClusterRefusesANullFlagWithoutTheValidator(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			request := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/unstable/admin/clusters/"+clusterID.String(), strings.NewReader(body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/unstable/admin/clusters/"+uuid.NewString(), strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 
 			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-			require.Equal(t, before, readClusters(t, db))
 		})
 	}
 }
@@ -447,7 +454,7 @@ func TestAClusterWhoseOnlyTeamIsDeletedShowsNoTeams(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
+	store := newAdminClusterStore(t, db)
 	name := "deleted-team-" + uuid.NewString()[:8]
 	clusterID := insertNamedCluster(t, db, name, "deleted-team.example.test", nil)
 	teamID := assignTeam(t, db, clusterID)
@@ -480,24 +487,104 @@ func TestAClusterWhoseOnlyTeamIsDeletedShowsNoTeams(t *testing.T) {
 func TestAdminRotateClusterTokenReplacesOnlyTheToken(t *testing.T) {
 	t.Parallel()
 
-	db := testutils.SetupDatabase(t)
-	store := newAdminClusterStore(db)
-	clusterID := insertNamedCluster(t, db, "rotate", "rotate.example.test", nil)
+	clusterID := uuid.New()
+	store, clusterService := newClusterServiceStore(t)
+	want := clustersgrpc.UpdateClusterRequest_builder{ClusterId: clusterID.String(), Token: new("rotated-token")}.Build()
+	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.UpdateClusterRequest) bool {
+		return proto.Equal(want, req)
+	})).Return(clustersgrpc.UpdateClusterResponse_builder{Cluster: createdCluster(clusterID, adminClusterCreateRequest())}.Build(), nil).Once()
+	clusterService.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.UpdateClusterRequest) bool {
+		return req.GetClusterId() != clusterID.String()
+	})).Return(nil, status.Error(codes.NotFound, "cluster not found")).Once()
 
 	rotated := callAdmin(t, store, http.MethodPut, "/unstable/admin/clusters/"+clusterID.String()+"/token", `{"token":" rotated-token "}`)
 	require.Equal(t, http.StatusNoContent, rotated.Code, rotated.Body.String())
-	require.Equal(t, "rotated-token", clusterToken(t, db, clusterID))
 
 	blank := callAdmin(t, store, http.MethodPut, "/unstable/admin/clusters/"+clusterID.String()+"/token", `{"token":"  "}`)
 	require.Equal(t, http.StatusBadRequest, blank.Code, blank.Body.String())
-	require.Equal(t, "rotated-token", clusterToken(t, db, clusterID))
 
 	missing := callAdmin(t, store, http.MethodPut, "/unstable/admin/clusters/"+uuid.NewString()+"/token", `{"token":"token"}`)
 	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
 }
 
-func newAdminClusterStore(db *testutils.Database) *APIStore {
-	return &APIStore{sqlcDB: db.SqlcClient}
+// Without a cluster service the API runs on the local cluster alone, and every
+// route that reads or writes a cluster record says so.
+func TestClusterRoutesAnswer503WithoutAClusterService(t *testing.T) {
+	t.Parallel()
+
+	store := &APIStore{}
+	clusterPath := "/unstable/admin/clusters/" + uuid.NewString()
+	managementPath := "/unstable/management/clusters/" + uuid.NewString()
+	type route struct {
+		call               func(*testing.T, *APIStore, string, string, string) *httptest.ResponseRecorder
+		method, path, body string
+	}
+	for name, tc := range map[string]route{
+		"admin list":                   {callAdmin, http.MethodGet, "/unstable/admin/clusters", ""},
+		"admin create":                 {callAdmin, http.MethodPost, "/unstable/admin/clusters", mustJSON(t, adminClusterCreateRequest())},
+		"admin get":                    {callAdmin, http.MethodGet, clusterPath, ""},
+		"admin metadata":               {callAdmin, http.MethodGet, clusterPath + "/metadata", ""},
+		"admin update":                 {callAdmin, http.MethodPatch, clusterPath, `{"name":"renamed"}`},
+		"admin delete":                 {callAdmin, http.MethodDelete, clusterPath, ""},
+		"admin teams":                  {callAdmin, http.MethodGet, clusterPath + "/teams", ""},
+		"admin token rotation":         {callAdmin, http.MethodPut, clusterPath + "/token", `{"token":"token"}`},
+		"management registration":      {callManagement, http.MethodPut, managementPath, mustJSON(t, managementClusterRegistration())},
+		"management delete":            {callManagement, http.MethodDelete, managementPath, ""},
+		"management deletion request":  {callManagement, http.MethodPut, managementPath + "/deletion", ""},
+		"management destroy readiness": {callManagement, http.MethodGet, managementPath + "/destroy-readiness", ""},
+		"management telemetry":         {callManagement, http.MethodPut, managementPath + "/telemetry", `{"telemetry_client_id":"client_test"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			response := tc.call(t, store, tc.method, tc.path, tc.body)
+			require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+		})
+	}
+}
+
+// The local cluster has no record, and the cluster service refuses its nil ID,
+// so the routes answer as for an unknown cluster without asking the service.
+func TestClusterRoutesTreatTheLocalClusterAsUnknown(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	// No expectation: a call fails the test.
+	store, _ := newClusterServiceStore(t)
+	store.sqlcDB = db.SqlcClient
+	clusterPath := "/unstable/admin/clusters/" + uuid.Nil.String()
+	managementPath := "/unstable/management/clusters/" + uuid.Nil.String()
+	type route struct {
+		call               func(*testing.T, *APIStore, string, string, string) *httptest.ResponseRecorder
+		method, path, body string
+		want               int
+	}
+	for name, tc := range map[string]route{
+		"admin get":            {callAdmin, http.MethodGet, clusterPath, "", http.StatusNotFound},
+		"admin metadata":       {callAdmin, http.MethodGet, clusterPath + "/metadata", "", http.StatusNotFound},
+		"admin teams":          {callAdmin, http.MethodGet, clusterPath + "/teams", "", http.StatusNotFound},
+		"admin update":         {callAdmin, http.MethodPatch, clusterPath, `{"name":"renamed"}`, http.StatusNotFound},
+		"admin token rotation": {callAdmin, http.MethodPut, clusterPath + "/token", `{"token":"token"}`, http.StatusNotFound},
+		"management telemetry": {
+			callManagement, http.MethodPut, managementPath + "/telemetry", `{"telemetry_client_id":"client_test"}`, http.StatusNotFound,
+		},
+		"management destroy readiness": {callManagement, http.MethodGet, managementPath + "/destroy-readiness", "", http.StatusNoContent},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			response := tc.call(t, store, tc.method, tc.path, tc.body)
+			require.Equal(t, tc.want, response.Code, response.Body.String())
+		})
+	}
+}
+
+// newAdminClusterStore serves the admin cluster routes from the test
+// database, which the cluster service shares.
+func newAdminClusterStore(t *testing.T, db *testutils.Database) *APIStore {
+	t.Helper()
+
+	return &APIStore{sqlcDB: db.SqlcClient, clusterService: clusterServiceFromDB(t, db)}
 }
 
 // callAdmin serves one request the way the server does: through the OpenAPI
@@ -526,6 +613,21 @@ func callAdmin(t *testing.T, store *APIStore, method, path, body string) *httpte
 	router.ServeHTTP(recorder, request)
 
 	return recorder
+}
+
+// createdCluster is the cluster the cluster service stores for request.
+func createdCluster(clusterID uuid.UUID, request api.AdminClusterCreateRequest) *clustersgrpc.Cluster {
+	return clustersgrpc.Cluster_builder{
+		ClusterId:          clusterID.String(),
+		Name:               request.Name,
+		Endpoint:           request.Endpoint,
+		EndpointTls:        request.EndpointTls,
+		Token:              request.Token,
+		SandboxProxyDomain: request.SandboxProxyDomain,
+		AuthOrgId:          request.AuthOrgId,
+		DeletionProtection: true,
+		Etag:               "etag-created",
+	}.Build()
 }
 
 func adminClusterCreateRequest() api.AdminClusterCreateRequest {
@@ -557,35 +659,4 @@ func assignTeam(t *testing.T, db *testutils.Database, clusterID uuid.UUID) uuid.
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, teamID))
 
 	return teamID
-}
-
-func clusterToken(t *testing.T, db *testutils.Database, clusterID uuid.UUID) string {
-	t.Helper()
-
-	var token string
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT token FROM public.clusters WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&token)
-		}, clusterID))
-
-	return token
-}
-
-// readClusters reads every stored cluster, token included, to show a refused
-// write changed none of them.
-func readClusters(t *testing.T, db *testutils.Database) string {
-	t.Helper()
-
-	var state string
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(),
-		`SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY id), '[]')::text FROM public.clusters c`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&state)
-		}))
-
-	return state
 }

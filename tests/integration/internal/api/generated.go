@@ -2568,21 +2568,6 @@ type SnapshotInfo struct {
 	SnapshotID string `json:"snapshotID"`
 }
 
-// Team defines model for Team.
-type Team struct {
-	// ApiKey API key for the team. Empty when the user's role on the team is read-only.
-	ApiKey string `json:"apiKey"`
-
-	// IsDefault Whether the team is the default team
-	IsDefault bool `json:"isDefault"`
-
-	// Name Name of the team
-	Name string `json:"name"`
-
-	// TeamID Identifier of the team
-	TeamID string `json:"teamID"`
-}
-
 // TeamAPIKey defines model for TeamAPIKey.
 type TeamAPIKey struct {
 	// CreatedAt Timestamp of API key creation
@@ -2895,6 +2880,42 @@ type TemplateBuildStartV2 struct {
 // TemplateBuildStatus Status of the template build
 type TemplateBuildStatus string
 
+// TemplateBuildWithTags defines model for TemplateBuildWithTags.
+type TemplateBuildWithTags struct {
+	// BuildID Identifier of the build
+	BuildID openapi_types.UUID `json:"buildID"`
+
+	// CpuCount CPU cores for the sandbox
+	CpuCount CPUCount `json:"cpuCount"`
+
+	// CreatedAt Time when the build was created
+	CreatedAt time.Time `json:"createdAt"`
+
+	// DiskSizeMB Disk size for the sandbox in MiB
+	DiskSizeMB *DiskSizeMB `json:"diskSizeMB,omitempty"`
+
+	// EnvdVersion Version of the envd running in the sandbox
+	EnvdVersion *EnvdVersion `json:"envdVersion,omitempty"`
+
+	// FinishedAt Time when the build was finished
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
+	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
+
+	// MemoryMB Memory for the sandbox in MiB
+	MemoryMB MemoryMB `json:"memoryMB"`
+
+	// Status Status of the template build
+	Status TemplateBuildStatus `json:"status"`
+
+	// Tags Tags of the template that point at this build. A tag points at the latest ready build it was assigned to, the build a sandbox created with that tag starts from.
+	Tags []string `json:"tags"`
+
+	// UpdatedAt Time when the build was last updated
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // TemplateRequestResponseV3 defines model for TemplateRequestResponseV3.
 type TemplateRequestResponseV3 struct {
 	// Aliases Aliases of the template
@@ -3023,6 +3044,44 @@ type TemplateUpdateRequest struct {
 type TemplateUpdateResponse struct {
 	// Names Names of the template (namespace/alias format when namespaced)
 	Names []string `json:"names"`
+}
+
+// TemplateV2 A template with its default build. `defaultBuild` is the build a sandbox created without a tag starts from, the latest ready build tagged default; it is absent until such a build is ready. `buildStatus` is the status of the latest build tagged default in any state: it is `building` while a rebuild runs, although sandboxes still start from the default build.
+type TemplateV2 struct {
+	// BuildCount Number of times the template was built
+	BuildCount int32 `json:"buildCount"`
+
+	// BuildStatus Status of the template build
+	BuildStatus TemplateBuildStatus `json:"buildStatus"`
+
+	// CreatedAt Time when the template was created
+	CreatedAt    time.Time      `json:"createdAt"`
+	CreatedBy    *TeamUser      `json:"createdBy"`
+	DefaultBuild *TemplateBuild `json:"defaultBuild,omitempty"`
+
+	// Description Description of the template
+	Description *string `json:"description,omitempty"`
+
+	// IsDefault Whether the template is one of the platform's default templates
+	IsDefault bool `json:"isDefault"`
+
+	// LastSpawnedAt Time when the template was last used
+	LastSpawnedAt *time.Time `json:"lastSpawnedAt"`
+
+	// Names Names of the template (namespace/alias format when namespaced)
+	Names []string `json:"names"`
+
+	// Public Whether the template is public or only accessible by the team
+	Public bool `json:"public"`
+
+	// SpawnCount Number of times the template was used
+	SpawnCount int64 `json:"spawnCount"`
+
+	// TemplateID Identifier of the template
+	TemplateID string `json:"templateID"`
+
+	// UpdatedAt Time when the template was last updated
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // TemplateWithBuilds defines model for TemplateWithBuilds.
@@ -3360,6 +3419,12 @@ type TagQuery = string
 // TeamID defines model for teamID.
 type TeamID = string
 
+// TemplateBuildStatuses defines model for templateBuildStatuses.
+type TemplateBuildStatuses = []TemplateBuildStatus
+
+// TemplateBuildTags defines model for templateBuildTags.
+type TemplateBuildTags = []string
+
 // TemplateID defines model for templateID.
 type TemplateID = string
 
@@ -3622,6 +3687,21 @@ type GetTemplatesTemplateIDParams struct {
 
 	// Limit Maximum number of items to return per page
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetTemplatesTemplateIDBuildsParams defines parameters for GetTemplatesTemplateIDBuilds.
+type GetTemplatesTemplateIDBuildsParams struct {
+	// NextToken Cursor to start the list from
+	NextToken *PaginationNextToken `form:"nextToken,omitempty" json:"nextToken,omitempty"`
+
+	// Limit Maximum number of items to return per page
+	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Statuses Comma-separated list of build statuses to include. Every status when omitted.
+	Statuses *TemplateBuildStatuses `form:"statuses,omitempty" json:"statuses,omitempty"`
+
+	// Tags Comma-separated list of tags. Only the builds these tags point at are returned. Every build when omitted.
+	Tags *TemplateBuildTags `form:"tags,omitempty" json:"tags,omitempty"`
 }
 
 // GetTemplatesTemplateIDBuildsBuildIDLogsParams defines parameters for GetTemplatesTemplateIDBuildsBuildIDLogs.
@@ -5102,13 +5182,6 @@ type ClientInterface interface {
 	// Corresponds with GET /snapshots (the `GetSnapshots` operationId).
 	GetSnapshots(ctx context.Context, params *GetSnapshotsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetTeams List teams
-	//
-	// List all teams.
-	//
-	// Corresponds with GET /teams (the `GetTeams` operationId).
-	GetTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetTeamsTeamIDMetrics Team metrics
 	//
 	// Get metrics for the team.
@@ -5207,6 +5280,13 @@ type ClientInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PatchTemplatesTemplateID(ctx context.Context, templateID TemplateID, body PatchTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetTemplatesTemplateIDBuilds List a template's builds
+	//
+	// List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+	//
+	// Corresponds with GET /templates/{templateID}/builds (the `GetTemplatesTemplateIDBuilds` operationId).
+	GetTemplatesTemplateIDBuilds(ctx context.Context, templateID TemplateID, params *GetTemplatesTemplateIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetTemplatesTemplateIDBuildsBuildIDLogs Template build logs
 	//
 	// Get template build logs.
@@ -5290,7 +5370,7 @@ type ClientInterface interface {
 
 	// AdminDeleteCluster Delete a cluster and its environments as admin
 	//
-	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 	//
 	// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
 	AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5613,14 +5693,14 @@ type ClientInterface interface {
 
 	// ManagementDeleteCluster Delete a cluster and its environments.
 	//
-	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 	//
 	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 	ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementRegisterClusterWithBody Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5629,7 +5709,7 @@ type ClientInterface interface {
 
 	// ManagementRegisterCluster Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -5887,6 +5967,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 	GetV2Templates(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetV2TemplatesTemplateID Template info (v2)
+	//
+	// Get a template by its ID or name, with its default build and without its other builds.
+	//
+	// Corresponds with GET /v2/templates/{templateID} (the `GetV2TemplatesTemplateID` operationId).
+	GetV2TemplatesTemplateID(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PatchV2TemplatesTemplateIDWithBody Update template (v2)
 	//
@@ -7227,23 +7314,6 @@ func (c *Client) GetSnapshots(ctx context.Context, params *GetSnapshotsParams, r
 	return c.Client.Do(req)
 }
 
-// GetTeams List teams
-//
-// List all teams.
-//
-// Corresponds with GET /teams (the `GetTeams` operationId).
-func (c *Client) GetTeams(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTeamsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // GetTeamsTeamIDMetrics Team metrics
 //
 // Get metrics for the team.
@@ -7459,6 +7529,23 @@ func (c *Client) PatchTemplatesTemplateID(ctx context.Context, templateID Templa
 	return c.Client.Do(req)
 }
 
+// GetTemplatesTemplateIDBuilds List a template's builds
+//
+// List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+//
+// Corresponds with GET /templates/{templateID}/builds (the `GetTemplatesTemplateIDBuilds` operationId).
+func (c *Client) GetTemplatesTemplateIDBuilds(ctx context.Context, templateID TemplateID, params *GetTemplatesTemplateIDBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTemplatesTemplateIDBuildsRequest(c.Server, templateID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetTemplatesTemplateIDBuildsBuildIDLogs Template build logs
 //
 // Get template build logs.
@@ -7652,7 +7739,7 @@ func (c *Client) AdminCreateCluster(ctx context.Context, body AdminCreateCluster
 
 // AdminDeleteCluster Delete a cluster and its environments as admin
 //
-// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 //
 // Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
 func (c *Client) AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8315,7 +8402,7 @@ func (c *Client) GetUnstableBuildsBuildID(ctx context.Context, buildID BuildID, 
 
 // ManagementDeleteCluster Delete a cluster and its environments.
 //
-// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 //
 // Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8332,7 +8419,7 @@ func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterI
 
 // ManagementRegisterClusterWithBody Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8351,7 +8438,7 @@ func (c *Client) ManagementRegisterClusterWithBody(ctx context.Context, clusterI
 
 // ManagementRegisterCluster Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8930,6 +9017,23 @@ func (c *Client) GetV2SandboxesSandboxIDLogs(ctx context.Context, sandboxID Sand
 // Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 func (c *Client) GetV2Templates(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetV2TemplatesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetV2TemplatesTemplateID Template info (v2)
+//
+// Get a template by its ID or name, with its default build and without its other builds.
+//
+// Corresponds with GET /v2/templates/{templateID} (the `GetV2TemplatesTemplateID` operationId).
+func (c *Client) GetV2TemplatesTemplateID(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV2TemplatesTemplateIDRequest(c.Server, templateID)
 	if err != nil {
 		return nil, err
 	}
@@ -11719,33 +11823,6 @@ func NewGetSnapshotsRequest(server string, params *GetSnapshotsParams) (*http.Re
 	return req, nil
 }
 
-// NewGetTeamsRequest constructs an http.Request for the GetTeams method
-func NewGetTeamsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/teams")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewGetTeamsTeamIDMetricsRequest constructs an http.Request for the GetTeamsTeamIDMetrics method
 func NewGetTeamsTeamIDMetricsRequest(server string, teamID TeamID, params *GetTeamsTeamIDMetricsParams) (*http.Request, error) {
 	var err error
@@ -12233,6 +12310,103 @@ func NewPatchTemplatesTemplateIDRequestWithBody(server string, templateID Templa
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetTemplatesTemplateIDBuildsRequest constructs an http.Request for the GetTemplatesTemplateIDBuilds method
+func NewGetTemplatesTemplateIDBuildsRequest(server string, templateID TemplateID, params *GetTemplatesTemplateIDBuildsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/templates/%s/builds", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.NextToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "nextToken", *params.NextToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Statuses != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "statuses", *params.Statuses, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Tags != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "tags", *params.Tags, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -15471,6 +15645,40 @@ func NewGetV2TemplatesRequest(server string, params *GetV2TemplatesParams) (*htt
 	return req, nil
 }
 
+// NewGetV2TemplatesTemplateIDRequest constructs an http.Request for the GetV2TemplatesTemplateID method
+func NewGetV2TemplatesTemplateIDRequest(server string, templateID TemplateID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "templateID", templateID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v2/templates/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPatchV2TemplatesTemplateIDRequest calls the generic PatchV2TemplatesTemplateID builder with application/json body
 func NewPatchV2TemplatesTemplateIDRequest(server string, templateID TemplateID, body PatchV2TemplatesTemplateIDJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16446,15 +16654,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /snapshots (the `GetSnapshots` operationId).
 	GetSnapshotsWithResponse(ctx context.Context, params *GetSnapshotsParams, reqEditors ...RequestEditorFn) (*GetSnapshotsResponse, error)
 
-	// GetTeamsWithResponse List teams
-	//
-	// List all teams.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /teams (the `GetTeams` operationId).
-	GetTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTeamsResponse, error)
-
 	// GetTeamsTeamIDMetricsWithResponse Team metrics
 	//
 	// Get metrics for the team.
@@ -16565,6 +16764,15 @@ type ClientWithResponsesInterface interface {
 	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PatchTemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, body PatchTemplatesTemplateIDJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTemplatesTemplateIDResponse, error)
 
+	// GetTemplatesTemplateIDBuildsWithResponse List a template's builds
+	//
+	// List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /templates/{templateID}/builds (the `GetTemplatesTemplateIDBuilds` operationId).
+	GetTemplatesTemplateIDBuildsWithResponse(ctx context.Context, templateID TemplateID, params *GetTemplatesTemplateIDBuildsParams, reqEditors ...RequestEditorFn) (*GetTemplatesTemplateIDBuildsResponse, error)
+
 	// GetTemplatesTemplateIDBuildsBuildIDLogsWithResponse Template build logs
 	//
 	// Get template build logs.
@@ -16666,7 +16874,7 @@ type ClientWithResponsesInterface interface {
 
 	// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
 	//
-	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17021,7 +17229,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementDeleteClusterWithResponse Delete a cluster and its environments.
 	//
-	// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17030,7 +17238,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17039,7 +17247,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementRegisterClusterWithResponse Register a cluster.
 	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17325,6 +17533,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v2/templates (the `GetV2Templates` operationId).
 	GetV2TemplatesWithResponse(ctx context.Context, params *GetV2TemplatesParams, reqEditors ...RequestEditorFn) (*GetV2TemplatesResponse, error)
+
+	// GetV2TemplatesTemplateIDWithResponse Template info (v2)
+	//
+	// Get a template by its ID or name, with its default build and without its other builds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v2/templates/{templateID} (the `GetV2TemplatesTemplateID` operationId).
+	GetV2TemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*GetV2TemplatesTemplateIDResponse, error)
 
 	// PatchV2TemplatesTemplateIDWithBodyWithResponse Update template (v2)
 	//
@@ -21623,75 +21840,6 @@ func (r GetSnapshotsResponse) ContentType() string {
 	return ""
 }
 
-// GetTeamsResponse429Headers the declared response headers of an HTTP 429 response for GetTeams
-type GetTeamsResponse429Headers struct {
-	RetryAfter *int
-}
-
-type GetTeamsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Team
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *N429
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// Headers429 the parsed response headers for an HTTP 429 response
-	Headers429 *GetTeamsResponse429Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetTeamsResponse) GetJSON200() *[]Team {
-	return r.JSON200
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r GetTeamsResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r GetTeamsResponse) GetJSON429() *N429 {
-	return r.JSON429
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r GetTeamsResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r GetTeamsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetTeamsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetTeamsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetTeamsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // GetTeamsTeamIDMetricsResponse429Headers the declared response headers of an HTTP 429 response for GetTeamsTeamIDMetrics
 type GetTeamsTeamIDMetricsResponse429Headers struct {
 	RetryAfter *int
@@ -22489,6 +22637,103 @@ func (r PatchTemplatesTemplateIDResponse) ContentType() string {
 	return ""
 }
 
+// GetTemplatesTemplateIDBuildsResponse200Headers the declared response headers of an HTTP 200 response for GetTemplatesTemplateIDBuilds
+type GetTemplatesTemplateIDBuildsResponse200Headers struct {
+	XNextToken *string
+}
+
+// GetTemplatesTemplateIDBuildsResponse429Headers the declared response headers of an HTTP 429 response for GetTemplatesTemplateIDBuilds
+type GetTemplatesTemplateIDBuildsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetTemplatesTemplateIDBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]TemplateBuildWithTags
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetTemplatesTemplateIDBuildsResponse200Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetTemplatesTemplateIDBuildsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON200() *[]TemplateBuildWithTags {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetTemplatesTemplateIDBuildsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTemplatesTemplateIDBuildsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTemplatesTemplateIDBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTemplatesTemplateIDBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTemplatesTemplateIDBuildsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetTemplatesTemplateIDBuildsBuildIDLogsResponse429Headers the declared response headers of an HTTP 429 response for GetTemplatesTemplateIDBuildsBuildIDLogs
 type GetTemplatesTemplateIDBuildsBuildIDLogsResponse429Headers struct {
 	RetryAfter *int
@@ -23171,6 +23416,8 @@ type AdminListClustersResponse struct {
 	JSON401 *N401
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23191,6 +23438,11 @@ func (r AdminListClustersResponse) GetJSON401() *N401 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminListClustersResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminListClustersResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23235,6 +23487,8 @@ type AdminCreateClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -23260,6 +23514,11 @@ func (r AdminCreateClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminCreateClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminCreateClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23302,6 +23561,8 @@ type AdminDeleteClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -23322,6 +23583,11 @@ func (r AdminDeleteClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminDeleteClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminDeleteClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23366,6 +23632,8 @@ type AdminGetClusterResponse struct {
 	JSON404 *N404
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23391,6 +23659,11 @@ func (r AdminGetClusterResponse) GetJSON404() *N404 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminGetClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminGetClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23437,6 +23710,8 @@ type AdminUpdateClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23467,6 +23742,11 @@ func (r AdminUpdateClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminUpdateClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminUpdateClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23511,6 +23791,8 @@ type AdminGetClusterMetadataResponse struct {
 	JSON404 *N404
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23536,6 +23818,11 @@ func (r AdminGetClusterMetadataResponse) GetJSON404() *N404 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminGetClusterMetadataResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminGetClusterMetadataResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23580,6 +23867,8 @@ type AdminListClusterTeamsResponse struct {
 	JSON404 *N404
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -23605,6 +23894,11 @@ func (r AdminListClusterTeamsResponse) GetJSON404() *N404 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminListClusterTeamsResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminListClusterTeamsResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -23647,6 +23941,8 @@ type AdminRotateClusterTokenResponse struct {
 	JSON404 *N404
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -23667,6 +23963,11 @@ func (r AdminRotateClusterTokenResponse) GetJSON404() *N404 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r AdminRotateClusterTokenResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AdminRotateClusterTokenResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25174,6 +25475,8 @@ type ManagementDeleteClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25194,6 +25497,11 @@ func (r ManagementDeleteClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementDeleteClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementDeleteClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25236,6 +25544,8 @@ type ManagementRegisterClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25256,6 +25566,11 @@ func (r ManagementRegisterClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementRegisterClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementRegisterClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25298,6 +25613,8 @@ type ManagementRequestClusterDeletionResponse struct {
 	JSON409 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25318,6 +25635,11 @@ func (r ManagementRequestClusterDeletionResponse) GetJSON409() *Error {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementRequestClusterDeletionResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementRequestClusterDeletionResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25360,6 +25682,8 @@ type ManagementClusterDestroyReadinessResponse struct {
 	JSON409 *Error
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25380,6 +25704,11 @@ func (r ManagementClusterDestroyReadinessResponse) GetJSON409() *Error {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementClusterDestroyReadinessResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementClusterDestroyReadinessResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25486,6 +25815,8 @@ type ManagementUpdateClusterTelemetryResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25511,6 +25842,11 @@ func (r ManagementUpdateClusterTelemetryResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementUpdateClusterTelemetryResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementUpdateClusterTelemetryResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25621,6 +25957,8 @@ type ManagementUpsertProjectResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -25656,6 +25994,11 @@ func (r ManagementUpsertProjectResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementUpsertProjectResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementUpsertProjectResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -25886,6 +26229,8 @@ type ManagementAssignProjectClusterResponse struct {
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -25911,6 +26256,11 @@ func (r ManagementAssignProjectClusterResponse) GetJSON409() *N409 {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r ManagementAssignProjectClusterResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ManagementAssignProjectClusterResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -27066,6 +27416,96 @@ func (r GetV2TemplatesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetV2TemplatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetV2TemplatesTemplateIDResponse429Headers the declared response headers of an HTTP 429 response for GetV2TemplatesTemplateID
+type GetV2TemplatesTemplateIDResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetV2TemplatesTemplateIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TemplateV2
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *N403
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetV2TemplatesTemplateIDResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON200() *TemplateV2 {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON403() *N403 {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetV2TemplatesTemplateIDResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetV2TemplatesTemplateIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV2TemplatesTemplateIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV2TemplatesTemplateIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetV2TemplatesTemplateIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28794,21 +29234,6 @@ func (c *ClientWithResponses) GetSnapshotsWithResponse(ctx context.Context, para
 	return ParseGetSnapshotsResponse(rsp)
 }
 
-// GetTeamsWithResponse List teams
-//
-// List all teams.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /teams (the `GetTeams` operationId).
-func (c *ClientWithResponses) GetTeamsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTeamsResponse, error) {
-	rsp, err := c.GetTeams(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetTeamsResponse(rsp)
-}
-
 // GetTeamsTeamIDMetricsWithResponse Team metrics
 //
 // Get metrics for the team.
@@ -28990,6 +29415,21 @@ func (c *ClientWithResponses) PatchTemplatesTemplateIDWithResponse(ctx context.C
 	return ParsePatchTemplatesTemplateIDResponse(rsp)
 }
 
+// GetTemplatesTemplateIDBuildsWithResponse List a template's builds
+//
+// List the builds of a template, newest first. The template is given by its ID or name. A template named `aliases` is given by its ID or by its name with the team prefix.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /templates/{templateID}/builds (the `GetTemplatesTemplateIDBuilds` operationId).
+func (c *ClientWithResponses) GetTemplatesTemplateIDBuildsWithResponse(ctx context.Context, templateID TemplateID, params *GetTemplatesTemplateIDBuildsParams, reqEditors ...RequestEditorFn) (*GetTemplatesTemplateIDBuildsResponse, error) {
+	rsp, err := c.GetTemplatesTemplateIDBuilds(ctx, templateID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTemplatesTemplateIDBuildsResponse(rsp)
+}
+
 // GetTemplatesTemplateIDBuildsBuildIDLogsWithResponse Template build logs
 //
 // Get template build logs.
@@ -29157,7 +29597,7 @@ func (c *ClientWithResponses) AdminCreateClusterWithResponse(ctx context.Context
 
 // AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
 //
-// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29716,7 +30156,7 @@ func (c *ClientWithResponses) GetUnstableBuildsBuildIDWithResponse(ctx context.C
 
 // ManagementDeleteClusterWithResponse Delete a cluster and its environments.
 //
-// Deletes a cluster after all team assignments are detached. In the same transaction, soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history. A team assignment rejects the deletion and leaves the environments untouched, and so does deletion protection on the cluster. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
+// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history, and afterwards the cluster service deletes the cluster. A team assigned between those two steps returns a conflict with the templates already deleted; repeating the deletion once that team is detached completes it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -29731,7 +30171,7 @@ func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Co
 
 // ManagementRegisterClusterWithBodyWithResponse Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -29746,7 +30186,7 @@ func (c *ClientWithResponses) ManagementRegisterClusterWithBodyWithResponse(ctx 
 
 // ManagementRegisterClusterWithResponse Register a cluster.
 //
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection. An omitted telemetry client ID preserves the stored mapping. A different auth organization returns a conflict with error_code cluster_registration_conflict. An invalid registration returns 400 with error_code cluster_registration_invalid.
+// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30229,6 +30669,21 @@ func (c *ClientWithResponses) GetV2TemplatesWithResponse(ctx context.Context, pa
 		return nil, err
 	}
 	return ParseGetV2TemplatesResponse(rsp)
+}
+
+// GetV2TemplatesTemplateIDWithResponse Template info (v2)
+//
+// Get a template by its ID or name, with its default build and without its other builds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v2/templates/{templateID} (the `GetV2TemplatesTemplateID` operationId).
+func (c *ClientWithResponses) GetV2TemplatesTemplateIDWithResponse(ctx context.Context, templateID TemplateID, reqEditors ...RequestEditorFn) (*GetV2TemplatesTemplateIDResponse, error) {
+	rsp, err := c.GetV2TemplatesTemplateID(ctx, templateID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV2TemplatesTemplateIDResponse(rsp)
 }
 
 // PatchV2TemplatesTemplateIDWithBodyWithResponse Update template (v2)
@@ -34128,66 +34583,6 @@ func ParseGetSnapshotsResponse(rsp *http.Response) (*GetSnapshotsResponse, error
 	return response, nil
 }
 
-// ParseGetTeamsResponse parses an HTTP response from a GetTeamsWithResponse call
-func ParseGetTeamsResponse(rsp *http.Response) (*GetTeamsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetTeamsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Team
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest N429
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 429:
-		var headers GetTeamsResponse429Headers
-		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
-			var value int
-			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.RetryAfter = &value
-		}
-		response.Headers429 = &headers
-	}
-
-	return response, nil
-}
-
 // ParseGetTeamsTeamIDMetricsResponse parses an HTTP response from a GetTeamsTeamIDMetricsWithResponse call
 func ParseGetTeamsTeamIDMetricsResponse(rsp *http.Response) (*GetTeamsTeamIDMetricsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -34952,6 +35347,97 @@ func ParsePatchTemplatesTemplateIDResponse(rsp *http.Response) (*PatchTemplatesT
 	return response, nil
 }
 
+// ParseGetTemplatesTemplateIDBuildsResponse parses an HTTP response from a GetTemplatesTemplateIDBuildsWithResponse call
+func ParseGetTemplatesTemplateIDBuildsResponse(rsp *http.Response) (*GetTemplatesTemplateIDBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTemplatesTemplateIDBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []TemplateBuildWithTags
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetTemplatesTemplateIDBuildsResponse200Headers
+		if values := rsp.Header.Values("X-Next-Token"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Next-Token", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XNextToken = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 429:
+		var headers GetTemplatesTemplateIDBuildsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetTemplatesTemplateIDBuildsBuildIDLogsResponse parses an HTTP response from a GetTemplatesTemplateIDBuildsBuildIDLogsWithResponse call
 func ParseGetTemplatesTemplateIDBuildsBuildIDLogsResponse(rsp *http.Response) (*GetTemplatesTemplateIDBuildsBuildIDLogsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -35593,6 +36079,13 @@ func ParseAdminListClustersResponse(rsp *http.Response) (*AdminListClustersRespo
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -35647,6 +36140,13 @@ func ParseAdminCreateClusterResponse(rsp *http.Response) (*AdminCreateClusterRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -35696,6 +36196,13 @@ func ParseAdminDeleteClusterResponse(rsp *http.Response) (*AdminDeleteClusterRes
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -35750,6 +36257,13 @@ func ParseAdminGetClusterResponse(rsp *http.Response) (*AdminGetClusterResponse,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -35812,6 +36326,13 @@ func ParseAdminUpdateClusterResponse(rsp *http.Response) (*AdminUpdateClusterRes
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -35865,6 +36386,13 @@ func ParseAdminGetClusterMetadataResponse(rsp *http.Response) (*AdminGetClusterM
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -35920,6 +36448,13 @@ func ParseAdminListClusterTeamsResponse(rsp *http.Response) (*AdminListClusterTe
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -35969,6 +36504,13 @@ func ParseAdminRotateClusterTokenResponse(rsp *http.Response) (*AdminRotateClust
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -37284,6 +37826,13 @@ func ParseManagementDeleteClusterResponse(rsp *http.Response) (*ManagementDelete
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -37333,6 +37882,13 @@ func ParseManagementRegisterClusterResponse(rsp *http.Response) (*ManagementRegi
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -37384,6 +37940,13 @@ func ParseManagementRequestClusterDeletionResponse(rsp *http.Response) (*Managem
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -37433,6 +37996,13 @@ func ParseManagementClusterDestroyReadinessResponse(rsp *http.Response) (*Manage
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -37537,6 +38107,13 @@ func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*Managem
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -37655,6 +38232,13 @@ func ParseManagementUpsertProjectResponse(rsp *http.Response) (*ManagementUpsert
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -37862,6 +38446,13 @@ func ParseManagementAssignProjectClusterResponse(rsp *http.Response) (*Managemen
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -38895,6 +39486,87 @@ func ParseGetV2TemplatesResponse(rsp *http.Response) (*GetV2TemplatesResponse, e
 		response.Headers200 = &headers
 	case rsp.StatusCode == 429:
 		var headers GetV2TemplatesResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetV2TemplatesTemplateIDResponse parses an HTTP response from a GetV2TemplatesTemplateIDWithResponse call
+func ParseGetV2TemplatesTemplateIDResponse(rsp *http.Response) (*GetV2TemplatesTemplateIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV2TemplatesTemplateIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TemplateV2
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest N403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetV2TemplatesTemplateIDResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

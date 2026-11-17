@@ -88,7 +88,7 @@ jobs:
           # deployment does, with the shared Redis helper's checks of it.
           - package: packages/api
             shard: cluster
-            test_path: ./internal/sandbox/... ../shared/pkg/redis/...
+            test_path: ./internal/sandbox/... ../shared/pkg/redis/... ../shared/pkg/sandboxstore/... ../scheduling-api/internal/reservation/... ../scheduling-api/internal/state/...
             redis: true
             cluster: true
             sudo: false
@@ -134,7 +134,7 @@ jobs:
             runner: infra-tests
           - package: packages/scheduling-api
             test_path: ./...
-            postgres: true
+            redis: true
             sudo: false
             race: true
             runner: blacksmith-4vcpu-ubuntu-2404
@@ -142,6 +142,15 @@ jobs:
             test_path: ./pkg/...
             redis: true
             sudo: false
+            runner: blacksmith-4vcpu-ubuntu-2404
+          # The sandbox store's Redis tests again, under the race detector on
+          # the standalone server; the entry above runs them without it.
+          - package: packages/shared
+            shard: sandboxstore
+            test_path: ./pkg/sandboxstore/...
+            redis: true
+            sudo: false
+            race: true
             runner: blacksmith-4vcpu-ubuntu-2404
       fail-fast: false
     steps:

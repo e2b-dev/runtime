@@ -525,7 +525,8 @@ END;
 $$;
 CREATE VIEW public.snapshots AS
 SELECT created_at, env_id, sandbox_id, id, metadata, base_env_id, sandbox_started_at,
-       env_secure, origin_node_id, allow_internet_access, auto_pause, team_id, config, env_deleted_at
+       env_secure, origin_node_id, allow_internet_access, auto_pause, team_id, config, env_deleted_at,
+       expires_at
 FROM public.snapshots_for_retry WHERE fail_snapshot_read();`)
 	require.NoError(t, err)
 	_, err = db.SqlcClient.Pool().Exec(ctx, "INSERT INTO snapshot_read_failure (failures, code, message) VALUES ($1, $2, $3)", failures, code, message)

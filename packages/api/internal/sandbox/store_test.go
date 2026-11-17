@@ -17,10 +17,11 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	reservationsredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/reservations/redis"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	reservationsredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
 
 // newTestStorage spins up a redis testcontainer and returns a fresh redis-backed
@@ -436,13 +437,14 @@ func TestRemove_StaleExecutionKeepsSuccessorReservation(t *testing.T) {
 }
 
 // The sync hands every sandbox the node lists as powered off, and only those,
-// to EndPoweredOffSandbox.
+// to EndPoweredOffSandbox, before it returns: the caller tracks what the
+// callback starts under the sync still running.
 func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
 	t.Parallel()
 
-	ended := make(chan NodeSandbox, 2)
+	var ended []string
 	store := NewStore(newTestStorage(t), &NoOpReservationStorage{}, Callbacks{
-		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended <- sbx },
+		EndPoweredOffSandbox: func(_ context.Context, sbx NodeSandbox) { ended = append(ended, sbx.SandboxID) },
 	})
 
 	running := createTestSandbox()
@@ -454,18 +456,7 @@ func TestReconcile_EndsPoweredOffSandboxes(t *testing.T) {
 	listed.DiskKept = true
 	store.Reconcile(t.Context(), []NodeSandbox{running.ToNodeSandbox(), listed}, "node-1")
 
-	select {
-	case got := <-ended:
-		assert.Equal(t, poweredOff.SandboxID, got.SandboxID)
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "EndPoweredOffSandbox was not called")
-	}
-
-	select {
-	case got := <-ended:
-		require.Failf(t, "EndPoweredOffSandbox called for a sandbox that is not powered off", "sandbox %s", got.SandboxID)
-	case <-time.After(200 * time.Millisecond):
-	}
+	assert.Equal(t, []string{poweredOff.SandboxID}, ended)
 }
 
 // The sync hands every sandbox the node lists as ended with nothing kept to
@@ -707,4 +698,96 @@ func TestReserve_WaiterGetsStartAPIErrorPromptly(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		require.Fail(t, "waiter did not return")
 	}
+}
+
+// finishCall is one FinishTransition call a transitionStorage saw.
+type finishCall struct {
+	transitionID string
+	action       StateAction
+	outcome      sandboxtypes.TransitionOutcome
+}
+
+// transitionStorage answers BeginRemoving with its fields and records every
+// FinishTransition call.
+type transitionStorage struct {
+	Storage
+
+	transition  StateTransition
+	alreadyDone bool
+	err         error
+
+	mu       sync.Mutex
+	finishes []finishCall
+}
+
+func (s *transitionStorage) BeginRemoving(context.Context, uuid.UUID, string, RemoveOpts) (StateTransition, bool, error) {
+	return s.transition, s.alreadyDone, s.err
+}
+
+func (s *transitionStorage) FinishTransition(_ context.Context, _ uuid.UUID, _ string, transitionID string, action StateAction, outcome sandboxtypes.TransitionOutcome) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishes = append(s.finishes, finishCall{transitionID: transitionID, action: action, outcome: outcome})
+
+	return nil
+}
+
+func TestStartRemoving_FinishCallback(t *testing.T) {
+	t.Parallel()
+
+	sbx := createTestSandbox()
+	opts := RemoveOpts{Action: StateActionSnapshot}
+
+	t.Run("started", func(t *testing.T) {
+		t.Parallel()
+
+		storage := &transitionStorage{transition: StateTransition{Sandbox: sbx, ID: "transition-1"}}
+		store := NewStore(storage, &NoOpReservationStorage{}, Callbacks{})
+
+		transition, alreadyDone, finish, err := store.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, opts)
+		require.NoError(t, err)
+		assert.False(t, alreadyDone)
+		assert.Equal(t, storage.transition, transition)
+		require.NotNil(t, finish)
+
+		workErr := errors.New("boom")
+		finish(t.Context(), workErr)
+
+		assert.Equal(t, []finishCall{{
+			transitionID: "transition-1",
+			action:       StateActionSnapshot,
+			outcome:      sandboxtypes.TransitionOutcomeOf(workErr),
+		}}, storage.finishes)
+	})
+
+	t.Run("already done", func(t *testing.T) {
+		t.Parallel()
+
+		storage := &transitionStorage{transition: StateTransition{Sandbox: sbx}, alreadyDone: true}
+		store := NewStore(storage, &NoOpReservationStorage{}, Callbacks{})
+
+		transition, alreadyDone, finish, err := store.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, opts)
+		require.NoError(t, err)
+		assert.True(t, alreadyDone)
+		assert.Equal(t, storage.transition, transition)
+		require.NotNil(t, finish)
+
+		finish(t.Context(), nil)
+		assert.Empty(t, storage.finishes)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		t.Parallel()
+
+		backendErr := fmt.Errorf("start: %w", ErrLifecycleHeld)
+		storage := &transitionStorage{transition: StateTransition{Sandbox: sbx}, err: backendErr}
+		store := NewStore(storage, &NoOpReservationStorage{}, Callbacks{})
+
+		transition, alreadyDone, finish, err := store.StartRemoving(t.Context(), sbx.TeamID, sbx.SandboxID, opts)
+		require.ErrorIs(t, err, backendErr)
+		assert.False(t, alreadyDone)
+		assert.Nil(t, finish)
+		assert.Equal(t, storage.transition, transition)
+		assert.Empty(t, storage.finishes)
+	})
 }

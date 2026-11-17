@@ -26,7 +26,6 @@ WORKDIR /build/scheduling-api
 ARG COMMIT_SHA
 ARG VERSION
 RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -ldflags "-X=main.commitSHA=${COMMIT_SHA} ${VERSION:+-X=main.version=${VERSION}}" -o /build/bin/scheduling-api .
-RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -o /build/bin/scheduling-api-migrate ./cmd/migrate
 
 FROM alpine:${ALPINE_VERSION}
 # Bump this date to force a rebuild from here down, so the upgrade below
@@ -34,6 +33,5 @@ FROM alpine:${ALPINE_VERSION}
 ENV LAST_FORCED_UPDATE=2026-10-20
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 COPY --from=builder /build/bin/scheduling-api /usr/local/bin/scheduling-api
-COPY --from=builder /build/bin/scheduling-api-migrate /usr/local/bin/scheduling-api-migrate
 USER nobody
 ENTRYPOINT ["/usr/local/bin/scheduling-api"]

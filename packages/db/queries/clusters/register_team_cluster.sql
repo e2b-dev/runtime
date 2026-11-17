@@ -1,99 +1,9 @@
--- name: CreateCluster :one
--- deletion_protection is set only on a new row. Registering an existing cluster
--- again leaves its stored protection unchanged.
-INSERT INTO public.clusters (
-    id,
-    name,
-    endpoint,
-    endpoint_tls,
-    token,
-    sandbox_proxy_domain,
-    auth_org_id,
-    telemetry_client_id,
-    deletion_protection
-)
-VALUES (
-    COALESCE(sqlc.narg(cluster_id)::uuid, gen_random_uuid()),
-    sqlc.arg(name)::text,
-    sqlc.arg(endpoint)::text,
-    sqlc.arg(endpoint_tls)::boolean,
-    sqlc.arg(token)::text,
-    sqlc.narg(sandbox_proxy_domain)::text,
-    sqlc.narg(auth_org_id)::text,
-    sqlc.narg(telemetry_client_id)::text,
-    sqlc.arg(deletion_protection)::boolean
-)
-ON CONFLICT (id) DO UPDATE
-SET id = EXCLUDED.id
-WHERE clusters.name = EXCLUDED.name
-  AND clusters.endpoint = EXCLUDED.endpoint
-  AND clusters.endpoint_tls = EXCLUDED.endpoint_tls
-  AND clusters.token = EXCLUDED.token
-  AND clusters.sandbox_proxy_domain IS NOT DISTINCT FROM EXCLUDED.sandbox_proxy_domain
-  AND clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
-  AND clusters.telemetry_client_id IS NOT DISTINCT FROM EXCLUDED.telemetry_client_id
-RETURNING id;
-
--- name: RegisterManagedCluster :one
--- Registration preserves the regional display name and assignments when a
--- cluster refreshes its credentials or moves to a new domain.
-INSERT INTO public.clusters (
-    id,
-    name,
-    endpoint,
-    endpoint_tls,
-    token,
-    sandbox_proxy_domain,
-    auth_org_id,
-    telemetry_client_id,
-    deletion_protection
-)
-VALUES (
-    COALESCE(sqlc.narg(cluster_id)::uuid, gen_random_uuid()),
-    sqlc.arg(name)::text,
-    sqlc.arg(endpoint)::text,
-    sqlc.arg(endpoint_tls)::boolean,
-    sqlc.arg(token)::text,
-    sqlc.narg(sandbox_proxy_domain)::text,
-    sqlc.narg(auth_org_id)::text,
-    sqlc.narg(telemetry_client_id)::text,
-    sqlc.arg(deletion_protection)::boolean
-)
-ON CONFLICT (id) DO UPDATE
-SET token = EXCLUDED.token,
-    endpoint = EXCLUDED.endpoint,
-    endpoint_tls = EXCLUDED.endpoint_tls,
-    sandbox_proxy_domain = EXCLUDED.sandbox_proxy_domain,
-    telemetry_client_id = COALESCE(EXCLUDED.telemetry_client_id, clusters.telemetry_client_id)
-WHERE clusters.auth_org_id IS NOT DISTINCT FROM EXCLUDED.auth_org_id
-RETURNING id;
-
--- name: LockClusterDeletionProtection :one
--- Locks the row for the rest of the transaction, so a concurrent protection
--- change commits before or after the caller's check, never between.
-SELECT deletion_protection
-FROM public.clusters
-WHERE id = sqlc.arg(cluster_id)::uuid
-FOR UPDATE;
-
--- name: RequestClusterDeletion :exec
-UPDATE public.clusters
-SET deletion_requested_at = COALESCE(deletion_requested_at, now())
-WHERE id = sqlc.arg(cluster_id)::uuid;
-
 -- name: ListClusterTeamIDs :many
 SELECT id
 FROM public.teams
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NULL
 ORDER BY id;
-
--- name: ClusterDeletionProtected :one
-SELECT EXISTS (
-    SELECT FROM public.clusters
-    WHERE id = sqlc.arg(cluster_id)::uuid
-      AND deletion_protection
-);
 
 -- name: ClusterUsedByMultipleTeams :one
 -- True when more than one team is assigned to the cluster or owns live
@@ -152,10 +62,6 @@ UPDATE public.teams
 SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NOT NULL;
-
--- name: DeleteCluster :execrows
-DELETE FROM public.clusters
-WHERE id = sqlc.arg(cluster_id)::uuid;
 
 -- name: AssignTeamCluster :one
 WITH locked_team AS MATERIALIZED (

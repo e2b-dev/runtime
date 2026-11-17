@@ -29,7 +29,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -309,7 +308,7 @@ func TestRemoteCluster_SyncRoundsShareThePool(t *testing.T) {
 	}
 	endpoint := edge.start(t)
 
-	cluster, err := newRemoteCluster(telemetry.NewNoopClient(), nil, queries.Cluster{ID: uuid.New(), Endpoint: endpoint})
+	cluster, err := newRemoteCluster(telemetry.NewNoopClient(), nil, Record{ID: uuid.New(), Endpoint: endpoint})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cluster.Close(context.WithoutCancel(t.Context())) })
 

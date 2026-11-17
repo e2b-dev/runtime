@@ -30,13 +30,14 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	sandboxredis "github.com/e2b-dev/infra/packages/api/internal/sandbox/storage/redis"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	orchestratorgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -525,9 +526,10 @@ func TestUpdateSandboxNetworkConfig_NodeRefusalIsNeverStored(t *testing.T) {
 	assert.False(t, *storage.sbx.AllowInternetAccess)
 }
 
-// serializingStorage holds a record lock across each Update, as the Redis
-// storage does. An Update that finds the lock held signals queued before it
-// waits; each written record's first allowed address is offered on written.
+// serializingStorage holds a record lock from each BeginUpdate to its
+// CommitUpdate or AbortUpdate, as the Redis storage does. A BeginUpdate that
+// finds the lock held signals queued before it waits; each written record's
+// first allowed address is offered on written.
 // Get reads without the lock, as a Redis read does.
 type serializingStorage struct {
 	sandbox.Storage
@@ -546,7 +548,7 @@ func (s *serializingStorage) Get(context.Context, uuid.UUID, string) (sandbox.Sa
 	return s.sbx, nil
 }
 
-func (s *serializingStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
+func (s *serializingStorage) BeginUpdate(context.Context, uuid.UUID, string) (sandbox.Sandbox, sandboxtypes.UpdateToken, error) {
 	if !s.lock.TryLock() {
 		s.queued <- struct{}{}
 		s.lock.Lock()
@@ -554,18 +556,17 @@ func (s *serializingStorage) Update(_ context.Context, _ uuid.UUID, _ string, up
 
 	// The record is a copy, as a Redis read gives one.
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	current := s.sbx
 	if s.sbx.Network != nil {
 		network := *s.sbx.Network
 		current.Network = &network
 	}
-	s.mu.Unlock()
-	next, err := update(current)
-	if err != nil {
-		s.lock.Unlock()
 
-		return sandbox.Sandbox{}, err
-	}
+	return current, "", nil
+}
+
+func (s *serializingStorage) CommitUpdate(_ context.Context, _ uuid.UUID, _ string, _ sandboxtypes.UpdateToken, next sandbox.Sandbox) (sandbox.Sandbox, error) {
 	s.mu.Lock()
 	s.sbx = next
 	s.mu.Unlock()
@@ -578,6 +579,12 @@ func (s *serializingStorage) Update(_ context.Context, _ uuid.UUID, _ string, up
 	}
 
 	return next, nil
+}
+
+func (s *serializingStorage) AbortUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken) error {
+	s.lock.Unlock()
+
+	return nil
 }
 
 // gatedRefusingClient signals each update's allowed domain and refuses it
@@ -752,7 +759,7 @@ func TestUpdateSandboxNetworkConfig_NodeCallIsBounded(t *testing.T) {
 	assert.Less(t, networkUpdateNodeTimeout, time.Minute/2, "the bound stays well inside the store lock's expiry")
 }
 
-// lockCountingStorage serves Get and counts the Updates, which take the
+// lockCountingStorage serves Get and counts the BeginUpdates, which take the
 // sandbox's store lock.
 type lockCountingStorage struct {
 	sandbox.Storage
@@ -765,14 +772,20 @@ func (s *lockCountingStorage) Get(context.Context, uuid.UUID, string) (sandbox.S
 	return s.sbx, nil
 }
 
-func (s *lockCountingStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
+func (s *lockCountingStorage) BeginUpdate(context.Context, uuid.UUID, string) (sandbox.Sandbox, sandboxtypes.UpdateToken, error) {
 	s.updates++
-	next, err := update(s.sbx)
-	if err == nil {
-		s.sbx = next
-	}
 
-	return next, err
+	return s.sbx, "", nil
+}
+
+func (s *lockCountingStorage) CommitUpdate(_ context.Context, _ uuid.UUID, _ string, _ sandboxtypes.UpdateToken, next sandbox.Sandbox) (sandbox.Sandbox, error) {
+	s.sbx = next
+
+	return next, nil
+}
+
+func (s *lockCountingStorage) AbortUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken) error {
+	return nil
 }
 
 // A node the cache misses is discovered before the store lock is taken: the
@@ -867,16 +880,22 @@ func (s *hookedStorage) Get(context.Context, uuid.UUID, string) (sandbox.Sandbox
 	return s.sbx, nil
 }
 
-func (s *hookedStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
+func (s *hookedStorage) BeginUpdate(context.Context, uuid.UUID, string) (sandbox.Sandbox, sandboxtypes.UpdateToken, error) {
 	if s.hook != nil {
 		s.hook()
 	}
-	next, err := update(s.sbx)
-	if err == nil {
-		s.sbx = next
-	}
 
-	return next, err
+	return s.sbx, "", nil
+}
+
+func (s *hookedStorage) CommitUpdate(_ context.Context, _ uuid.UUID, _ string, _ sandboxtypes.UpdateToken, next sandbox.Sandbox) (sandbox.Sandbox, error) {
+	s.sbx = next
+
+	return next, nil
+}
+
+func (s *hookedStorage) AbortUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken) error {
+	return nil
 }
 
 // closedSandboxUpdateClient is the client of a node that was closed.
@@ -925,8 +944,8 @@ func TestUpdateSandboxNetworkConfig_UsesTheNodeRegisteredUnderTheLock(t *testing
 	assert.Equal(t, []string{"example.com"}, storage.sbx.Network.Egress.AllowedAddresses)
 }
 
-// unwritableStorage runs the update callback, so the node applies the config,
-// and then fails the write, as a store whose writes keep failing would.
+// unwritableStorage fails the write after the update callback, so the node
+// has applied the config, as a store whose writes keep failing would.
 type unwritableStorage struct {
 	sandbox.Storage
 
@@ -937,12 +956,16 @@ func (s *unwritableStorage) Get(context.Context, uuid.UUID, string) (sandbox.San
 	return s.sbx, nil
 }
 
-func (s *unwritableStorage) Update(_ context.Context, _ uuid.UUID, _ string, update func(sandbox.Sandbox) (sandbox.Sandbox, error)) (sandbox.Sandbox, error) {
-	if _, err := update(s.sbx); err != nil {
-		return sandbox.Sandbox{}, err
-	}
+func (s *unwritableStorage) BeginUpdate(context.Context, uuid.UUID, string) (sandbox.Sandbox, sandboxtypes.UpdateToken, error) {
+	return s.sbx, "", nil
+}
 
+func (s *unwritableStorage) CommitUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken, sandbox.Sandbox) (sandbox.Sandbox, error) {
 	return sandbox.Sandbox{}, errors.New("failed to store sandbox in Redis: write failed")
+}
+
+func (s *unwritableStorage) AbortUpdate(context.Context, uuid.UUID, string, sandboxtypes.UpdateToken) error {
+	return nil
 }
 
 // A config the node applied but the store could not record answers 500 with

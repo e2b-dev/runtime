@@ -153,6 +153,13 @@ type Config struct {
 	// when the backend is absent, so the surface does not depend on the wiring.
 	WebhooksBackendGrpcAddress string `env:"WEBHOOKS_BACKEND_GRPC_ADDRESS"`
 
+	// ClusterServiceGrpcAddress is the gRPC target of the cluster service,
+	// which stores the remote clusters. Optional: when empty the API runs on
+	// the local cluster alone and answers the cluster admin and management
+	// routes with 503, and refuses to start while a team is assigned to a
+	// remote cluster.
+	ClusterServiceGrpcAddress string `env:"CLUSTER_SERVICE_GRPC_ADDRESS"`
+
 	VolumesToken VolumesTokenConfig
 
 	AuthProvider      sharedauth.ProviderConfig `env:"AUTH_PROVIDER_CONFIG"`

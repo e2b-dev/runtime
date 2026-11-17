@@ -51,6 +51,19 @@ type PathManager interface {
 	FreezeRequestedAt(path string) (bool, error)
 }
 
+// MemoryLimiter is a Manager that can rewrite the memory limit of a cgroup it created.
+// envd needs this because the guest's memory size changes after boot when virtio-mem
+// plugs or unplugs memory, and the limit written at creation would otherwise stay
+// sized for the boot memory. It is separate from Manager for the same reason as
+// PathManager: a manager with no cgroups has no limit to rewrite, and callers find
+// that out by type assertion.
+type MemoryLimiter interface {
+	// SetMemoryLimit sets memory.high and memory.max of procType's cgroup to limit
+	// bytes. Lowering it below current usage makes the kernel reclaim, and may OOM-kill
+	// inside the cgroup, before the write returns.
+	SetMemoryLimit(procType ProcessType, limit uint64) error
+}
+
 type ProcessType string
 
 const (

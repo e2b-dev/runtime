@@ -46,6 +46,12 @@ func TestDecodeEnvdMemoryProtection(t *testing.T) {
 			header: `{"floor":5,"newer":"thing"}`,
 			want:   EnvdMemoryProtection{Floor: 5},
 		},
+		// The full report a newer envd sends on a served /init: the limit and the memory
+		// layout sit next to the protection fields and leave them decodable.
+		"with the limit and layout objects": {
+			header: `{"request":1,"low":2,"floor":3,"partial":false,"limit":{"mem_total":4294967296,"applied":4160749568,"pending":true,"error":"x"},"layout":{"policy":"auto-movable","auto_online":"online","movable":3221225472,"kernel":1073741824}}`,
+			want:   EnvdMemoryProtection{Request: 1, Low: 2, Floor: 3},
+		},
 		"negative":    {header: `{"floor":-1}`, wantErr: "cannot unmarshal number -1"},
 		"non-numeric": {header: `{"floor":"lots"}`, wantErr: "cannot unmarshal string"},
 		"fractional":  {header: `{"request":1.5}`, wantErr: "cannot unmarshal number 1.5"},

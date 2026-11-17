@@ -16,7 +16,6 @@ import (
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
@@ -28,10 +27,8 @@ func TestDeleteProjectSoftDeletesItAndEnqueuesItsTeardown(t *testing.T) {
 	ctx := t.Context()
 	store, _ := newManagementStore(t, db)
 	projectID := testutils.CreateTestTeam(t, db)
-	clusterID, err := db.SqlcClient.CreateCluster(ctx, queries.CreateClusterParams{
-		Name: "project-cluster", Endpoint: "https://cluster.example.test", Token: "test-token",
-	})
-	require.NoError(t, err)
+	clusterID := uuid.New()
+	insertCluster(t, db, clusterID, false)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx, `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, projectID, clusterID))
 	addProjectMember(t, db, projectID)
 	addProjectAPIKey(t, db, projectID)
@@ -114,13 +111,11 @@ func TestDeleteProjectRetryRepairsWhatRacedTheDeletion(t *testing.T) {
 	lateSnapshot := testutils.UpsertTestSnapshot(t, ctx, db, "snapshot-"+uuid.NewString(), "sandbox-"+uuid.NewString(), projectID, baseTemplate)
 	addProjectAPIKey(t, db, projectID)
 	addProjectMember(t, db, projectID)
-	clusterID, err := db.SqlcClient.CreateCluster(ctx, queries.CreateClusterParams{
-		Name: "raced-cluster", Endpoint: "https://cluster.example.test", Token: "test-token",
-	})
-	require.NoError(t, err)
+	clusterID := uuid.New()
+	insertCluster(t, db, clusterID, false)
 	// An upsert that passed its deleted-project check before the deletion
 	// committed reaches the service and assigns its cluster.
-	_, _, err = store.managementService.UpsertProject(ctx, management.Project{
+	_, _, err := store.managementService.UpsertProject(ctx, management.Project{
 		ClusterID: &clusterID, ID: projectID, Name: "raced", Slug: "raced-" + projectID.String()[:8], Email: "raced@example.test",
 	})
 	require.NoError(t, err)

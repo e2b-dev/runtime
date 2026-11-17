@@ -48,7 +48,7 @@ func (a *APIStore) startSandbox(
 		return nil, apiErr
 	}
 
-	return sbx.ToAPISandbox(), nil
+	return toAPISandbox(sbx), nil
 }
 
 // startSandboxInternal starts the sandbox and returns the internal sandbox model (includes routing info).
@@ -103,6 +103,19 @@ func (a *APIStore) startSandboxInternal(
 	)
 
 	return sbx, nil
+}
+
+func toAPISandbox(sbx sandbox.Sandbox) *api.Sandbox {
+	return &api.Sandbox{
+		SandboxID:          sbx.SandboxID,
+		TemplateID:         sbx.BaseTemplateID,
+		ClientID:           sbx.ClientID,
+		Alias:              sbx.Alias,
+		EnvdVersion:        sbx.EnvdVersion,
+		EnvdAccessToken:    sbx.EnvdAccessToken,
+		TrafficAccessToken: sbx.TrafficAccessToken,
+		Domain:             sbx.Domain,
+	}
 }
 
 func buildCreationMetadata(

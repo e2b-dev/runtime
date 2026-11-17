@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/e2b-dev/infra/packages/api/internal/sandbox/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 type CreationMetadata struct {
@@ -46,8 +46,9 @@ type Callbacks struct {
 	// Used during sync when the Redis backend detects sandboxes running on a node but not present in the store.
 	KillOrphanSandbox OrphanCallback
 	// EndPoweredOffSandbox runs the timeout action of a sandbox whose node
-	// reports that its guest powered off. Called during sync, asynchronously,
-	// for every such sandbox the node lists.
+	// reports that its guest powered off. Called during sync for every such
+	// sandbox the node lists. It must return without waiting for the action:
+	// a pause can outlast the sync interval.
 	EndPoweredOffSandbox OrphanCallback
 	// EndEndedSandbox ends the record of a sandbox its node lists as ended
 	// with nothing kept, as a kill would. Called during sync for every such
@@ -152,7 +153,7 @@ func (s *Store) TeamsWithSandboxes(ctx context.Context) (map[uuid.UUID]int64, er
 }
 
 func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error) {
-	return s.storage.Update(ctx, teamID, sandboxID, updateFunc)
+	return sandboxtypes.UpdateRecord(ctx, s.storage, teamID, sandboxID, updateFunc)
 }
 
 // HoldExecution marks the running execution as held until `until`; see
@@ -186,8 +187,24 @@ func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, er
 	return removed, nil
 }
 
+// StartRemoving returns, for the caller that started the transition, the
+// callback that ends it with the caller's error; a no-op when this call
+// started no transition.
 func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {
-	return s.storage.StartRemoving(ctx, teamID, sandboxID, opts)
+	transition, alreadyDone, err := sandboxtypes.StartRemoving(ctx, s.storage, teamID, sandboxID, opts)
+	if err != nil {
+		return transition, false, nil, err
+	}
+	if transition.ID == "" {
+		return transition, alreadyDone, func(context.Context, error) {}, nil
+	}
+
+	return transition, alreadyDone, func(ctx context.Context, workErr error) {
+		err := s.storage.FinishTransition(ctx, teamID, sandboxID, transition.ID, opts.Action, sandboxtypes.TransitionOutcomeOf(workErr))
+		if err != nil {
+			logger.L().Warn(ctx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transition_id", transition.ID), zap.Error(err))
+		}
+	}, nil
 }
 
 func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, opts RestoreOpts) (Sandbox, error) {
@@ -199,7 +216,9 @@ func (s *Store) RestoreCheckpointed(ctx context.Context, transition StateTransit
 }
 
 func (s *Store) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	return s.storage.WaitForStateChange(ctx, teamID, sandboxID)
+	_, err := s.storage.WaitForTransition(ctx, teamID, sandboxID, "")
+
+	return err
 }
 
 func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID string) {
@@ -218,12 +237,12 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 	orphans := s.storage.Reconcile(ctx, running, nodeID)
 
 	// A powered-off sandbox gets its timeout action now rather than at its
-	// end time. Not waited for: a pause can outlast the sync interval, and
-	// the evictor drops a repeat while one is in flight.
+	// end time. The callback does not wait for it, and the evictor drops a
+	// repeat while one is in flight.
 	if s.callbacks.EndPoweredOffSandbox != nil {
 		for _, sbx := range sandboxes {
 			if sbx.DiskKept {
-				go s.callbacks.EndPoweredOffSandbox(context.WithoutCancel(ctx), sbx)
+				s.callbacks.EndPoweredOffSandbox(context.WithoutCancel(ctx), sbx)
 			}
 		}
 	}

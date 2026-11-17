@@ -215,6 +215,15 @@ linters:
         - { disabled: true, name: use-waitgroup-go } # todo: enable this
         - { disabled: true, name: var-declaration }
         - { disabled: true, name: var-naming }
+        # Log field keys are lower snake_case, so a field has one name in every
+        # service and every log query. Dots stay allowed for OpenTelemetry-style
+        # keys such as "sandbox.id". The rule matches calls by their text, so
+        # it sees zap's field constructors only under the package name zap.
+        - name: string-format
+          arguments:
+            - - "zap.Any,zap.Array,zap.Binary,zap.Bool,zap.Boolp,zap.Bools,zap.ByteString,zap.ByteStrings,zap.Complex128,zap.Complex128p,zap.Complex128s,zap.Complex64,zap.Complex64p,zap.Complex64s,zap.Dict,zap.Duration,zap.Durationp,zap.Durations,zap.Errors,zap.Float32,zap.Float32p,zap.Float32s,zap.Float64,zap.Float64p,zap.Float64s,zap.Int,zap.Int16,zap.Int16p,zap.Int16s,zap.Int32,zap.Int32p,zap.Int32s,zap.Int64,zap.Int64p,zap.Int64s,zap.Int8,zap.Int8p,zap.Int8s,zap.Intp,zap.Ints,zap.NamedError,zap.Namespace,zap.Object,zap.ObjectValues,zap.Objects,zap.Reflect,zap.Stack,zap.StackSkip,zap.String,zap.Stringer,zap.Stringers,zap.Stringp,zap.Strings,zap.Time,zap.Timep,zap.Times,zap.Uint,zap.Uint16,zap.Uint16p,zap.Uint16s,zap.Uint32,zap.Uint32p,zap.Uint32s,zap.Uint64,zap.Uint64p,zap.Uint64s,zap.Uint8,zap.Uint8p,zap.Uint8s,zap.Uintp,zap.Uintptr,zap.Uintptrp,zap.Uintptrs,zap.Uints,logger.Time"
+              - "/^[a-z0-9_.]+$/"
+              - "log field keys must be lower snake_case"
 
     staticcheck:
       checks:

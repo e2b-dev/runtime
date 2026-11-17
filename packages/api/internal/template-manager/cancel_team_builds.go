@@ -57,8 +57,8 @@ func (tm *TemplateManager) CancelTeamBuilds(ctx context.Context, teamID uuid.UUI
 			err := cancelBuild(ctx, tm, b, reason)
 			if err != nil {
 				logger.L().Error(ctx, "Failed to cancel build",
-					zap.String("buildID", b.BuildID.String()),
-					zap.String("templateID", b.TemplateID),
+					logger.WithBuildID(b.BuildID.String()),
+					logger.WithTemplateID(b.TemplateID),
 					logger.WithTeamID(teamID.String()),
 					zap.Error(err))
 				failedCount.Add(1)
@@ -67,8 +67,8 @@ func (tm *TemplateManager) CancelTeamBuilds(ctx context.Context, teamID uuid.UUI
 			}
 
 			logger.L().Debug(ctx, "Successfully cancelled build",
-				zap.String("buildID", b.BuildID.String()),
-				zap.String("templateID", b.TemplateID),
+				logger.WithBuildID(b.BuildID.String()),
+				logger.WithTemplateID(b.TemplateID),
 				logger.WithTeamID(teamID.String()))
 			cancelledCount.Add(1)
 

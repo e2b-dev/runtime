@@ -99,6 +99,10 @@ func (n *mockSandboxClient) Update(_ context.Context, _ *orchestrator.SandboxUpd
 	return &emptypb.Empty{}, nil
 }
 
+func (n *mockSandboxClient) Delete(_ context.Context, _ *orchestrator.SandboxDeleteRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	return &emptypb.Empty{}, nil
+}
+
 // mockLegacySandboxClient mimics an orchestrator that predates the
 // filesystem_boot field: it succeeds but never echoes the applied boot path.
 type mockLegacySandboxClient struct {
