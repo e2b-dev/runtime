@@ -9549,7 +9549,11 @@ paths:
 
     post:
       summary: Create a secret
-      description: Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+      description: >-
+        Create a secret by storing a runtime marker as its first version. The
+        response carries metadata only. The value is not part of the
+        Idempotency-Key comparison: reusing a key with a different value
+        replays the first result.
       tags: [secrets]
       security:
         - ApiKeyAuth: []
@@ -9559,6 +9563,8 @@ paths:
           AdminTeamAuth: []
         - AdminJWTAuth: []
           AdminTeamAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
       requestBody:
         required: true
         content:
@@ -9573,18 +9579,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/Secret"
         "400":
-          $ref: "#/components/responses/400"
+          description: Invalid request or value too large
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/401"
         "403":
-          $ref: "#/components/responses/403"
+          description: Forbidden, blocked team, or secrets unavailable
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
-          $ref: "#/components/responses/404"
+          description: Backend secret not found; creation may have partially committed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
           description: >-
             Secret name conflict or project live-secret limit reached. A quota
             response has error_code secret_limit_reached and, when reported by
-            the backend, the effective cap in message.
+            the backend, the effective cap in message. With an Idempotency-Key,
+            also returned when the key conflicts with a different request
+            (error_code idempotency_request_mismatch), or the matching original
+            request has no recorded response yet and is within its expected
+            response window (error_code idempotency_in_progress); this request
+            was not executed again.
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
           content:
             application/json:
               schema:
@@ -9595,14 +9627,59 @@ paths:
                     code: 409
                     message: Project has reached its limit of 50 live secrets
                     error_code: secret_limit_reached
+        "413":
+          description: Request body exceeds the size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: The matching original request has no recorded response and its expected response deadline has passed or is unknown (error_code idempotency_outcome_unknown); this request was not executed again
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/429"
         "500":
-          $ref: "#/components/responses/500"
+          description: Server error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "502":
-          $ref: "#/components/responses/502"
+          description: Backend error
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: With an Idempotency-Key, the request result is unavailable because the idempotency record could not be reserved or read, or idempotency is misconfigured; this request was not executed. Should-Retry true means a retry with the same Idempotency-Key may succeed; false means configuration must be corrected.
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "504":
-          $ref: "#/components/responses/504"
+          description: Deadline exceeded
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /secrets/{secretID}:
     get:

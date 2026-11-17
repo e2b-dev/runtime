@@ -3634,6 +3634,26 @@ type GetSecretsParams struct {
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// PostSecretsParams defines parameters for PostSecrets.
+type PostSecretsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // GetSnapshotsParams defines parameters for GetSnapshots.
 type GetSnapshotsParams struct {
 	SandboxID *string `form:"sandboxID,omitempty" json:"sandboxID,omitempty"`
@@ -5140,21 +5160,21 @@ type ClientInterface interface {
 
 	// PostSecretsWithBody Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSecretsWithBody(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSecrets Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecrets(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSecrets(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSecretsSecretID Delete a secret
 	//
@@ -7209,13 +7229,13 @@ func (c *Client) GetSecrets(ctx context.Context, params *GetSecretsParams, reqEd
 
 // PostSecretsWithBody Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *Client) PostSecretsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSecretsRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostSecretsWithBody(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSecretsRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7228,13 +7248,13 @@ func (c *Client) PostSecretsWithBody(ctx context.Context, contentType string, bo
 
 // PostSecrets Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *Client) PostSecrets(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSecretsRequest(c.Server, body)
+func (c *Client) PostSecrets(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSecretsRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -11616,18 +11636,18 @@ func NewGetSecretsRequest(server string, params *GetSecretsParams) (*http.Reques
 }
 
 // NewPostSecretsRequest calls the generic PostSecrets builder with application/json body
-func NewPostSecretsRequest(server string, body PostSecretsJSONRequestBody) (*http.Request, error) {
+func NewPostSecretsRequest(server string, params *PostSecretsParams, body PostSecretsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSecretsRequestWithBody(server, "application/json", bodyReader)
+	return NewPostSecretsRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostSecretsRequestWithBody constructs an http.Request for the PostSecrets method, with any body, and a specified content type
-func NewPostSecretsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSecretsRequestWithBody(server string, params *PostSecretsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -11651,6 +11671,21 @@ func NewPostSecretsRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -16657,21 +16692,21 @@ type ClientWithResponsesInterface interface {
 
 	// PostSecretsWithBodyWithResponse Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
+	PostSecretsWithBodyWithResponse(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
 
 	// PostSecretsWithResponse Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithResponse(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
+	PostSecretsWithResponse(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
 
 	// DeleteSecretsSecretIDWithResponse Delete a secret
 	//
@@ -21400,9 +21435,49 @@ func (r GetSecretsResponse) ContentType() string {
 	return ""
 }
 
+// PostSecretsResponse400Headers the declared response headers of an HTTP 400 response for PostSecrets
+type PostSecretsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse403Headers the declared response headers of an HTTP 403 response for PostSecrets
+type PostSecretsResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse409Headers the declared response headers of an HTTP 409 response for PostSecrets
+type PostSecretsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse422Headers the declared response headers of an HTTP 422 response for PostSecrets
+type PostSecretsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostSecretsResponse429Headers the declared response headers of an HTTP 429 response for PostSecrets
 type PostSecretsResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostSecretsResponse500Headers the declared response headers of an HTTP 500 response for PostSecrets
+type PostSecretsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse502Headers the declared response headers of an HTTP 502 response for PostSecrets
+type PostSecretsResponse502Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse503Headers the declared response headers of an HTTP 503 response for PostSecrets
+type PostSecretsResponse503Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse504Headers the declared response headers of an HTTP 504 response for PostSecrets
+type PostSecretsResponse504Headers struct {
+	ShouldRetry *bool
 }
 
 type PostSecretsResponse struct {
@@ -21411,25 +21486,47 @@ type PostSecretsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *Secret
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *N403
+	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
 	// JSON502 the response for an HTTP 502 `application/json` response
-	JSON502 *N502
+	JSON502 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
 	// JSON504 the response for an HTTP 504 `application/json` response
-	JSON504 *N504
+	JSON504 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostSecretsResponse400Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostSecretsResponse403Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostSecretsResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostSecretsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSecretsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostSecretsResponse500Headers
+	// Headers502 the parsed response headers for an HTTP 502 response
+	Headers502 *PostSecretsResponse502Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostSecretsResponse503Headers
+	// Headers504 the parsed response headers for an HTTP 504 response
+	Headers504 *PostSecretsResponse504Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -21438,7 +21535,7 @@ func (r PostSecretsResponse) GetJSON201() *Secret {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostSecretsResponse) GetJSON400() *N400 {
+func (r PostSecretsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -21448,12 +21545,12 @@ func (r PostSecretsResponse) GetJSON401() *N401 {
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r PostSecretsResponse) GetJSON403() *N403 {
+func (r PostSecretsResponse) GetJSON403() *Error {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostSecretsResponse) GetJSON404() *N404 {
+func (r PostSecretsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -21462,23 +21559,38 @@ func (r PostSecretsResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r PostSecretsResponse) GetJSON413() *Error {
+	return r.JSON413
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostSecretsResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PostSecretsResponse) GetJSON429() *N429 {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostSecretsResponse) GetJSON500() *N500 {
+func (r PostSecretsResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetJSON502 returns the response for an HTTP 502 `application/json` response
-func (r PostSecretsResponse) GetJSON502() *N502 {
+func (r PostSecretsResponse) GetJSON502() *Error {
 	return r.JSON502
 }
 
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostSecretsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
 // GetJSON504 returns the response for an HTTP 504 `application/json` response
-func (r PostSecretsResponse) GetJSON504() *N504 {
+func (r PostSecretsResponse) GetJSON504() *Error {
 	return r.JSON504
 }
 
@@ -29259,13 +29371,13 @@ func (c *ClientWithResponses) GetSecretsWithResponse(ctx context.Context, params
 
 // PostSecretsWithBodyWithResponse Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
-	rsp, err := c.PostSecretsWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
+	rsp, err := c.PostSecretsWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29274,13 +29386,13 @@ func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Contex
 
 // PostSecretsWithResponse Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *ClientWithResponses) PostSecretsWithResponse(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
-	rsp, err := c.PostSecrets(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostSecretsWithResponse(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
+	rsp, err := c.PostSecrets(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -34274,7 +34386,7 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34288,14 +34400,14 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest N403
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34308,6 +34420,20 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -34316,21 +34442,28 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest N502
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON502 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
-		var dest N504
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34339,6 +34472,46 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostSecretsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostSecretsResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostSecretsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostSecretsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSecretsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -34349,6 +34522,46 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostSecretsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 502:
+		var headers PostSecretsResponse502Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers502 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostSecretsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
+	case rsp.StatusCode == 504:
+		var headers PostSecretsResponse504Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers504 = &headers
 	}
 
 	return response, nil
