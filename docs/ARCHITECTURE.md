@@ -357,8 +357,21 @@ image, which E2B Embed runs on port 3001 against the API alone.
   cluster is assigned; a team on none, deleted or gone has the recorded one detached. Until
   that job has run for a detached or deleted team, deleting its cluster answers 503 and not
   409: the API found no live team on it, so the cluster service's refusal clears on its own.
+  A cluster the cluster service is deleting, or does not know, takes no new team: the sync
+  completes without recording one, since a retry cannot change the answer, and the write that
+  takes the team off the cluster enqueues its own.
   The job is not unique, and completes without a call when no cluster service is configured.
-  Retries and discarding follow the teardown's. Steps report
+  Retries and discarding follow the teardown's. `sweep_team_cluster_assignments` covers the
+  teams no write enqueued a sync for: those assigned before the syncs existed, and a record
+  the cluster service has lost since. With a cluster service configured, River's leader
+  enqueues it when it starts and every hour after. It pages through the live teams on a
+  remote cluster, asks the cluster service for each page's recorded clusters, and enqueues a
+  sync for every team recorded on none or on another; the syncs do the writing, at a lower
+  priority than the syncs a write enqueues. Those syncs, and the sweep itself, are unique
+  while one is open, so a team whose sync keeps failing does not gather a retrying one per
+  sweep. A record held for a team that is no
+  longer on a cluster is not found this way; the write that took the team off enqueued its
+  sync. An attempt is bounded at 10 minutes. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) and `OUTBOX_BACKLOG_INTERVAL` (default 30s) configure it;

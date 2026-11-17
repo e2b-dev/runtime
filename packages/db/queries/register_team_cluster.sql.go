@@ -188,6 +188,47 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 	return items, nil
 }
 
+const listLiveTeamClusters = `-- name: ListLiveTeamClusters :many
+SELECT id, cluster_id::uuid AS cluster_id
+FROM public.teams
+WHERE cluster_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND id > $1::uuid
+ORDER BY id
+LIMIT $2::int
+`
+
+type ListLiveTeamClustersParams struct {
+	After    uuid.UUID
+	PageSize int32
+}
+
+type ListLiveTeamClustersRow struct {
+	ID        uuid.UUID
+	ClusterID uuid.UUID
+}
+
+// A page of the live teams on a remote cluster, after the given team.
+func (q *Queries) ListLiveTeamClusters(ctx context.Context, arg ListLiveTeamClustersParams) ([]ListLiveTeamClustersRow, error) {
+	rows, err := q.db.Query(ctx, listLiveTeamClusters, arg.After, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveTeamClustersRow
+	for rows.Next() {
+		var i ListLiveTeamClustersRow
+		if err := rows.Scan(&i.ID, &i.ClusterID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockTeamCluster = `-- name: LockTeamCluster :one
 SELECT cluster_id
 FROM public.teams

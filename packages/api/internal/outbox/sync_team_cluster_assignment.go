@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
@@ -102,7 +104,7 @@ func (w *teamClusterAssignmentWorker) sync(ctx context.Context, txDB *sqlcdb.Cli
 
 		return nil
 	case current != nil:
-		return w.steps.Step(ctx, "assign", func(ctx context.Context) error {
+		err := w.steps.StepWith(ctx, "assign", sharedriver.StepOptions{SkipReason: clusterTakesNoTeam}, func(ctx context.Context) error {
 			_, err := w.clusters.AssignProject(ctx, clustersgrpc.AssignProjectRequest_builder{
 				ProjectId: teamID.String(),
 				ClusterId: current.String(),
@@ -113,6 +115,13 @@ func (w *teamClusterAssignmentWorker) sync(ctx context.Context, txDB *sqlcdb.Cli
 
 			return nil
 		})
+		// Retrying cannot change the answer. The write that takes the team
+		// off the cluster enqueues its own sync.
+		if clusterTakesNoTeam(err) != "" {
+			return nil
+		}
+
+		return err
 	default:
 		return w.steps.Step(ctx, "detach", func(ctx context.Context) error {
 			_, err := w.clusters.DetachProject(ctx, clustersgrpc.DetachProjectRequest_builder{
@@ -126,4 +135,21 @@ func (w *teamClusterAssignmentWorker) sync(ctx context.Context, txDB *sqlcdb.Cli
 			return nil
 		})
 	}
+}
+
+// clusterTakesNoTeam names why the cluster service will keep refusing to
+// record a team on the cluster, or returns "" for any other outcome.
+func clusterTakesNoTeam(err error) string {
+	st := status.Convert(err)
+	if st.Code() == codes.NotFound {
+		return "the cluster service does not know the cluster"
+	}
+	for _, detail := range st.Details() {
+		reason, ok := detail.(*clustersgrpc.ClusterErrorDetail)
+		if ok && reason.GetReason() == clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED {
+			return "the cluster is being deleted"
+		}
+	}
+
+	return ""
 }

@@ -122,3 +122,13 @@ SELECT cluster_id
 FROM public.teams
 WHERE id = sqlc.arg(team_id)::uuid
   AND deleted_at IS NULL;
+
+-- name: ListLiveTeamClusters :many
+-- A page of the live teams on a remote cluster, after the given team.
+SELECT id, cluster_id::uuid AS cluster_id
+FROM public.teams
+WHERE cluster_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND id > sqlc.arg(after)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_size)::int;
