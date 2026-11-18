@@ -33,9 +33,17 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
-// envdProbeMs is the probe timeout the tests enable. Each test serves envd for
-// its sandbox from its own test server (registerEnvd), so nothing is shared.
-const envdProbeMs = 100
+// envdFailingProbeMs is the probe timeout for tests whose envd does not answer
+// healthy.
+const envdFailingProbeMs = 100
+
+// envdAnsweringProbeMs is the probe timeout for tests whose envd answers, long
+// enough that a loaded runner does not turn the answer into a miss.
+const envdAnsweringProbeMs = 5000
+
+// markStoppingWait is how long a test waits for an admitted pause or
+// checkpoint to leave the live map, longer than the probe it may wait on.
+const markStoppingWait = envdAnsweringProbeMs*time.Millisecond + 2*time.Second
 
 // envdAnswer is how a test's envd answers /health: a status, a status after a
 // delay, or no listener (the connection is dropped).
@@ -136,7 +144,7 @@ func awaitPauseCrossedMarkStopping(t *testing.T, s *Server, sbx *sandbox.Sandbox
 		_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 
 		return !live
-	}, 2*time.Second, time.Millisecond, msg)
+	}, markStoppingWait, time.Millisecond, msg)
 	require.Eventually(t, func() bool {
 		return sbx.GetStopReason() == sandbox.StopReasonPaused
 	}, 2*time.Second, time.Millisecond)
@@ -201,7 +209,7 @@ func envdProbePauseServer(t *testing.T, envdMs *int) (*Server, *sdkmetric.Manual
 func TestPause_EnvdUnresponsiveProceedsWhenAllowed(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbePauseServer(t, new(envdProbeMs))
+	s, reader := envdProbePauseServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-pause-proceed", 30)
 	answer := &envdAnswer{unreachable: true, begun: make(chan struct{})}
 	registerEnvd(t, sbx, answer)
@@ -244,7 +252,7 @@ func TestPause_EnvdUnresponsiveRefusesBeforeMarkStoppingByDefault(t *testing.T) 
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-pause", 31)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -305,8 +313,8 @@ func TestPause_EnvdUnresponsiveSkipsThePrefetchHarvest(t *testing.T) {
 			t.Parallel()
 
 			teamID := harvestTeamID("pause-harvest")
-			s, _ := envdProbePauseServer(t, new(envdProbeMs))
-			s.featureFlags = envdProbeHarvestFlagClient(t, envdProbeMs)
+			s, _ := envdProbePauseServer(t, new(envdAnsweringProbeMs))
+			s.featureFlags = envdProbeHarvestFlagClient(t, envdAnsweringProbeMs)
 			sbx := envdProbeSandbox(t, "sbx-"+teamID, 36)
 			sbx.Runtime.TeamID = teamID
 			registerEnvd(t, sbx, tc.answer)
@@ -348,7 +356,7 @@ func TestPause_EnvdUnresponsiveSkipsThePrefetchHarvest(t *testing.T) {
 func TestPause_EnvdHealthyAdmits(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbePauseServer(t, new(envdProbeMs))
+	s, reader := envdProbePauseServer(t, new(envdAnsweringProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-pause-healthy", 32)
 	registerEnvd(t, sbx, &envdAnswer{status: http.StatusNoContent})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -387,7 +395,7 @@ func TestPause_FilesystemOnlyIsRefusedOnAMissRegardless(t *testing.T) {
 			t.Parallel()
 
 			s, reader := admissionMetricsServer(t, -1)
-			s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+			s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 			sandboxID := "sbx-envd-pause-fs-only-" + name
 			sbx := envdProbeSandbox(t, sandboxID, c.slot)
 			registerEnvd(t, sbx, &envdAnswer{unreachable: true})
@@ -416,7 +424,7 @@ func TestPause_FilesystemOnlyEnvdHealthyAdmits(t *testing.T) {
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdAnsweringProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-pause-fs-only-ok", 34)
 	registerEnvd(t, sbx, &envdAnswer{status: http.StatusNoContent})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -560,7 +568,7 @@ func TestPause_EnvdProbeMissAfterTheVMExitedIsNotFound(t *testing.T) {
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-exited", 78)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -641,7 +649,7 @@ func TestPause_EnvdProbeMissDuringAnInPlaceCheckpointAnswersTheHold(t *testing.T
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-inplace", 82)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -672,7 +680,7 @@ func TestPause_EnvdProbeMissWhileARebootTakesTheSandboxIsRetryable(t *testing.T)
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-reboot", 98)
 	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
 
@@ -714,7 +722,7 @@ func TestPause_EnvdProbeMissAfterTheSandboxWasDelistedIsNotFound(t *testing.T) {
 	t.Parallel()
 
 	s, reader := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-delisted", 99)
 	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
 
