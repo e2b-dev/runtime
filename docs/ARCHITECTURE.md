@@ -1362,6 +1362,7 @@ sequenceDiagram
     C->>API: POST /v3/templates (register build: cpu, max cpu, ram, free-disk target) → Postgres env_builds
     C->>API: POST /v2/templates/{id}/builds/{buildID} (recipe: steps, start/ready cmd)
     API->>TM: gRPC TemplateCreate(TemplateConfig)
+    TM->>TM: wait for a build slot
     TM->>TM: pull image → inject envd/provisioning → extract ext4 rootfs
     TM->>FC: boot VM per phase: provision → user steps
     TM->>TM: resize disk on host
@@ -1379,6 +1380,11 @@ The API sends each build to the least CPU-loaded of three eligible template buil
 random, scored from the host CPU use and allocated VM vCPUs each builder reports in `ServiceInfo`.
 A build's vCPUs count against the builder it was sent to for a minute, until the builder's own
 reports show its VMs, so a burst of builds between reports spreads instead of following one report.
+
+Each template manager runs at most four template builds at a time by default.
+The `max-concurrent-template-builds` flag changes this limit for new requests on each node.
+Values below one use four. Excess builds wait inside the background worker.
+`TemplateCreate` returns after it records the build, and status remains `Building` while it waits.
 
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
