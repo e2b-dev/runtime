@@ -61,7 +61,8 @@ func UploadMetadata(ctx context.Context, persistence storage.StorageProvider, t 
 		return fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
-	var opts []storage.PutOption
+	// Every caller rewrites the object its build's own upload already wrote.
+	opts := []storage.PutOption{storage.WithOverwrite()}
 	if len(objectMetadata) > 0 {
 		opts = append(opts, storage.WithMetadata(objectMetadata))
 	}

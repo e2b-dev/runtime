@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -88,6 +89,142 @@ func TestCachedObjectProvider_Put(t *testing.T) {
 		read, err = GetBlob(t.Context(), &c)
 		require.NoError(t, err)
 		assert.Equal(t, actualData, read)
+	})
+}
+
+// cachedCopy reads the blob with the backend detached, so only the cache can answer.
+func cachedCopy(t *testing.T, c *cachedBlob) []byte {
+	t.Helper()
+
+	c.wg.Wait()
+	c.inner = nil
+
+	got, err := GetBlob(t.Context(), c)
+	require.NoError(t, err)
+
+	return got
+}
+
+func TestCachedObjectProvider_PutOverwrite(t *testing.T) {
+	t.Parallel()
+
+	oldData, newData := []byte("old"), []byte("new")
+
+	newBlob := func(t *testing.T, writeThrough bool) (*cachedBlob, *MockBlob) {
+		t.Helper()
+
+		inner := NewMockBlob(t)
+		featureFlags := NewMockFeatureFlagsClient(t)
+		featureFlags.EXPECT().BoolFlag(mock.Anything, mock.Anything).Return(writeThrough)
+
+		return &cachedBlob{path: t.TempDir(), inner: inner, chunkSize: 1024, flags: featureFlags, tracer: noopTracer}, inner
+	}
+
+	t.Run("replaces a copy cached by an earlier put", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, true)
+		inner.EXPECT().Put(mock.Anything, oldData).Return(nil)
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(nil)
+
+		require.NoError(t, c.Put(t.Context(), oldData))
+		c.wg.Wait()
+		require.NoError(t, c.Put(t.Context(), newData, WithOverwrite()))
+
+		assert.Equal(t, newData, cachedCopy(t, c))
+	})
+
+	t.Run("replaces a copy cached by an earlier read when write-through is off", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, false)
+		inner.EXPECT().
+			WriteTo(mock.Anything, mock.Anything).
+			RunAndReturn(func(_ context.Context, dst io.Writer) (int64, error) {
+				n, err := dst.Write(oldData)
+
+				return int64(n), err
+			})
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(nil)
+
+		read, err := GetBlob(t.Context(), c)
+		require.NoError(t, err)
+		require.Equal(t, oldData, read)
+		c.wg.Wait()
+		require.NoError(t, c.Put(t.Context(), newData, WithOverwrite()))
+
+		assert.Equal(t, newData, cachedCopy(t, c))
+	})
+
+	t.Run("caches nothing when write-through is off and nothing is cached", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, false)
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(nil)
+
+		require.NoError(t, c.Put(t.Context(), newData, WithOverwrite()))
+		c.wg.Wait()
+
+		entries, err := os.ReadDir(c.path)
+		require.NoError(t, err)
+		assert.Empty(t, entries)
+	})
+
+	t.Run("a failed backend put leaves the cached copy as it was", func(t *testing.T) {
+		t.Parallel()
+
+		errTarget := errors.New("backend down")
+		c, inner := newBlob(t, true)
+		inner.EXPECT().Put(mock.Anything, oldData).Return(nil)
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(errTarget)
+
+		require.NoError(t, c.Put(t.Context(), oldData))
+		c.wg.Wait()
+		require.ErrorIs(t, c.Put(t.Context(), newData, WithOverwrite()), errTarget)
+
+		assert.Equal(t, oldData, cachedCopy(t, c))
+	})
+
+	t.Run("a failed replace does not fail the put or leave a temp file", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, true)
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(nil)
+		// A file cannot be renamed over a directory.
+		require.NoError(t, os.Mkdir(c.fullFilename(), 0o700))
+
+		require.NoError(t, c.Put(t.Context(), newData, WithOverwrite()))
+		c.wg.Wait()
+
+		entries, err := os.ReadDir(c.path)
+		require.NoError(t, err)
+		assert.Len(t, entries, 1)
+	})
+
+	t.Run("a cache write of the old content that lands after the replace is dropped", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, true)
+		inner.EXPECT().Put(mock.Anything, newData, mock.Anything).Return(nil)
+
+		require.NoError(t, c.Put(t.Context(), newData, WithOverwrite()))
+		_, err := c.writeFileToCache(t.Context(), bytes.NewReader(oldData))
+		require.NoError(t, err)
+
+		assert.Equal(t, newData, cachedCopy(t, c))
+	})
+
+	t.Run("an ordinary second put keeps the cached copy", func(t *testing.T) {
+		t.Parallel()
+
+		c, inner := newBlob(t, true)
+		inner.EXPECT().Put(mock.Anything, mock.Anything).Return(nil)
+
+		require.NoError(t, c.Put(t.Context(), oldData))
+		c.wg.Wait()
+		require.NoError(t, c.Put(t.Context(), newData))
+
+		assert.Equal(t, oldData, cachedCopy(t, c))
 	})
 }
 

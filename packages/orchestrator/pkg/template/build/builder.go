@@ -417,7 +417,7 @@ func runBuild(
 	optimizeBuilder := optimize.New(
 		bc,
 		builder.sandboxFactory,
-		builder.templateStorage,
+		templateStorage,
 		builder.templateCache,
 		builder.proxy,
 		layerExecutor,
