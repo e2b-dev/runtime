@@ -24,7 +24,6 @@ import (
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
-	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -47,10 +46,6 @@ var (
 	errClusterInUse                = errors.New("a team still uses the cluster")
 	errClusterAssignmentsSettling  = errors.New("the cluster service has not yet dropped every team's assignment")
 )
-
-// clusterRefreshAttempts bounds the create, read and update a re-registration
-// repeats when the stored cluster changes or disappears in between.
-const clusterRefreshAttempts = 3
 
 type clusterRegistration struct {
 	TelemetryClientID  *string
@@ -79,51 +74,6 @@ func (r *clusterRegistration) normalize() error {
 	}
 
 	return nil
-}
-
-func (a *APIStore) ManagementRegisterCluster(c *gin.Context, clusterID api.ClusterID) {
-	ctx := c.Request.Context()
-	attrs := []attribute.KeyValue{telemetry.WithClusterID(clusterID)}
-
-	if !a.requireClusterService(c) {
-		return
-	}
-
-	body, err := ginutils.ParseBody[api.ManagementClusterRegistrationRequest](ctx, c)
-	if err != nil {
-		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "register cluster failed", err, attrs...)
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: clusterRegistrationInvalidCode, ClientMsg: "Invalid cluster registration"})
-
-		return
-	}
-
-	err = a.registerManagedCluster(ctx, clusterRegistration{
-		ClusterID:          &clusterID,
-		Name:               body.Name,
-		Endpoint:           body.Endpoint,
-		EndpointTLS:        body.EndpointTls,
-		Token:              body.Token,
-		SandboxProxyDomain: body.SandboxProxyDomain,
-		AuthOrgID:          body.AuthOrgId,
-		TelemetryClientID:  body.TelemetryClientId,
-		// A cluster registered through the management API belongs to a
-		// deployment its caller also tears down, so it starts unprotected.
-		// Registering an existing cluster again keeps its stored protection.
-		DeletionProtection: false,
-	})
-	switch {
-	case errors.Is(err, errInvalidClusterRegistration):
-		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "register cluster failed", err, attrs...)
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: clusterRegistrationInvalidCode, ClientMsg: "Invalid cluster registration"})
-	case errors.Is(err, errClusterRegistrationConflict):
-		telemetry.ReportErrorByCode(ctx, http.StatusConflict, "register cluster failed", err, attrs...)
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterRegistrationConflictCode, ClientMsg: "Cluster conflicts with stored state"})
-	case err != nil:
-		telemetry.ReportCriticalError(ctx, "register cluster failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to register cluster")
-	default:
-		c.Status(http.StatusNoContent)
-	}
 }
 
 // createCluster stores a new cluster, or answers for an existing one with the
@@ -157,93 +107,6 @@ func (a *APIStore) createCluster(ctx context.Context, registration clusterRegist
 		return nil, fmt.Errorf("%w: %w", errInvalidClusterRegistration, err)
 	default:
 		return nil, fmt.Errorf("create cluster: %w", err)
-	}
-}
-
-// registerManagedCluster stores the cluster, or refreshes the stored one with
-// the same ID and auth organization: it takes the new edge credential,
-// endpoint, TLS setting and sandbox domain, then a telemetry identity reported
-// for the first time, and keeps the name, deletion protection and assignments.
-func (a *APIStore) registerManagedCluster(ctx context.Context, registration clusterRegistration) error {
-	if err := registration.normalize(); err != nil {
-		return err
-	}
-
-	for range clusterRefreshAttempts {
-		_, err := a.createCluster(ctx, registration)
-		if !errors.Is(err, errClusterRegistrationConflict) {
-			return err
-		}
-
-		// An unknown ID means the conflict is with another cluster's auth
-		// organization or telemetry identity, or the cluster went away since
-		// the create; the next attempt tells the two apart.
-		stored, err := a.lookUpCluster(ctx, registration.ClusterID)
-		if err != nil {
-			return fmt.Errorf("read registered cluster: %w", err)
-		}
-		if stored == nil {
-			continue
-		}
-		storedAuthOrgID := optionalOf(stored.HasAuthOrgId(), stored.GetAuthOrgId())
-		if !sameOptional(storedAuthOrgID, registration.AuthOrgID) {
-			return fmt.Errorf("%w: the cluster belongs to another auth organization", errClusterRegistrationConflict)
-		}
-
-		_, err = a.clusterService.UpdateCluster(ctx, clustersgrpc.UpdateClusterRequest_builder{
-			ClusterId:          registration.ClusterID.String(),
-			Endpoint:           &registration.Endpoint,
-			EndpointTls:        &registration.EndpointTLS,
-			Token:              &registration.Token,
-			SandboxProxyDomain: clustersgrpc.NullableStringUpdate_builder{Value: registration.SandboxProxyDomain}.Build(),
-			Etag:               new(stored.GetEtag()),
-		}.Build())
-		switch status.Code(err) {
-		case codes.OK:
-			return a.registerTelemetryClient(ctx, *registration.ClusterID, registration.TelemetryClientID, stored)
-		case codes.Aborted, codes.NotFound:
-			// Changed or removed since the read: start over.
-			continue
-		case codes.AlreadyExists, codes.FailedPrecondition:
-			return fmt.Errorf("%w: %w", errClusterRegistrationConflict, err)
-		case codes.InvalidArgument:
-			return fmt.Errorf("%w: %w", errInvalidClusterRegistration, err)
-		default:
-			return fmt.Errorf("refresh registered cluster: %w", err)
-		}
-	}
-
-	return fmt.Errorf("%w: the cluster kept changing during registration", errClusterRegistrationConflict)
-}
-
-// registerTelemetryClient sets a telemetry identity the stored cluster does not
-// have yet. The cluster service sets an identity once, so a different one is a
-// conflict; it is written after the connection details so that the conflict
-// never costs the cluster its new credential.
-func (a *APIStore) registerTelemetryClient(ctx context.Context, clusterID uuid.UUID, telemetryClientID *string, stored *clustersgrpc.Cluster) error {
-	storedTelemetryClientID := optionalOf(stored.HasTelemetryClientId(), stored.GetTelemetryClientId())
-	if telemetryClientID == nil || sameOptional(storedTelemetryClientID, telemetryClientID) {
-		return nil
-	}
-
-	_, err := a.clusterService.UpdateCluster(ctx, clustersgrpc.UpdateClusterRequest_builder{
-		ClusterId:         clusterID.String(),
-		TelemetryClientId: telemetryClientID,
-	}.Build())
-	switch {
-	case err == nil,
-		// Telemetry names leave out a cluster being deleted, so its identity
-		// would never be read.
-		clusterErrorReason(err) == clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED:
-		return nil
-	case status.Code(err) == codes.AlreadyExists,
-		status.Code(err) == codes.NotFound,
-		clusterErrorReason(err) == clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED:
-		return fmt.Errorf("%w: telemetry identity: %w", errClusterRegistrationConflict, err)
-	case status.Code(err) == codes.InvalidArgument:
-		return fmt.Errorf("%w: %w", errInvalidClusterRegistration, err)
-	default:
-		return fmt.Errorf("register telemetry identity: %w", err)
 	}
 }
 
@@ -694,12 +557,4 @@ func optionalOf(present bool, value string) *string {
 	}
 
 	return &value
-}
-
-func sameOptional(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-
-	return *a == *b
 }

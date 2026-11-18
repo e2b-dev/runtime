@@ -386,13 +386,6 @@ image, which E2B Embed runs on port 3001 against the API alone.
   defined there); a LaunchDarkly value wins. LaunchDarkly feature flags also gate placement
   parameters, rate limits, and rollouts.
 
-Administrators can update only an existing cluster's telemetry identity with
-`PUT /unstable/management/clusters/{clusterID}/telemetry`, authenticated using the
-existing admin service JWT. The update sends the cluster service only the telemetry
-identity, so credentials, endpoints, display names and assignments stay as stored. It
-refuses a deleting or missing cluster, a cluster that already has a different
-identity, and an identity another cluster holds.
-
 #### Project management writes (`/unstable/management`)
 
 `PUT /unstable/management/projects/{projectID}/settings` applies a revisioned settings
@@ -527,22 +520,14 @@ replaces what they wrote.
 
 The owning management service also drives a replay-safe cluster lifecycle under
 `/unstable/management/clusters/{clusterID}` and
-`/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. A caller
-registers a stable cluster UUID, assigns it only to the named project, detaches that exact
-assignment before provider cleanup, and deletes the cluster only after no project references it.
-Replaying the same registration or assignment succeeds. Registering the cluster again with the same
-auth organization preserves its stored display name and may change its endpoint, TLS setting, sandbox
-proxy domain and token, for example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
-sync and gives sandboxes the new domain. That update carries the stored record's etag, and a
-registration that races another write starts over, a bounded number of times. A second update
-then sets a telemetry identity the cluster does not have yet, so a refused identity never costs
-the cluster its new token. A changed auth organization, a different telemetry
-identity, a different assignment, an inexact detach, or deletion of a referenced cluster returns
-a conflict. The
-assignment does not check the project's tier; the caller decides which projects may use a cluster.
-A cluster first registered through this surface starts without deletion protection; one created any
-other way starts protected, a later registration never changes it, and deleting a protected cluster
-or checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
+`/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. Clusters
+are registered with the cluster service, not through the API. A caller assigns a registered
+cluster only to the named project, detaches that exact assignment before provider cleanup, and
+deletes the cluster only after no project references it. Replaying the same assignment succeeds.
+A different assignment, an inexact detach, or deletion of a referenced cluster returns a
+conflict. The assignment does not check the project's tier; the caller decides which projects may
+use a cluster. Deleting a protected cluster or checking its destroy readiness
+(`GET .../destroy-readiness`) returns a conflict.
 A caller that deletes a cluster's projects before the cluster first lists them with
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion

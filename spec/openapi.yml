@@ -4583,36 +4583,6 @@ components:
           type: string
           nullable: true
           description: Cursor to pass to the next list request, or null when there is no next page.
-    ManagementClusterRegistrationRequest:
-      type: object
-      required:
-        - name
-        - endpoint
-        - endpoint_tls
-        - token
-      properties:
-        name:
-          type: string
-          minLength: 1
-        endpoint:
-          type: string
-          minLength: 1
-        endpoint_tls:
-          type: boolean
-        token:
-          type: string
-          minLength: 1
-        sandbox_proxy_domain:
-          type: string
-          nullable: true
-        auth_org_id:
-          type: string
-          nullable: true
-
-        telemetry_client_id:
-          type: string
-          minLength: 1
-
     ManagementClusterProjects:
       type: object
       required: [project_ids]
@@ -7984,32 +7954,6 @@ paths:
   /unstable/management/clusters/{clusterID}:
     parameters:
       - $ref: "#/components/parameters/clusterID"
-    put:
-      operationId: managementRegisterCluster
-      summary: Register a cluster.
-      description: A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-      tags: [admin]
-      security:
-        - AdminJWTAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ManagementClusterRegistrationRequest"
-      responses:
-        "204":
-          description: Cluster registration is present.
-        "400":
-          $ref: "#/components/responses/400"
-        "401":
-          $ref: "#/components/responses/401"
-        "409":
-          $ref: "#/components/responses/409"
-        "500":
-          $ref: "#/components/responses/500"
-        "503":
-          $ref: "#/components/responses/503"
     delete:
       operationId: managementDeleteCluster
       summary: Delete a cluster and its environments.
@@ -8024,43 +7968,6 @@ paths:
           $ref: "#/components/responses/400"
         "401":
           $ref: "#/components/responses/401"
-        "409":
-          $ref: "#/components/responses/409"
-        "500":
-          $ref: "#/components/responses/500"
-        "503":
-          $ref: "#/components/responses/503"
-
-  /unstable/management/clusters/{clusterID}/telemetry:
-    parameters:
-      - $ref: "#/components/parameters/clusterID"
-    put:
-      operationId: managementUpdateClusterTelemetry
-      summary: Update the telemetry identity of an existing cluster.
-      description: Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-      tags: [admin]
-      security:
-        - AdminJWTAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [telemetry_client_id]
-              properties:
-                telemetry_client_id:
-                  type: string
-                  minLength: 1
-      responses:
-        "204":
-          description: Telemetry identity updated.
-        "400":
-          $ref: "#/components/responses/400"
-        "401":
-          $ref: "#/components/responses/401"
-        "404":
-          $ref: "#/components/responses/404"
         "409":
           $ref: "#/components/responses/409"
         "500":

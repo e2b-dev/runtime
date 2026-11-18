@@ -1559,17 +1559,6 @@ type ManagementClusterProjects struct {
 	ProjectIds []openapi_types.UUID `json:"project_ids"`
 }
 
-// ManagementClusterRegistrationRequest defines model for ManagementClusterRegistrationRequest.
-type ManagementClusterRegistrationRequest struct {
-	AuthOrgId          *string `json:"auth_org_id,omitempty"`
-	Endpoint           string  `json:"endpoint"`
-	EndpointTls        bool    `json:"endpoint_tls"`
-	Name               string  `json:"name"`
-	SandboxProxyDomain *string `json:"sandbox_proxy_domain,omitempty"`
-	TelemetryClientId  *string `json:"telemetry_client_id,omitempty"`
-	Token              string  `json:"token"`
-}
-
 // ManagementDecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
 type ManagementDecidedAt = time.Time
 
@@ -3904,11 +3893,6 @@ type GetUnstableBuildsStatusesParams struct {
 	BuildIds BuildIDs `form:"build_ids" json:"build_ids"`
 }
 
-// ManagementUpdateClusterTelemetryJSONBody defines parameters for ManagementUpdateClusterTelemetry.
-type ManagementUpdateClusterTelemetryJSONBody struct {
-	TelemetryClientId string `json:"telemetry_client_id"`
-}
-
 // GetUnstableTemplatesSearchParams defines parameters for GetUnstableTemplatesSearch.
 type GetUnstableTemplatesSearchParams struct {
 	// Search Case-insensitive substring match on the template ID, its aliases and its names.
@@ -4139,12 +4123,6 @@ type PostUnstableAdminTemplatesDefaultsJSONRequestBody = AdminDefaultTemplateCre
 
 // PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody defines body for PatchUnstableAdminTemplatesDefaultsTemplateID for application/json ContentType.
 type PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody = AdminDefaultTemplateUpdateRequest
-
-// ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
-type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
-
-// ManagementUpdateClusterTelemetryJSONRequestBody defines body for ManagementUpdateClusterTelemetry for application/json ContentType.
-type ManagementUpdateClusterTelemetryJSONRequestBody ManagementUpdateClusterTelemetryJSONBody
 
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
@@ -5738,24 +5716,6 @@ type ClientInterface interface {
 	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 	ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ManagementRegisterClusterWithBody Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementRegisterCluster Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ManagementRequestClusterDeletion Record that a cluster is being deleted.
 	//
 	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
@@ -5776,24 +5736,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
@@ -8474,44 +8416,6 @@ func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterI
 	return c.Client.Do(req)
 }
 
-// ManagementRegisterClusterWithBody Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *Client) ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementRegisterClusterRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementRegisterCluster Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *Client) ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementRegisterClusterRequest(c.Server, clusterID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ManagementRequestClusterDeletion Record that a cluster is being deleted.
 //
 // Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
@@ -8553,44 +8457,6 @@ func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterI
 // Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *Client) ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementUpdateClusterTelemetryRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *Client) ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementUpdateClusterTelemetryRequest(c.Server, clusterID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14497,53 +14363,6 @@ func NewManagementDeleteClusterRequest(server string, clusterID ClusterID) (*htt
 	return req, nil
 }
 
-// NewManagementRegisterClusterRequest calls the generic ManagementRegisterCluster builder with application/json body
-func NewManagementRegisterClusterRequest(server string, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewManagementRegisterClusterRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewManagementRegisterClusterRequestWithBody constructs an http.Request for the ManagementRegisterCluster method, with any body, and a specified content type
-func NewManagementRegisterClusterRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/clusters/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewManagementRequestClusterDeletionRequest constructs an http.Request for the ManagementRequestClusterDeletion method
 func NewManagementRequestClusterDeletionRequest(server string, clusterID ClusterID) (*http.Request, error) {
 	var err error
@@ -14642,53 +14461,6 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewManagementUpdateClusterTelemetryRequest calls the generic ManagementUpdateClusterTelemetry builder with application/json body
-func NewManagementUpdateClusterTelemetryRequest(server string, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewManagementUpdateClusterTelemetryRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewManagementUpdateClusterTelemetryRequestWithBody constructs an http.Request for the ManagementUpdateClusterTelemetry method, with any body, and a specified content type
-func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/telemetry", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -17344,24 +17116,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 	ManagementDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDeleteClusterResponse, error)
 
-	// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
-
-	// ManagementRegisterClusterWithResponse Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
-
 	// ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 	//
 	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
@@ -17388,24 +17142,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
-
-	// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
-
-	// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -25773,75 +25509,6 @@ func (r ManagementDeleteClusterResponse) ContentType() string {
 	return ""
 }
 
-type ManagementRegisterClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementRegisterClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementRegisterClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementRegisterClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementRegisterClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ManagementRequestClusterDeletionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26036,82 +25703,6 @@ func (r ManagementListClusterProjectsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ManagementListClusterProjectsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ManagementUpdateClusterTelemetryResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementUpdateClusterTelemetryResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementUpdateClusterTelemetryResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementUpdateClusterTelemetryResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementUpdateClusterTelemetryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -30424,36 +30015,6 @@ func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Co
 	return ParseManagementDeleteClusterResponse(rsp)
 }
 
-// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *ClientWithResponses) ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
-	rsp, err := c.ManagementRegisterClusterWithBody(ctx, clusterID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementRegisterClusterResponse(rsp)
-}
-
-// ManagementRegisterClusterWithResponse Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *ClientWithResponses) ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
-	rsp, err := c.ManagementRegisterCluster(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementRegisterClusterResponse(rsp)
-}
-
 // ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 //
 // Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
@@ -30497,36 +30058,6 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseManagementListClusterProjectsResponse(rsp)
-}
-
-// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
-	rsp, err := c.ManagementUpdateClusterTelemetryWithBody(ctx, clusterID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementUpdateClusterTelemetryResponse(rsp)
-}
-
-// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
-	rsp, err := c.ManagementUpdateClusterTelemetry(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementUpdateClusterTelemetryResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -38234,63 +37765,6 @@ func ParseManagementDeleteClusterResponse(rsp *http.Response) (*ManagementDelete
 	return response, nil
 }
 
-// ParseManagementRegisterClusterResponse parses an HTTP response from a ManagementRegisterClusterWithResponse call
-func ParseManagementRegisterClusterResponse(rsp *http.Response) (*ManagementRegisterClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementRegisterClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseManagementRequestClusterDeletionResponse parses an HTTP response from a ManagementRequestClusterDeletionWithResponse call
 func ParseManagementRequestClusterDeletionResponse(rsp *http.Response) (*ManagementRequestClusterDeletionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38446,70 +37920,6 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 			return nil, err
 		}
 		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseManagementUpdateClusterTelemetryResponse parses an HTTP response from a ManagementUpdateClusterTelemetryWithResponse call
-func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*ManagementUpdateClusterTelemetryResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementUpdateClusterTelemetryResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 

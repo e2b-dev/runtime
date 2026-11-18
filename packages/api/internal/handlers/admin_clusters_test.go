@@ -528,11 +528,9 @@ func TestClusterRoutesAnswer503WithoutAClusterService(t *testing.T) {
 		"admin delete":                 {callAdmin, http.MethodDelete, clusterPath, ""},
 		"admin teams":                  {callAdmin, http.MethodGet, clusterPath + "/teams", ""},
 		"admin token rotation":         {callAdmin, http.MethodPut, clusterPath + "/token", `{"token":"token"}`},
-		"management registration":      {callManagement, http.MethodPut, managementPath, mustJSON(t, managementClusterRegistration())},
 		"management delete":            {callManagement, http.MethodDelete, managementPath, ""},
 		"management deletion request":  {callManagement, http.MethodPut, managementPath + "/deletion", ""},
 		"management destroy readiness": {callManagement, http.MethodGet, managementPath + "/destroy-readiness", ""},
-		"management telemetry":         {callManagement, http.MethodPut, managementPath + "/telemetry", `{"telemetry_client_id":"client_test"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
