@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
+	"go.uber.org/zap/zaptest"
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
@@ -53,8 +54,8 @@ import (
 )
 
 const (
-	baseImage = "ubuntu:22.04"
-	proxyPort = 5009
+	proxyPort         = 5009
+	smokeBuildTimeout = 5 * time.Minute
 )
 
 // TestSmokeAllFCVersions builds a template and resumes from it for every
@@ -79,6 +80,7 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
 
+	baseImage := prepareSmokeImage(t, ctx)
 	infra := newTestInfra(t, ctx)
 	defer infra.close(ctx)
 
@@ -89,8 +91,10 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 			// Phase 1: create build
 			t.Logf("creating build %s with FC %s", buildID, fcVersion)
 			force := true
+			buildCtx, cancelBuild := context.WithTimeout(ctx, smokeBuildTimeout)
+			defer cancelBuild()
 			_, err := infra.builder.Build(
-				ctx,
+				buildCtx,
 				storage.Paths{BuildID: buildID},
 				config.TemplateConfig{
 					Version:            templates.TemplateV2LatestVersion,
@@ -105,7 +109,7 @@ func TestSmokeAllFCVersions(t *testing.T) { //nolint:paralleltest // subtests sh
 					FirecrackerVersion: fcVersion,
 					FromImage:          baseImage,
 				},
-				logger.NewNopLogger().Detach(ctx).Core(),
+				zaptest.NewLogger(t).Core(),
 			)
 			require.NoError(t, err, "create build failed for FC %s", fcVersion)
 			t.Logf("build %s done", buildID)
