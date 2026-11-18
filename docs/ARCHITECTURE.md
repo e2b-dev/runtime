@@ -858,7 +858,8 @@ limited to gRPC health probes. An isolated local run can explicitly set
 `E2B_TLS_GRPC_MODE=off`.
 
 The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
-`_migrations` table. This includes `env_defaults`, which migration `20260915204740`
+`_migrations` table, and `packages/db/schema/schema.sql` declares the `public`
+and `projection` schemas those migrations build. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.
 Any existing `_dashboard_migrations` table is retained as historical bookkeeping and
 requires no updates. Run the db-migrator before deploying updated services to a

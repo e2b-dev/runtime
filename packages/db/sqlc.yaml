@@ -28,7 +28,7 @@ sql:
       - "queries/**"
     schema:
       - "migrations"
-      - "schema"
+      - "schema/sqlc_overrides.sql"
     gen:
       go:
         emit_pointers_for_null_types: true
@@ -62,7 +62,7 @@ sql:
     queries: "pkg/auth/sql_queries/**"
     schema:
       - "migrations"
-      - "schema"
+      - "schema/sqlc_overrides.sql"
     gen:
       go:
         emit_pointers_for_null_types: true
@@ -75,7 +75,7 @@ sql:
     queries: "pkg/testutils/*.sql"
     schema:
       - "migrations"
-      - "schema"
+      - "schema/sqlc_overrides.sql"
     gen:
       go:
         package: "queries"
