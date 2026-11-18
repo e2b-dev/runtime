@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -60,8 +61,7 @@ func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc
 
 			res, err := next(ctx, req)
 
-			l := logger.
-				Err(err).
+			l := endLogEvent(ctx, logger, zerolog.InfoLevel, err).
 				Str("method", DefaultHTTPMethod+" "+req.Spec().Procedure).
 				Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -111,7 +111,7 @@ func LogServerStreamWithoutEvents[T any, R any](
 
 	err := handler(ctx, req, stream)
 
-	logEvent := getErrDebugLogEvent(logger, err).
+	logEvent := endLogEvent(ctx, logger, zerolog.DebugLevel, err).
 		Str("method", DefaultHTTPMethod+" "+req.Spec().Procedure).
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -141,7 +141,7 @@ func LogClientStreamWithoutEvents[T any, R any](
 
 	res, err := handler(ctx, stream)
 
-	logEvent := getErrDebugLogEvent(logger, err).
+	logEvent := endLogEvent(ctx, logger, zerolog.DebugLevel, err).
 		Str("method", DefaultHTTPMethod+" "+stream.Spec().Procedure).
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -162,11 +162,17 @@ func LogClientStreamWithoutEvents[T any, R any](
 	return res, err
 }
 
-// Return logger with error level if err is not nil, otherwise return logger with debug level
-func getErrDebugLogEvent(logger *zerolog.Logger, err error) *zerolog.Event {
-	if err != nil {
-		return logger.Error().Err(err) //nolint:zerologlint // this builds an event, it is not expected to return it
+// endLogEvent returns the event for a call's final log line: the success level
+// when err is nil, debug when the client cancelled the call, and error
+// otherwise. A cancelled call can fail in any way, for example a stream write
+// to the closed connection, so the request context decides, not the error.
+func endLogEvent(ctx context.Context, logger *zerolog.Logger, success zerolog.Level, err error) *zerolog.Event {
+	switch {
+	case err == nil:
+		return logger.WithLevel(success) //nolint:zerologlint // the caller adds fields and sends it
+	case errors.Is(ctx.Err(), context.Canceled):
+		return logger.Debug().Err(err) //nolint:zerologlint // the caller adds fields and sends it
+	default:
+		return logger.Error().Err(err) //nolint:zerologlint // the caller adds fields and sends it
 	}
-
-	return logger.Debug() //nolint:zerologlint // this builds an event, it is not expected to return it
 }
