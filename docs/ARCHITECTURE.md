@@ -286,7 +286,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Scheduling API connection**: with `SCHEDULING_API_GRPC_ADDRESS` set, the API prepares a gRPC
   connection to scheduling-api through the `scheduling` client hop, balanced over every resolved
   address like the cluster service's (a `dns:///name:port` target gives each replica of a headless
-  Service its own connection) and sent only to replicas that report `e2b.scheduling.v1.StateService`
+  Service its own connection) and sent only to replicas that report `e2b.scheduling.state.v1.StateService`
   as `SERVING`. The sandbox store sends a call there instead of to its own Redis store when the
   `sandbox-state-scheduling-api` flag is on for the call's team or sandbox (default off; without
   LaunchDarkly the `SANDBOX_STATE_SCHEDULING_API` environment variable). Calls without a team (the
@@ -1545,5 +1545,8 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto`, `packages/scheduling-api/e2b/` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.
+Scheduling contracts exist in this checkout only as generated Go code in
+`packages/shared/pkg/grpc/contracts/scheduling/`; their protos are not part of this checkout, so `make generate`
+does not regenerate them.

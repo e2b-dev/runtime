@@ -14,8 +14,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -138,8 +139,8 @@ func everyCall() map[string]storeCall {
 func TestEveryCallIsCovered(t *testing.T) {
 	t.Parallel()
 
-	state := len(scheduling.StateService_ServiceDesc.Methods) + len(scheduling.StateService_ServiceDesc.Streams)
-	reservation := len(scheduling.ReservationService_ServiceDesc.Methods)
+	state := len(statepb.StateService_ServiceDesc.Methods) + len(statepb.StateService_ServiceDesc.Streams)
+	reservation := len(reservationpb.ReservationService_ServiceDesc.Methods)
 	assert.Len(t, everyCall(), state-1+reservation, "every RPC but Reconcile, which returns no error")
 }
 
@@ -278,8 +279,8 @@ func TestDeadlines(t *testing.T) {
 	t.Parallel()
 
 	const slack = time.Millisecond
-	finished := scheduling.WaitForStartResponse_builder{Outcome: scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED}.Build()
-	notFound := scheduling.GetResponse_builder{Outcome: scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND}.Build()
+	finished := reservationpb.WaitForStartResponse_builder{Outcome: reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED}.Build()
+	notFound := statepb.GetResponse_builder{Outcome: statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND}.Build()
 	get := func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 		_, _ = s.Get(ctx, teamID, sandboxID)
 	}
@@ -346,16 +347,16 @@ func TestLongPolls(t *testing.T) {
 		_, r := newStores(dial(t, func(_ context.Context, _ string, req proto.Message, _ func(proto.Message) error) (proto.Message, error) {
 			rec.record(req)
 			if len(rec.all()) < 4 {
-				return scheduling.WaitForStartResponse_builder{Outcome: scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING}.Build(), nil
+				return reservationpb.WaitForStartResponse_builder{Outcome: reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING}.Build(), nil
 			}
 
-			return scheduling.WaitForStartResponse_builder{Outcome: scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, Result: []byte("result")}.Build(), nil
+			return reservationpb.WaitForStartResponse_builder{Outcome: reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, Result: []byte("result")}.Build(), nil
 		}))
 
 		result, err := r.WaitForStart(callContext(t), teamID, sandboxID)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("result"), result)
-		want := scheduling.WaitForStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build()
+		want := reservationpb.WaitForStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build()
 		requests := rec.all()
 		require.Len(t, requests, 4, "three WAITING answers, then the result")
 		for _, req := range requests {
@@ -370,11 +371,11 @@ func TestLongPolls(t *testing.T) {
 		s, _ := newStores(dial(t, func(_ context.Context, _ string, req proto.Message, _ func(proto.Message) error) (proto.Message, error) {
 			rec.record(req)
 			if len(rec.all()) < 4 {
-				return scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, TransitionId: "transition-1"}.Build(), nil
+				return statepb.WaitForTransitionResponse_builder{Outcome: statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, TransitionId: "transition-1"}.Build(), nil
 			}
 
-			return scheduling.WaitForTransitionResponse_builder{
-				Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED, TransitionId: "transition-1", Failure: "boom",
+			return statepb.WaitForTransitionResponse_builder{
+				Outcome: statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED, TransitionId: "transition-1", Failure: "boom",
 			}.Build(), nil
 		}))
 
@@ -383,7 +384,7 @@ func TestLongPolls(t *testing.T) {
 		assert.Equal(t, &sandboxtypes.TransitionFailedError{Message: "boom"}, err)
 		var sent []string
 		for _, req := range rec.all() {
-			wait := req.(*scheduling.WaitForTransitionRequest)
+			wait := req.(*statepb.WaitForTransitionRequest)
 			assert.Equal(t, teamID.String(), wait.GetTeamId())
 			assert.Equal(t, sandboxID, wait.GetSandboxId())
 			sent = append(sent, wait.GetTransitionId())
@@ -396,7 +397,7 @@ func TestLongPolls(t *testing.T) {
 		call func(ctx context.Context, s *remote.Storage, r *remote.ReservationStorage) (string, error)
 	}{
 		"WaitForStart": {
-			resp: scheduling.WaitForStartResponse_builder{Outcome: scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING}.Build(),
+			resp: reservationpb.WaitForStartResponse_builder{Outcome: reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING}.Build(),
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) (string, error) {
 				result, err := r.WaitForStart(ctx, teamID, sandboxID)
 
@@ -404,7 +405,7 @@ func TestLongPolls(t *testing.T) {
 			},
 		},
 		"WaitForTransition": {
-			resp: scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, TransitionId: "transition-1"}.Build(),
+			resp: statepb.WaitForTransitionResponse_builder{Outcome: statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, TransitionId: "transition-1"}.Build(),
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) (string, error) {
 				return s.WaitForTransition(ctx, teamID, sandboxID, "")
 			},
@@ -456,7 +457,7 @@ func TestStreams(t *testing.T) {
 	}{
 		"TeamItems": {
 			message: func(records [][]byte) proto.Message {
-				return scheduling.TeamItemsResponse_builder{Records: records}.Build()
+				return statepb.TeamItemsResponse_builder{Records: records}.Build()
 			},
 			call: func(ctx context.Context, s *remote.Storage) ([]sandboxtypes.Sandbox, error) {
 				return s.TeamItems(ctx, teamID, nil)
@@ -465,7 +466,7 @@ func TestStreams(t *testing.T) {
 		},
 		"ExpiredItems": {
 			message: func(records [][]byte) proto.Message {
-				return scheduling.ExpiredItemsResponse_builder{Records: records}.Build()
+				return statepb.ExpiredItemsResponse_builder{Records: records}.Build()
 			},
 			call: func(ctx context.Context, s *remote.Storage) ([]sandboxtypes.Sandbox, error) {
 				return s.ExpiredItems(ctx)
@@ -569,25 +570,25 @@ func TestReconcile(t *testing.T) {
 	s, _ := newStores(dial(t, func(_ context.Context, _ string, req proto.Message, _ func(proto.Message) error) (proto.Message, error) {
 		rec.record(req)
 
-		return scheduling.ReconcileResponse_builder{Orphans: []*scheduling.SandboxReference{
-			scheduling.SandboxReference_builder{TeamId: second.TeamID.String(), SandboxId: second.SandboxID}.Build(),
-			scheduling.SandboxReference_builder{TeamId: teamID.String(), SandboxId: "unknown"}.Build(),
-			scheduling.SandboxReference_builder{TeamId: second.TeamID.String(), SandboxId: first.SandboxID}.Build(),
+		return statepb.ReconcileResponse_builder{Orphans: []*statepb.SandboxReference{
+			statepb.SandboxReference_builder{TeamId: second.TeamID.String(), SandboxId: second.SandboxID}.Build(),
+			statepb.SandboxReference_builder{TeamId: teamID.String(), SandboxId: "unknown"}.Build(),
+			statepb.SandboxReference_builder{TeamId: second.TeamID.String(), SandboxId: first.SandboxID}.Build(),
 		}}.Build(), nil
 	}))
 
 	orphans := s.Reconcile(callContext(t), []sandboxtypes.NodeSandbox{first, second}, "node-1")
 	assert.Equal(t, []sandboxtypes.NodeSandbox{second}, orphans, "the caller's own value for each reference it sent")
 
-	var wire []*scheduling.NodeSandbox
+	var wire []*statepb.NodeSandbox
 	for _, sbx := range []sandboxtypes.NodeSandbox{first, second} {
-		wire = append(wire, scheduling.NodeSandbox_builder{
+		wire = append(wire, statepb.NodeSandbox_builder{
 			SandboxId: sbx.SandboxID, ExecutionId: sbx.ExecutionID, TeamId: sbx.TeamID.String(), NodeId: sbx.NodeID, ClusterId: sbx.ClusterID.String(),
 			StartTime: timestamppb.New(sbx.StartTime), Vcpu: sbx.VCpu, RamMb: sbx.RamMB, HugePages: sbx.HugePages, Ended: sbx.Ended,
 			GuestEvent: sbx.GuestEvent, DiskKept: sbx.DiskKept,
 		}.Build())
 	}
-	requireProtoEqual(t, scheduling.ReconcileRequest_builder{NodeId: "node-1", Sandboxes: wire}.Build(), rec.last(t))
+	requireProtoEqual(t, statepb.ReconcileRequest_builder{NodeId: "node-1", Sandboxes: wire}.Build(), rec.last(t))
 
 	none := s.Reconcile(callContext(t), []sandboxtypes.NodeSandbox{first}, "node-1")
 	assert.Nil(t, none, "no orphans: a reference to a sandbox the caller did not send is ignored")

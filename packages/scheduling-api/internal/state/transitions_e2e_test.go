@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -73,7 +73,7 @@ func (o *observedStorage) removeOpts() []sandboxtypes.RemoveOpts {
 func countWaiting(waiting chan<- struct{}) grpc.DialOption {
 	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		err := invoker(ctx, method, req, reply, cc, opts...)
-		if resp, ok := reply.(*scheduling.WaitForTransitionResponse); ok && err == nil && resp.GetOutcome() == scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING {
+		if resp, ok := reply.(*statepb.WaitForTransitionResponse); ok && err == nil && resp.GetOutcome() == statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING {
 			select {
 			case waiting <- struct{}{}:
 			default:
@@ -110,7 +110,7 @@ func runJoin(t *testing.T, s redisSetup, path string, tt joinScenario) removeRes
 
 	ctx := callContext(t)
 	sbx := minimalRecord(uuid.New(), newSandboxID())
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
 	starter, _, err := s.records.BeginRemoving(ctx, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: tt.starter})
 	require.NoError(t, err)
 	require.NotEmpty(t, starter.ID)

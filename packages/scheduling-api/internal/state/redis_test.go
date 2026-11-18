@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
@@ -23,7 +23,7 @@ import (
 
 type redisSetup struct {
 	records *storage_redis.Storage
-	client  scheduling.StateServiceClient
+	client  statepb.StateServiceClient
 	remote  *remote.Storage
 }
 
@@ -43,31 +43,31 @@ func setupRedisOn(t *testing.T, client goredis.UniversalClient) redisSetup {
 
 	conn := newConnWithWait(t, records, hangTimeout)
 
-	return redisSetup{records: records, client: scheduling.NewStateServiceClient(conn), remote: remote.NewStorage(conn)}
+	return redisSetup{records: records, client: statepb.NewStateServiceClient(conn), remote: remote.NewStorage(conn)}
 }
 
-func (s redisSetup) add(ctx context.Context, t *testing.T, sbx sandboxtypes.Sandbox) scheduling.StateOutcome {
+func (s redisSetup) add(ctx context.Context, t *testing.T, sbx sandboxtypes.Sandbox) statepb.StateOutcome {
 	t.Helper()
 
-	resp, err := s.client.Add(ctx, scheduling.AddRequest_builder{Record: encode(t, sbx)}.Build())
+	resp, err := s.client.Add(ctx, statepb.AddRequest_builder{Record: encode(t, sbx)}.Build())
 	require.NoError(t, err)
 
 	return resp.GetOutcome()
 }
 
-func (s redisSetup) get(ctx context.Context, t *testing.T, teamID uuid.UUID, sandboxID string) *scheduling.GetResponse {
+func (s redisSetup) get(ctx context.Context, t *testing.T, teamID uuid.UUID, sandboxID string) *statepb.GetResponse {
 	t.Helper()
 
-	resp, err := s.client.Get(ctx, scheduling.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
+	resp, err := s.client.Get(ctx, statepb.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
 	require.NoError(t, err)
 
 	return resp
 }
 
-func (s redisSetup) remove(ctx context.Context, t *testing.T, teamID uuid.UUID, sandboxID, executionID string) scheduling.StateOutcome {
+func (s redisSetup) remove(ctx context.Context, t *testing.T, teamID uuid.UUID, sandboxID, executionID string) statepb.StateOutcome {
 	t.Helper()
 
-	resp, err := s.client.Remove(ctx, scheduling.RemoveRequest_builder{
+	resp, err := s.client.Remove(ctx, statepb.RemoveRequest_builder{
 		TeamId: teamID.String(), SandboxId: sandboxID, ExpectedExecutionId: executionID,
 	}.Build())
 	require.NoError(t, err)
@@ -103,10 +103,10 @@ func TestRedisRecordFidelity(t *testing.T) {
 			t.Parallel()
 
 			ctx := callContext(t)
-			require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, original))
+			require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, original))
 
 			resp := s.get(ctx, t, original.TeamID, original.SandboxID)
-			require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+			require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 			assert.Equal(t, string(encode(t, original)), string(resp.GetRecord()), "the record's JSON survives Add and Get")
 
 			got := decode(t, resp.GetRecord())
@@ -134,7 +134,7 @@ func TestRedisRecordFidelity(t *testing.T) {
 
 		ctx := callContext(t)
 		original := minimalRecord(uuid.New(), newSandboxID())
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, original))
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, original))
 		got := decode(t, s.get(ctx, t, original.TeamID, original.SandboxID).GetRecord())
 		assert.Nil(t, got.Alias)
 		assert.Nil(t, got.EnvdAccessToken)
@@ -161,8 +161,8 @@ func TestRedisAdd(t *testing.T) {
 		second := first
 		second.TemplateID = "second"
 
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, first))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, second))
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, first))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, second))
 		stored, err := s.records.Get(ctx, first.TeamID, first.SandboxID)
 		require.NoError(t, err)
 		assert.Equal(t, "first", stored.TemplateID)
@@ -174,12 +174,12 @@ func TestRedisAdd(t *testing.T) {
 		ctx := callContext(t)
 		held := minimalRecord(uuid.New(), newSandboxID())
 		held.NodeID = "node"
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, held))
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, held))
 		s.hold(ctx, t, held)
 
 		replacement := held
 		replacement.ExecutionID = uuid.NewString()
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, s.add(ctx, t, replacement))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, s.add(ctx, t, replacement))
 		stored, err := s.records.Get(ctx, held.TeamID, held.SandboxID)
 		require.NoError(t, err)
 		assert.Equal(t, held.ExecutionID, stored.ExecutionID)
@@ -193,13 +193,13 @@ func TestRedisGetNotFound(t *testing.T) {
 	ctx := callContext(t)
 
 	resp := s.get(ctx, t, uuid.New(), newSandboxID())
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
 	assert.Empty(t, resp.GetRecord())
 
 	stored := minimalRecord(uuid.New(), newSandboxID())
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, stored))
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, stored))
 	resp = s.get(ctx, t, uuid.New(), stored.SandboxID)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome(), "another team's record is not found")
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome(), "another team's record is not found")
 	assert.Empty(t, resp.GetRecord())
 }
 
@@ -213,9 +213,9 @@ func TestRedisRemove(t *testing.T) {
 
 		ctx := callContext(t)
 		sbx := minimalRecord(uuid.New(), newSandboxID())
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome())
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, sbx.ExecutionID))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome())
 	})
 
 	t.Run("any execution", func(t *testing.T) {
@@ -223,16 +223,16 @@ func TestRedisRemove(t *testing.T) {
 
 		ctx := callContext(t)
 		sbx := minimalRecord(uuid.New(), newSandboxID())
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, ""))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome())
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, ""))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome())
 	})
 
 	t.Run("absent", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := callContext(t)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, uuid.New(), newSandboxID(), ""))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.remove(ctx, t, uuid.New(), newSandboxID(), ""))
 	})
 
 	t.Run("another execution expected", func(t *testing.T) {
@@ -240,9 +240,9 @@ func TestRedisRemove(t *testing.T) {
 
 		ctx := callContext(t)
 		sbx := minimalRecord(uuid.New(), newSandboxID())
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, uuid.NewString()))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome(), "the record stays")
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, uuid.NewString()))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome(), "the record stays")
 	})
 
 	t.Run("held", func(t *testing.T) {
@@ -251,17 +251,17 @@ func TestRedisRemove(t *testing.T) {
 		ctx := callContext(t)
 		sbx := minimalRecord(uuid.New(), newSandboxID())
 		sbx.NodeID = "node"
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, sbx))
 		s.hold(ctx, t, sbx)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, ""))
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome(), "the record stays")
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, s.remove(ctx, t, sbx.TeamID, sbx.SandboxID, ""))
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.get(ctx, t, sbx.TeamID, sbx.SandboxID).GetOutcome(), "the record stays")
 	})
 }
 
-func teamItems(ctx context.Context, t *testing.T, client scheduling.StateServiceClient, teamID uuid.UUID, states ...scheduling.SandboxState) ([]string, int) {
+func teamItems(ctx context.Context, t *testing.T, client statepb.StateServiceClient, teamID uuid.UUID, states ...statepb.SandboxState) ([]string, int) {
 	t.Helper()
 
-	stream, err := client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: teamID.String(), States: states}.Build())
+	stream, err := client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: teamID.String(), States: states}.Build())
 	require.NoError(t, err)
 	records, messages, err := readTeamItems(t, stream)
 	require.NoError(t, err)
@@ -306,15 +306,15 @@ func TestRedisTeamItems(t *testing.T) {
 	assert.Equal(t, all, ids, "every record of the team, once")
 	assert.GreaterOrEqual(t, messages, 3)
 
-	ids, _ = teamItems(ctx, t, s.client, team, scheduling.SandboxState_SANDBOX_STATE_PAUSING)
+	ids, _ = teamItems(ctx, t, s.client, team, statepb.SandboxState_SANDBOX_STATE_PAUSING)
 	assert.Len(t, ids, 200)
 	assert.Equal(t, pausing, ids)
 
 	ids, _ = teamItems(ctx, t, s.client, team,
-		scheduling.SandboxState_SANDBOX_STATE_RUNNING,
-		scheduling.SandboxState_SANDBOX_STATE_PAUSING,
-		scheduling.SandboxState_SANDBOX_STATE_KILLING,
-		scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
+		statepb.SandboxState_SANDBOX_STATE_RUNNING,
+		statepb.SandboxState_SANDBOX_STATE_PAUSING,
+		statepb.SandboxState_SANDBOX_STATE_KILLING,
+		statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
 	)
 	assert.Equal(t, all, ids)
 
@@ -332,10 +332,10 @@ func TestRedisExpiredItems(t *testing.T) {
 	expired := minimalRecord(uuid.New(), newSandboxID())
 	expired.EndTime = time.Now().Add(-time.Minute).UTC()
 	live := minimalRecord(uuid.New(), newSandboxID())
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, expired))
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, live))
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, expired))
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, live))
 
-	stream, err := s.client.ExpiredItems(ctx, scheduling.ExpiredItemsRequest_builder{}.Build())
+	stream, err := s.client.ExpiredItems(ctx, statepb.ExpiredItemsRequest_builder{}.Build())
 	require.NoError(t, err)
 	records, messages, err := readExpiredItems(t, stream)
 	require.NoError(t, err)
@@ -352,10 +352,10 @@ func TestRedisTeamsWithSandboxCount(t *testing.T) {
 
 	first, second := uuid.New(), uuid.New()
 	for _, team := range []uuid.UUID{first, first, second} {
-		require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, minimalRecord(team, newSandboxID())))
+		require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, minimalRecord(team, newSandboxID())))
 	}
 
-	resp, err := s.client.TeamsWithSandboxCount(ctx, scheduling.TeamsWithSandboxCountRequest_builder{}.Build())
+	resp, err := s.client.TeamsWithSandboxCount(ctx, statepb.TeamsWithSandboxCountRequest_builder{}.Build())
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{first.String(): 2, second.String(): 1}, resp.GetCounts())
 }
@@ -369,11 +369,11 @@ func TestRedisReconcile(t *testing.T) {
 	old := time.Now().Add(-time.Hour)
 
 	stored := minimalRecord(team, newSandboxID())
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, stored))
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, s.add(ctx, t, stored))
 	orphan := newSandboxID()
 
-	report := func(sandboxID string, startTime time.Time) *scheduling.NodeSandbox {
-		return scheduling.NodeSandbox_builder{
+	report := func(sandboxID string, startTime time.Time) *statepb.NodeSandbox {
+		return statepb.NodeSandbox_builder{
 			SandboxId: sandboxID,
 			TeamId:    team.String(),
 			NodeId:    "node",
@@ -381,9 +381,9 @@ func TestRedisReconcile(t *testing.T) {
 			StartTime: timestamppb.New(startTime),
 		}.Build()
 	}
-	resp, err := s.client.Reconcile(ctx, scheduling.ReconcileRequest_builder{
+	resp, err := s.client.Reconcile(ctx, statepb.ReconcileRequest_builder{
 		NodeId: "node",
-		Sandboxes: []*scheduling.NodeSandbox{
+		Sandboxes: []*statepb.NodeSandbox{
 			report(stored.SandboxID, old),
 			report(orphan, old),
 			report(newSandboxID(), time.Now()),

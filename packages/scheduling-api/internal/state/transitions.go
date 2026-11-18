@@ -11,21 +11,21 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 // The store compares actions by value, so only these exact values reach it.
-var actions = map[scheduling.RemoveAction]sandboxtypes.StateAction{
-	scheduling.RemoveAction_REMOVE_ACTION_PAUSE:    sandboxtypes.StateActionPause,
-	scheduling.RemoveAction_REMOVE_ACTION_KILL:     sandboxtypes.StateActionKill,
-	scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT: sandboxtypes.StateActionSnapshot,
+var actions = map[statepb.RemoveAction]sandboxtypes.StateAction{
+	statepb.RemoveAction_REMOVE_ACTION_PAUSE:    sandboxtypes.StateActionPause,
+	statepb.RemoveAction_REMOVE_ACTION_KILL:     sandboxtypes.StateActionKill,
+	statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT: sandboxtypes.StateActionSnapshot,
 }
 
-var wireStates = func() map[sandboxtypes.State]scheduling.SandboxState {
-	wire := make(map[sandboxtypes.State]scheduling.SandboxState, len(states))
+var wireStates = func() map[sandboxtypes.State]statepb.SandboxState {
+	wire := make(map[sandboxtypes.State]statepb.SandboxState, len(states))
 	for value, state := range states {
 		wire[state] = value
 	}
@@ -33,7 +33,7 @@ var wireStates = func() map[sandboxtypes.State]scheduling.SandboxState {
 	return wire
 }()
 
-func (s *Server) BeginRemoving(ctx context.Context, req *scheduling.BeginRemovingRequest) (*scheduling.BeginRemovingResponse, error) {
+func (s *Server) BeginRemoving(ctx context.Context, req *statepb.BeginRemovingRequest) (*statepb.BeginRemovingResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (s *Server) BeginRemoving(ctx context.Context, req *scheduling.BeginRemovin
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	resp := scheduling.BeginRemovingResponse_builder{Outcome: outcome, AlreadyDone: alreadyDone, CurrentState: current}.Build()
+	resp := statepb.BeginRemovingResponse_builder{Outcome: outcome, AlreadyDone: alreadyDone, CurrentState: current}.Build()
 	if !reflect.ValueOf(transition).IsZero() {
 		wire, err := encodeTransition(transition)
 		if err != nil {
@@ -61,7 +61,7 @@ func (s *Server) BeginRemoving(ctx context.Context, req *scheduling.BeginRemovin
 	return resp, nil
 }
 
-func (s *Server) FinishTransition(ctx context.Context, req *scheduling.FinishTransitionRequest) (*scheduling.FinishTransitionResponse, error) {
+func (s *Server) FinishTransition(ctx context.Context, req *statepb.FinishTransitionRequest) (*statepb.FinishTransitionResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -86,10 +86,10 @@ func (s *Server) FinishTransition(ctx context.Context, req *scheduling.FinishTra
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.FinishTransitionResponse_builder{Outcome: scheduling.StateOutcome_STATE_OUTCOME_OK}.Build(), nil
+	return statepb.FinishTransitionResponse_builder{Outcome: statepb.StateOutcome_STATE_OUTCOME_OK}.Build(), nil
 }
 
-func (s *Server) RestoreRunning(ctx context.Context, req *scheduling.RestoreRunningRequest) (*scheduling.RestoreRunningResponse, error) {
+func (s *Server) RestoreRunning(ctx context.Context, req *statepb.RestoreRunningRequest) (*statepb.RestoreRunningResponse, error) {
 	transition, err := parseTransition(req.GetTransition())
 	if err != nil {
 		return nil, err
@@ -110,10 +110,10 @@ func (s *Server) RestoreRunning(ctx context.Context, req *scheduling.RestoreRunn
 		return nil, storeError(ctx, err, logger.WithTeamID(transition.Sandbox.TeamID.String()), logger.WithSandboxID(transition.Sandbox.SandboxID))
 	}
 
-	return scheduling.RestoreRunningResponse_builder{Outcome: outcome, Record: record, CurrentState: current}.Build(), nil
+	return statepb.RestoreRunningResponse_builder{Outcome: outcome, Record: record, CurrentState: current}.Build(), nil
 }
 
-func (s *Server) RestoreCheckpointed(ctx context.Context, req *scheduling.RestoreCheckpointedRequest) (*scheduling.RestoreCheckpointedResponse, error) {
+func (s *Server) RestoreCheckpointed(ctx context.Context, req *statepb.RestoreCheckpointedRequest) (*statepb.RestoreCheckpointedResponse, error) {
 	transition, err := parseTransition(req.GetTransition())
 	if err != nil {
 		return nil, err
@@ -135,10 +135,10 @@ func (s *Server) RestoreCheckpointed(ctx context.Context, req *scheduling.Restor
 		return nil, storeError(ctx, err, logger.WithTeamID(transition.Sandbox.TeamID.String()), logger.WithSandboxID(transition.Sandbox.SandboxID))
 	}
 
-	return scheduling.RestoreCheckpointedResponse_builder{Outcome: outcome, Record: record, CurrentState: current}.Build(), nil
+	return statepb.RestoreCheckpointedResponse_builder{Outcome: outcome, Record: record, CurrentState: current}.Build(), nil
 }
 
-func (s *Server) WaitForTransition(ctx context.Context, req *scheduling.WaitForTransitionRequest) (*scheduling.WaitForTransitionResponse, error) {
+func (s *Server) WaitForTransition(ctx context.Context, req *statepb.WaitForTransitionRequest) (*statepb.WaitForTransitionResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -148,26 +148,26 @@ func (s *Server) WaitForTransition(ctx context.Context, req *scheduling.WaitForT
 	defer cancel()
 
 	transitionID, err := s.storage.WaitForTransition(waitCtx, teamID, req.GetSandboxId(), req.GetTransitionId())
-	resp := scheduling.WaitForTransitionResponse_builder{TransitionId: transitionID}.Build()
+	resp := statepb.WaitForTransitionResponse_builder{TransitionId: transitionID}.Build()
 	if err == nil {
-		resp.SetOutcome(scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED)
+		resp.SetOutcome(statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED)
 
 		return resp, nil
 	}
 	if restored, ok := errors.AsType[*sandboxtypes.RestoredTransitionError](err); ok {
-		resp.SetOutcome(scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED)
+		resp.SetOutcome(statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED)
 		resp.SetRefusalClass(sandboxtypes.RefusalClass(restored.Refusal))
 
 		return resp, nil
 	}
 	if failed, ok := errors.AsType[*sandboxtypes.TransitionFailedError](err); ok {
-		resp.SetOutcome(scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED)
+		resp.SetOutcome(statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED)
 		resp.SetFailure(failed.Message)
 
 		return resp, nil
 	}
 	if errors.Is(err, sandboxtypes.ErrNotFound) {
-		resp.SetOutcome(scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND)
+		resp.SetOutcome(statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND)
 
 		return resp, nil
 	}
@@ -175,7 +175,7 @@ func (s *Server) WaitForTransition(ctx context.Context, req *scheduling.WaitForT
 	// instead of context.DeadlineExceeded, so the expired wait context counts too.
 	waitEnded := errors.Is(err, context.DeadlineExceeded) || errors.Is(waitCtx.Err(), context.DeadlineExceeded)
 	if waitEnded && ctx.Err() == nil {
-		resp.SetOutcome(scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING)
+		resp.SetOutcome(statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING)
 
 		return resp, nil
 	}
@@ -183,7 +183,7 @@ func (s *Server) WaitForTransition(ctx context.Context, req *scheduling.WaitForT
 	return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 }
 
-func removeOpts(options *scheduling.RemoveOptions) (sandboxtypes.RemoveOpts, error) {
+func removeOpts(options *statepb.RemoveOptions) (sandboxtypes.RemoveOpts, error) {
 	if options == nil {
 		return sandboxtypes.RemoveOpts{}, status.Error(codes.InvalidArgument, "options: must be set")
 	}
@@ -203,7 +203,7 @@ func removeOpts(options *scheduling.RemoveOptions) (sandboxtypes.RemoveOpts, err
 	}, nil
 }
 
-func parseTransition(transition *scheduling.StateTransition) (sandboxtypes.StateTransition, error) {
+func parseTransition(transition *statepb.StateTransition) (sandboxtypes.StateTransition, error) {
 	if transition == nil {
 		return sandboxtypes.StateTransition{}, status.Error(codes.InvalidArgument, "transition: must be set")
 	}
@@ -227,12 +227,12 @@ func parseTransition(transition *scheduling.StateTransition) (sandboxtypes.State
 	}, nil
 }
 
-func encodeTransition(transition sandboxtypes.StateTransition) (*scheduling.StateTransition, error) {
+func encodeTransition(transition sandboxtypes.StateTransition) (*statepb.StateTransition, error) {
 	record, err := json.Marshal(transition.Sandbox)
 	if err != nil {
 		return nil, err
 	}
-	wire := scheduling.StateTransition_builder{
+	wire := statepb.StateTransition_builder{
 		Record:     record,
 		Id:         transition.ID,
 		InFlightId: transition.InFlightID,
@@ -244,9 +244,9 @@ func encodeTransition(transition sandboxtypes.StateTransition) (*scheduling.Stat
 	return wire, nil
 }
 
-func restoreResult(restored sandboxtypes.Sandbox, err error) (scheduling.StateOutcome, scheduling.SandboxState, []byte, error) {
+func restoreResult(restored sandboxtypes.Sandbox, err error) (statepb.StateOutcome, statepb.SandboxState, []byte, error) {
 	outcome, current, err := stateOutcome(err)
-	if err != nil || outcome != scheduling.StateOutcome_STATE_OUTCOME_OK {
+	if err != nil || outcome != statepb.StateOutcome_STATE_OUTCOME_OK {
 		return outcome, current, nil, err
 	}
 	record, err := json.Marshal(restored)
@@ -257,18 +257,18 @@ func restoreResult(restored sandboxtypes.Sandbox, err error) (scheduling.StateOu
 	return outcome, current, record, nil
 }
 
-func stateOutcome(err error) (scheduling.StateOutcome, scheduling.SandboxState, error) {
+func stateOutcome(err error) (statepb.StateOutcome, statepb.SandboxState, error) {
 	outcome, ok := outcomeOf(err)
 	if !ok {
-		return outcome, scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED, err
+		return outcome, statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED, err
 	}
 	invalid, ok := errors.AsType[*sandboxtypes.InvalidStateTransitionError](err)
-	if !ok || outcome != scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION {
-		return outcome, scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED, nil
+	if !ok || outcome != statepb.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION {
+		return outcome, statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED, nil
 	}
 	current, ok := wireStates[invalid.CurrentState]
 	if !ok {
-		return outcome, scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED, fmt.Errorf("unknown sandbox state %q: %w", invalid.CurrentState, err)
+		return outcome, statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED, fmt.Errorf("unknown sandbox state %q: %w", invalid.CurrentState, err)
 	}
 
 	return outcome, current, nil

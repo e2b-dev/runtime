@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	reservations_redis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
@@ -70,7 +70,7 @@ func TestRemoteClientReceivesTheServersLargestMessage(t *testing.T) {
 	team := uuid.New()
 	sbx := testRecord(team)
 	size := func(sbx sandboxtypes.Sandbox) int {
-		return proto.Size(scheduling.GetResponse_builder{Outcome: scheduling.StateOutcome_STATE_OUTCOME_OK, Record: encodeRecord(t, sbx)}.Build())
+		return proto.Size(statepb.GetResponse_builder{Outcome: statepb.StateOutcome_STATE_OUTCOME_OK, Record: encodeRecord(t, sbx)}.Build())
 	}
 	padding := server.MaxMessageSize - size(sbx)
 	for range 4 {

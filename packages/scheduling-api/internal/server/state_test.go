@@ -23,7 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -141,13 +141,13 @@ func TestStreamValidation(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
-		req   *scheduling.TeamItemsRequest
+		req   *statepb.TeamItemsRequest
 		field string
 	}{
-		"invalid team_id": {scheduling.TeamItemsRequest_builder{TeamId: "team"}.Build(), "team_id"},
-		"unspecified state": {scheduling.TeamItemsRequest_builder{
+		"invalid team_id": {statepb.TeamItemsRequest_builder{TeamId: "team"}.Build(), "team_id"},
+		"unspecified state": {statepb.TeamItemsRequest_builder{
 			TeamId: uuid.NewString(),
-			States: []scheduling.SandboxState{scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED},
+			States: []statepb.SandboxState{statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED},
 		}.Build(), "states[0]"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -168,8 +168,8 @@ func TestStateUnaryValidation(t *testing.T) {
 	t.Parallel()
 	fake := &fakeState{}
 
-	_, err := newStateClient(t, fake).HoldExecution(callContext(t), scheduling.HoldExecutionRequest_builder{
-		Hold: scheduling.Hold_builder{
+	_, err := newStateClient(t, fake).HoldExecution(callContext(t), statepb.HoldExecutionRequest_builder{
+		Hold: statepb.Hold_builder{
 			TeamId:      uuid.NewString(),
 			SandboxId:   "sbx",
 			ExecutionId: uuid.NewString(),
@@ -189,12 +189,12 @@ func TestStateRecords(t *testing.T) {
 	client := newStateClient(t, &fakeState{records: map[string]sandboxtypes.Sandbox{"sbx": sbx}})
 	ctx := callContext(t)
 
-	got, err := client.Get(ctx, scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+	got, err := client.Get(ctx, statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, got.GetOutcome())
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, got.GetOutcome())
 	assert.JSONEq(t, string(encodeRecord(t, sbx)), string(got.GetRecord()), "Get returns the store's record")
 
-	stream, err := client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build())
+	stream, err := client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: team.String()}.Build())
 	require.NoError(t, err)
 	var records [][]byte
 	for {
@@ -213,7 +213,7 @@ func TestStatePanicIsInternal(t *testing.T) {
 	t.Parallel()
 	fake := &fakeState{get: func(context.Context) (sandboxtypes.Sandbox, error) { panic("backend bug") }}
 
-	_, err := newStateClient(t, fake).Get(callContext(t), scheduling.GetRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
+	_, err := newStateClient(t, fake).Get(callContext(t), statepb.GetRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
 	require.Equal(t, codes.Internal, status.Code(err), err)
 	assert.Equal(t, "internal error", status.Convert(err).Message())
 }
@@ -232,13 +232,13 @@ func TestStreamPanicIsInternal(t *testing.T) {
 	client := newStateClient(t, fake)
 	ctx := callContext(t)
 
-	stream, err := client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build())
+	stream, err := client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: team.String()}.Build())
 	require.NoError(t, err)
 	_, err = stream.Recv()
 	require.Equal(t, codes.Internal, status.Code(err), err)
 	assert.Equal(t, "internal error", status.Convert(err).Message())
 
-	stream, err = client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build())
+	stream, err = client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: team.String()}.Build())
 	require.NoError(t, err)
 	resp, err := stream.Recv()
 	require.NoError(t, err, "the server still serves after a stream panic")
@@ -258,10 +258,10 @@ func TestStateUnaryDeadline(t *testing.T) {
 	}}
 
 	before := time.Now()
-	resp, err := newStateClient(t, fake).Get(t.Context(), scheduling.GetRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
+	resp, err := newStateClient(t, fake).Get(t.Context(), statepb.GetRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
 	after := time.Now()
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
 	deadline := <-deadlines
 	require.False(t, deadline.IsZero(), "the handler has a deadline")
 	assert.False(t, deadline.Before(before.Add(server.UnaryDeadline)), "deadline %s is the server's unary deadline", deadline)
@@ -282,9 +282,9 @@ func TestWaitForTransitionWaiting(t *testing.T) {
 		return "transition", context.DeadlineExceeded
 	}}
 
-	resp, err := newStateClient(t, fake).WaitForTransition(callContext(t), scheduling.WaitForTransitionRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
+	resp, err := newStateClient(t, fake).WaitForTransition(callContext(t), statepb.WaitForTransitionRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, resp.GetOutcome())
+	assert.Equal(t, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, resp.GetOutcome())
 	left := <-remaining
 	assert.Positive(t, left, "the wait has a deadline")
 	assert.LessOrEqual(t, left, server.MaxWait, "the wait ends at most maxWait after it starts")
@@ -302,10 +302,10 @@ func TestMessageSize(t *testing.T) {
 		client := newStateClient(t, &fakeState{}, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(server.MaxMessageSize)))
 		ctx := callContext(t)
 
-		added, err := client.Add(ctx, scheduling.AddRequest_builder{Record: record}.Build())
+		added, err := client.Add(ctx, statepb.AddRequest_builder{Record: record}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, added.GetOutcome())
-		got, err := client.Get(ctx, scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, added.GetOutcome())
+		got, err := client.Get(ctx, statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 		require.NoError(t, err)
 		assert.True(t, bytes.Equal(record, got.GetRecord()), "the record comes back unchanged: sent %d bytes, got %d", len(record), len(got.GetRecord()))
 	})
@@ -316,7 +316,7 @@ func TestMessageSize(t *testing.T) {
 		sbx.Metadata = map[string]string{"pad": strings.Repeat("a", server.MaxMessageSize)}
 		fake := &fakeState{}
 
-		_, err := newStateClient(t, fake).Add(callContext(t), scheduling.AddRequest_builder{Record: encodeRecord(t, sbx)}.Build())
+		_, err := newStateClient(t, fake).Add(callContext(t), statepb.AddRequest_builder{Record: encodeRecord(t, sbx)}.Build())
 		require.Equal(t, codes.ResourceExhausted, status.Code(err), err)
 		assert.Zero(t, fake.calls.Load(), "the store is not called")
 	})

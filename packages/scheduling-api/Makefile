@@ -5,10 +5,6 @@ ifneq ($(strip $(VERSION)),)
 VERSION_LDFLAGS := -X=main.version=$(VERSION)
 endif
 
-.PHONY: generate
-generate:
-	go generate ./...
-
 .PHONY: build
 build:
 	CGO_ENABLED=0 go build -o bin/scheduling-api -ldflags "-X=main.commitSHA=$(COMMIT_SHA) $(VERSION_LDFLAGS)" .
