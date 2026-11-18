@@ -224,6 +224,7 @@ func (c *Cluster) Start(ctx context.Context, mode initialSyncMode) {
 		return
 	}
 
+	ctx = logger.ContextWithFields(ctx, logger.WithClusterID(c.ID))
 	go c.synchronization.Start(ctx, instancesSyncInterval, instancesSyncTimeout, mode == syncImmediately)
 }
 
