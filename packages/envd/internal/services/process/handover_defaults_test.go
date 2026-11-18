@@ -3,6 +3,8 @@
 package process
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -244,4 +246,123 @@ func TestApplyHandoverDefaults(t *testing.T) {
 		assert.Equal(t, "user", d.User)
 		assert.Nil(t, d.Workdir)
 	})
+}
+
+// userEnvDefaults is an exec context serving the user variables vars beside a variable envd
+// set itself.
+func userEnvDefaults(t *testing.T, vars map[string]string) *execcontext.Defaults {
+	t.Helper()
+
+	d := newDefaults(execcontext.BuiltinDefaultUser, nil)
+	d.UserDelivered = false
+	d.EnvVars.Store("E2B_SANDBOX_ID", "sbx")
+	for k, v := range vars {
+		require.True(t, d.EnvVars.StoreUser(k, v))
+	}
+
+	return d
+}
+
+// TestHandoverDefaultsCarriesUserEnvVars: the user's variables are carried on their own, since
+// a memory resume's /init re-sends none, and envd's own are left to the incoming image.
+func TestHandoverDefaultsCarriesUserEnvVars(t *testing.T) {
+	t.Parallel()
+
+	hd := handoverDefaults(userEnvDefaults(t, map[string]string{"USER_VAR": "value", "EMPTY_VAR": ""}))
+	require.NotNil(t, hd, "variables are worth carrying without a user or workdir")
+	assert.Equal(t, map[string]string{"USER_VAR": "value", "EMPTY_VAR": ""}, hd.GetEnvVars())
+	assert.Empty(t, hd.GetUser())
+	assert.False(t, hd.GetHasWorkdir())
+}
+
+// TestEnvVarsOnlyBlobKeepsTheBaseSchema: a reader that predates the field drops the variables,
+// which is the behaviour before it, so it must accept the blob. Raising the stamp for them would
+// turn that loss into a failed resume.
+func TestEnvVarsOnlyBlobKeepsTheBaseSchema(t *testing.T) {
+	t.Parallel()
+
+	st := &upgrade.HandoverState{Defaults: handoverDefaults(userEnvDefaults(t, map[string]string{"USER_VAR": "value"}))}
+	assert.Equal(t, uint32(handoverSchemaBase), schemaFor(st))
+}
+
+func TestApplyHandoverEnvVars(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a blob without variables leaves the store alone", func(t *testing.T) {
+		t.Parallel()
+
+		d := userEnvDefaults(t, map[string]string{"KEPT": "value"})
+		assert.Zero(t, ApplyHandoverEnvVars(&upgrade.HandoverState{}, d))
+		assert.Equal(t, map[string]string{"KEPT": "value"}, d.EnvVars.UserVars())
+	})
+
+	t.Run("carried variables are restored without overriding envd's own", func(t *testing.T) {
+		t.Parallel()
+
+		d := userEnvDefaults(t, nil)
+		st := &upgrade.HandoverState{Defaults: &upgrade.HandoverDefaults{
+			EnvVars: map[string]string{"USER_VAR": "value", "E2B_SANDBOX_ID": "spoofed"},
+		}}
+		assert.Equal(t, 1, ApplyHandoverEnvVars(st, d), "a name envd holds as its own is not applied")
+		assert.Equal(t, map[string]string{"USER_VAR": "value"}, d.EnvVars.UserVars())
+		v, _ := d.EnvVars.Load("E2B_SANDBOX_ID")
+		assert.Equal(t, "sbx", v)
+	})
+}
+
+// TestResumeFromHandoverRestoresUserEnvVars follows the variables through the blob file: written
+// by the outgoing image's defaults, read by an incoming one that starts with none, and reported
+// back for the orchestrator.
+//
+//nolint:paralleltest // mutates the package-global HandoverPath; must run serially
+func TestResumeFromHandoverRestoresUserEnvVars(t *testing.T) {
+	orig := HandoverPath
+	t.Cleanup(func() { HandoverPath = orig })
+	HandoverPath = filepath.Join(t.TempDir(), "handover.pb")
+
+	outgoing := userEnvDefaults(t, map[string]string{"USER_VAR": "value"})
+	st := &upgrade.HandoverState{FromVer: "0.9.0", Defaults: handoverDefaults(outgoing)}
+	st.Schema = schemaFor(st)
+	require.NoError(t, os.WriteFile(HandoverPath, mustMarshalHandover(t, st), 0o600))
+
+	s := newHandoverTestService(t, &spyCgroupManager{})
+	res, err := s.ResumeFromHandover(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.EnvVars)
+	assert.Equal(t, map[string]string{"USER_VAR": "value"}, s.defaults.EnvVars.UserVars())
+}
+
+// TestResumeFromHandoverAcceptsABlobWithoutEnvVars is the upgrade from an envd that predates
+// env_vars: its blob carries the exec context under schema 3 and no variables. Protobuf writes
+// no empty map, so building the blob without EnvVars gives the bytes such an envd writes. The
+// handover must succeed, still restore the exec context, and leave the variables for the
+// orchestrator's post-upgrade /init to send.
+//
+//nolint:paralleltest // mutates the package-global HandoverPath; must run serially
+func TestResumeFromHandoverAcceptsABlobWithoutEnvVars(t *testing.T) {
+	orig := HandoverPath
+	t.Cleanup(func() { HandoverPath = orig })
+	HandoverPath = filepath.Join(t.TempDir(), "handover.pb")
+
+	st := &upgrade.HandoverState{
+		Schema:  handoverSchemaDefaults,
+		FromVer: "0.9.0",
+		Defaults: &upgrade.HandoverDefaults{
+			User: "user", Workdir: "/opt/wd", HasWorkdir: true,
+		},
+	}
+	require.NoError(t, os.WriteFile(HandoverPath, mustMarshalHandover(t, st), 0o600))
+
+	s := newHandoverTestService(t, &spyCgroupManager{})
+	s.defaults.EnvVars.Store("E2B_SANDBOX", "true")
+
+	res, err := s.ResumeFromHandover(nil)
+	require.NoError(t, err)
+	assert.Zero(t, res.EnvVars)
+	assert.Equal(t, "user", s.defaults.User)
+	require.NotNil(t, s.defaults.Workdir)
+	assert.Equal(t, "/opt/wd", *s.defaults.Workdir)
+	assert.Empty(t, s.defaults.EnvVars.UserVars())
+	v, _ := s.defaults.EnvVars.Load("E2B_SANDBOX")
+	assert.Equal(t, "true", v, "envd's own variables are untouched")
 }

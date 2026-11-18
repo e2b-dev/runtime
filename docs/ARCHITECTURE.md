@@ -750,11 +750,12 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
 - **Live upgrade** (`internal/services/process/upgrade.go`): an authenticated `POST /upgrade` lets
   the orchestrator swap envd inside a *running* sandbox at resume. It streams the new binary in the
   request body and envd `syscall.Exec`s into it **with the same PID**, carrying the workload's
-  stdio/PTY fds, process table, recently-retained exit codes and filesystem watchers forward via a
-  tmpfs handover blob. The workload cgroups stay frozen until the post-upgrade `/init` restores the
-  access token (so no re-adopted process runs unauthenticated), and the handover outcome
-  (procs/watchers re-adopted, plus any failures) rides back on that `/init`'s `X-Envd-Handover`
-  header for fleet visibility.
+  stdio/PTY fds, process table, recently-retained exit codes, filesystem watchers, default
+  user/workdir and user environment variables forward via a tmpfs handover blob. The workload
+  cgroups stay frozen until the post-upgrade `/init` restores the access token (so no re-adopted
+  process runs unauthenticated), and the handover outcome (procs/watchers re-adopted, environment
+  variables restored, plus any failures) rides back on that `/init`'s `X-Envd-Handover` header
+  for fleet visibility.
 - Scans guest ports and forwards them so any port a user process opens becomes reachable through
   sandbox URLs. **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and

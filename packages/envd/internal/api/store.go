@@ -135,6 +135,7 @@ type handoverResult struct {
 	RetainedFailed int `json:"retained_failed"`
 	Watchers       int `json:"watchers"`
 	WatchersFailed int `json:"watchers_failed"`
+	EnvVars        int `json:"env_vars"`
 }
 
 // SetHandoverResult records the live-upgrade handover outcome so PostInit can
@@ -142,7 +143,7 @@ type handoverResult struct {
 // via --resume-handover. failed reports whether the handover itself failed (the
 // workload was not re-adopted), so the orchestrator can tear the sandbox down
 // rather than mistake the version flip for success.
-func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retainedFailed, watchers, watchersFailed int) {
+func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retainedFailed, watchers, watchersFailed, envVars int) {
 	a.handover = &handoverResult{
 		Failed:         failed,
 		Procs:          procs,
@@ -151,6 +152,7 @@ func (a *API) SetHandoverResult(failed bool, procs, procsFailed, retained, retai
 		RetainedFailed: retainedFailed,
 		Watchers:       watchers,
 		WatchersFailed: watchersFailed,
+		EnvVars:        envVars,
 	}
 }
 

@@ -285,7 +285,7 @@ const (
 	// gated{reason="binary_not_cached"} a node that merely has not warmed yet emits.
 	OrchestratorEnvdBinaryCacheWarms CounterType = "orchestrator.envd.binary_cache.warms"
 	// OrchestratorEnvdUpgradeHandover counts live-upgrade handover items by item
-	// (proc|retained|watcher) and result (ok|failed), reported back by the new
+	// (proc|retained|watcher|env_vars) and result (ok|failed), reported back by the new
 	// envd on /init. failed/(ok+failed) is the handover error rate — the
 	// fleet-visible signal (otherwise only logged in-guest) that the new envd
 	// dropped or degraded something it re-adopted across the swap.
@@ -981,7 +981,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss), upgrade path, and on a miss its cause (not_warmed|stalled|cancelled|unreadable|no_cache)",
 	OrchestratorEnvdBinaryCacheDeliveries:        "Host envd binary reads at delivery time, by outcome (copy|stale) and upgrade path",
 	OrchestratorEnvdBinaryCacheWarms:             "Host envd binary cache warms, by result (ok|superseded|suppressed|pinned|already_warming|bad_target|failed)",
-	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher) and result (ok|failed)",
+	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher|env_vars) and result (ok|failed)",
 	PauseResumePrefetchHarvestThaw:               "Harvest throwaways whose envd /init took the held request and was served a 204, by skipped: true when envd answered X-Envd-Thaw: skip and left the workload frozen, false when it thawed inline and the workload ran into the trace (an envd version the gate admitted that does not skip); envd_running_version is the version the gate read, kept when the orchestrator holds it, else other",
 	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | guest_unresponsive = snapshot taken over a hung guest agent, not harvested | persist_deadline) and path (pause | checkpoint)",
 	TCPFirewallConnectionsTotal:                  "Total number of TCP firewall connections processed",

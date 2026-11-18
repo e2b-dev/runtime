@@ -326,7 +326,7 @@ func run(stop <-chan struct{}) error {
 		// record it — the envd-side result (re-adopted procs, restored retained
 		// exits, watcher re-arm success/failures) is otherwise only logged
 		// in-guest and invisible fleet-wide.
-		service.SetHandoverResult(handoverFailed, handover.Procs, handover.ProcsFailed, handover.Retained, handover.RetainedFailed, handover.Watchers, handover.WatchersFailed)
+		service.SetHandoverResult(handoverFailed, handover.Procs, handover.ProcsFailed, handover.Retained, handover.RetainedFailed, handover.Watchers, handover.WatchersFailed, handover.EnvVars)
 
 		// Safety net for the freeze-until-/init handover: ResumeFromHandover left
 		// the workload frozen for the orchestrator's post-upgrade /init to thaw.

@@ -55,17 +55,17 @@ func TestPostInit_ReportsHandover(t *testing.T) {
 
 	// After a successful handover: the outcome is advertised as JSON, failed=false.
 	upgraded := newAPIWithCgroupManager(cgroups.NewNoopManager())
-	upgraded.SetHandoverResult(false, 3, 1, 2, 1, 6, 1)
+	upgraded.SetHandoverResult(false, 3, 1, 2, 1, 6, 1, 4)
 	assert.JSONEq(t,
-		`{"failed":false,"procs":3,"procs_failed":1,"retained":2,"retained_failed":1,"watchers":6,"watchers_failed":1}`,
+		`{"failed":false,"procs":3,"procs_failed":1,"retained":2,"retained_failed":1,"watchers":6,"watchers_failed":1,"env_vars":4}`,
 		postInit(upgraded).Header().Get("X-Envd-Handover"))
 
 	// A FAILED handover (workload not re-adopted) advertises failed=true so the
 	// orchestrator can tear the sandbox down instead of mistaking the version
 	// flip for success.
 	failed := newAPIWithCgroupManager(cgroups.NewNoopManager())
-	failed.SetHandoverResult(true, 0, 0, 0, 0, 0, 0)
+	failed.SetHandoverResult(true, 0, 0, 0, 0, 0, 0, 0)
 	assert.JSONEq(t,
-		`{"failed":true,"procs":0,"procs_failed":0,"retained":0,"retained_failed":0,"watchers":0,"watchers_failed":0}`,
+		`{"failed":true,"procs":0,"procs_failed":0,"retained":0,"retained_failed":0,"watchers":0,"watchers_failed":0,"env_vars":0}`,
 		postInit(failed).Header().Get("X-Envd-Handover"))
 }

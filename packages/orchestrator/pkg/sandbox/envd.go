@@ -798,6 +798,7 @@ type EnvdHandoverResult struct {
 	RetainedFailed int `json:"retained_failed"`
 	Watchers       int `json:"watchers"`
 	WatchersFailed int `json:"watchers_failed"`
+	EnvVars        int `json:"env_vars"`
 }
 
 // setHandoverResult records the handover outcome the running envd last reported.

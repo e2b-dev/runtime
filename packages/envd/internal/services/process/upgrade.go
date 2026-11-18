@@ -346,6 +346,7 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 		fmt.Fprintf(os.Stderr, "envd: restored exec context from the handover blob (user=%t workdir=%t)\n",
 			userRestored, workdirRestored)
 	}
+	envVars := ApplyHandoverEnvVars(st, s.defaults)
 
 	// journald-visible proof of the running image after the swap (from_ver is
 	// the outgoing version; pkg.Version is what this new image is).
@@ -465,6 +466,7 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 		Int("retained_failed", retainedFailed).
 		Int("watchers", watchersRearmed+watchersFailed).
 		Int("watchers_failed", watchersFailed).
+		Int("env_vars", envVars).
 		Msg("re-adopted workload after envd self-upgrade")
 
 	// Handover succeeded: keep the workload frozen (see the deferred thaw above);
@@ -500,6 +502,7 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 		RetainedFailed: retainedFailed,
 		Watchers:       watchersRearmed + watchersFailed,
 		WatchersFailed: watchersFailed,
+		EnvVars:        envVars,
 		// Handed back to the API service (mount ledger) and port forwarder, which
 		// are constructed after this returns.
 		Mounts:   st.GetMounts(),
@@ -543,9 +546,7 @@ func (s *Service) restoreTerminated(entries []*upgrade.HandoverExit) (failed int
 	return failed
 }
 
-// handoverDefaults converts the live exec context into its wire form. Env vars are
-// deliberately omitted: /init replaces them wholesale, so carrying them would add a
-// second source of truth for state that is already restored reliably.
+// handoverDefaults converts the live exec context into its wire form.
 func handoverDefaults(d *execcontext.Defaults) *upgrade.HandoverDefaults {
 	if d == nil {
 		return nil
@@ -566,7 +567,14 @@ func handoverDefaults(d *execcontext.Defaults) *upgrade.HandoverDefaults {
 		hd.Workdir = *d.Workdir
 		hd.HasWorkdir = true
 	}
-	if hd.GetUser() == "" && !hd.GetHasWorkdir() {
+	// Only the user's: the incoming image sets envd's own variables itself, and a
+	// memory resume's /init re-sends none of the user's.
+	if d.EnvVars != nil {
+		if vars := d.EnvVars.UserVars(); len(vars) > 0 {
+			hd.EnvVars = vars
+		}
+	}
+	if hd.GetUser() == "" && !hd.GetHasWorkdir() && len(hd.GetEnvVars()) == 0 {
 		return nil
 	}
 
