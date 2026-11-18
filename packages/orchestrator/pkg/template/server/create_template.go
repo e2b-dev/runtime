@@ -361,6 +361,10 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 			return
 		}
 		defer s.buildLimiter.Release(1)
+		// Deletion can mark the build failed before its watcher cancels ctx.
+		if !buildInfo.IsRunning() {
+			return
+		}
 		s.activeBuilds.Add(1)
 		defer s.activeBuilds.Add(-1)
 		if err := ctx.Err(); err != nil {
