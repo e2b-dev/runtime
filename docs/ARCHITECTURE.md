@@ -268,10 +268,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   body carries the webhook's signing secret; like every refused request's body, it is kept out
   of the response, the access log and the span. Reads are capped at 100
   deliveries per page.
-- **Cluster records**: the API keeps no remote cluster record itself. It reads and writes them
-  (endpoint, edge token, sandbox domain, auth organization, deletion protection and request,
-  telemetry identity) over a unary gRPC contract (`e2b.clusters.management.v1`) on the cluster
-  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`; nothing in the API's database refers to them. The
+- **Cluster records**: the API keeps no remote cluster record itself. It reads them (endpoint,
+  edge token, sandbox domain, auth organization, deletion protection and request, telemetry
+  identity), records their deletion and removes them over a unary gRPC contract
+  (`e2b.clusters.management.v1`) on the cluster service named by `CLUSTER_SERVICE_GRPC_ADDRESS`;
+  it creates and edits none, and nothing in the API's database refers to them. The
   `cluster_service` client hop is on unless `E2B_TLS_CLUSTER_SERVICE_CLIENT_MODE` says otherwise,
   and may be off only with `ENVIRONMENT=local` or a loopback address, because the service hands its
   callers every cluster's edge token. Team assignment, template cleanup and the shared-cluster
@@ -549,17 +550,16 @@ requested during the delete waits for it and is then refused. If the cluster ser
 remove the record, the transaction rolls back but the recorded deletion stays, so assignments
 remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
 cluster still releases its templates.
-Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
-`cluster_assignment_*`) in the shared error response; callers use that code rather than the
-human-readable message, and treat uncoded or unknown reasons as generic errors.
+Assignment rejections carry a stable `error_code` (`cluster_assignment_*`) in the shared error
+response; callers use that code rather than the human-readable message, and treat uncoded or
+unknown reasons as generic errors.
 
-The operator dashboard manages clusters through `/unstable/admin/clusters`, with an admin token or
-a service JWT: it lists clusters with their team counts, reads one cluster with its teams, creates
-a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
-its token, and deletes it with the same checks as the management delete. The list filters, sorts
-and pages the cluster service's records in memory, comparing text without regard to case. No
-route returns a cluster's token. `/unstable/admin/clusters/team-counts` returns the live team
-count of each cluster on its own; it reads only the teams, so it answers without a cluster service.
+The operator dashboard reads and edits cluster records at the cluster service, not through the
+API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API
+alone holds, with an admin token or a service JWT. `/unstable/admin/clusters/team-counts` returns
+the live team count of each cluster; it reads only the teams, so it answers without a cluster
+service. `/unstable/admin/clusters/{clusterID}/teams` pages the live teams assigned to a cluster,
+by creation time or name, and answers 404 for a cluster the cluster service does not know.
 
 ### Orchestrator (`packages/orchestrator`)
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,8 +28,6 @@ import (
 )
 
 const (
-	clusterRegistrationInvalidCode       = "cluster_registration_invalid"
-	clusterRegistrationConflictCode      = "cluster_registration_conflict"
 	clusterAssignmentInvalidCode         = "cluster_assignment_invalid"
 	clusterAssignmentProjectNotFoundCode = "cluster_assignment_project_not_found"
 	clusterAssignmentClusterNotFoundCode = "cluster_assignment_cluster_not_found"
@@ -39,76 +36,11 @@ const (
 )
 
 var (
-	errInvalidClusterRegistration  = errors.New("invalid cluster registration")
-	errClusterRegistrationConflict = errors.New("cluster conflicts with stored state")
-	errLocalClusterDeletion        = errors.New("the local cluster cannot be deleted")
-	errProtectedClusterDeletion    = errors.New("the cluster has deletion protection")
-	errClusterInUse                = errors.New("a team still uses the cluster")
-	errClusterAssignmentsSettling  = errors.New("the cluster service has not yet dropped every team's assignment")
+	errLocalClusterDeletion       = errors.New("the local cluster cannot be deleted")
+	errProtectedClusterDeletion   = errors.New("the cluster has deletion protection")
+	errClusterInUse               = errors.New("a team still uses the cluster")
+	errClusterAssignmentsSettling = errors.New("the cluster service has not yet dropped every team's assignment")
 )
-
-type clusterRegistration struct {
-	TelemetryClientID  *string
-	ClusterID          *uuid.UUID
-	Name               string
-	Endpoint           string
-	EndpointTLS        bool
-	Token              string
-	SandboxProxyDomain *string
-	AuthOrgID          *string
-	DeletionProtection bool
-}
-
-// normalize trims every value and refuses a registration missing a required
-// one or naming the local cluster.
-func (r *clusterRegistration) normalize() error {
-	r.Name = strings.TrimSpace(r.Name)
-	r.Endpoint = strings.TrimSpace(r.Endpoint)
-	r.Token = strings.TrimSpace(r.Token)
-	r.SandboxProxyDomain = trimmedOptional(r.SandboxProxyDomain)
-	r.AuthOrgID = trimmedOptional(r.AuthOrgID)
-	r.TelemetryClientID = trimmedOptional(r.TelemetryClientID)
-	if r.Name == "" || r.Endpoint == "" || r.Token == "" ||
-		r.ClusterID != nil && *r.ClusterID == uuid.Nil {
-		return errInvalidClusterRegistration
-	}
-
-	return nil
-}
-
-// createCluster stores a new cluster, or answers for an existing one with the
-// same ID when every value but deletion protection matches.
-func (a *APIStore) createCluster(ctx context.Context, registration clusterRegistration) (*clustersgrpc.Cluster, error) {
-	if err := registration.normalize(); err != nil {
-		return nil, err
-	}
-
-	req := clustersgrpc.CreateClusterRequest_builder{
-		Name:               registration.Name,
-		Endpoint:           registration.Endpoint,
-		EndpointTls:        &registration.EndpointTLS,
-		Token:              registration.Token,
-		SandboxProxyDomain: registration.SandboxProxyDomain,
-		AuthOrgId:          registration.AuthOrgID,
-		TelemetryClientId:  registration.TelemetryClientID,
-		DeletionProtection: &registration.DeletionProtection,
-	}
-	if registration.ClusterID != nil {
-		req.ClusterId = new(registration.ClusterID.String())
-	}
-
-	resp, err := a.clusterService.CreateCluster(ctx, req.Build())
-	switch status.Code(err) {
-	case codes.OK:
-		return resp.GetCluster(), nil
-	case codes.AlreadyExists:
-		return nil, fmt.Errorf("%w: %w", errClusterRegistrationConflict, err)
-	case codes.InvalidArgument:
-		return nil, fmt.Errorf("%w: %w", errInvalidClusterRegistration, err)
-	default:
-		return nil, fmt.Errorf("create cluster: %w", err)
-	}
-}
 
 func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.ClusterID) {
 	ctx := c.Request.Context()
@@ -535,19 +467,6 @@ func (a *APIStore) detachTeamCluster(ctx context.Context, teamID, clusterID uuid
 	}
 
 	return result, nil
-}
-
-func trimmedOptional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-
-	return &trimmed
 }
 
 // optionalOf reads an optional proto field as a pointer.
