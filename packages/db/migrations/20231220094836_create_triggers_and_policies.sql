@@ -16,7 +16,6 @@ $role$;
 GRANT trigger_user TO postgres;
 
 GRANT CREATE, USAGE ON SCHEMA public TO trigger_user;
-GRANT USAGE ON SCHEMA extensions TO trigger_user;
 GRANT USAGE ON SCHEMA auth TO trigger_user;
 
 GRANT SELECT, INSERT, TRIGGER ON public.teams TO trigger_user;

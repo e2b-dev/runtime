@@ -26,14 +26,12 @@ REVOKE INSERT ON public.team_api_keys FROM trigger_user;
 REVOKE INSERT ON public.access_tokens FROM trigger_user;
 
 REVOKE CREATE, USAGE ON SCHEMA public FROM trigger_user;
-REVOKE USAGE ON SCHEMA extensions FROM trigger_user;
 REVOKE USAGE ON SCHEMA auth FROM trigger_user;
 
 -- +goose Down
 -- +goose StatementBegin
 
 GRANT CREATE, USAGE ON SCHEMA public TO trigger_user;
-GRANT USAGE ON SCHEMA extensions TO trigger_user;
 GRANT USAGE ON SCHEMA auth TO trigger_user;
 
 GRANT SELECT, INSERT, TRIGGER ON public.teams TO trigger_user;

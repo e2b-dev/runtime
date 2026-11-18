@@ -58,10 +58,6 @@ runs:
         ./.github/actions/start-services/wait-healthy.sh clickhouse 120
         ./.github/actions/start-services/wait-healthy.sh redis 60
 
-        # Install extensions
-        docker exec postgres psql -U postgres -d mydatabase -c "CREATE SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;"
-        echo "extensions installed"
-
         echo "TESTS_E2B_API_KEY=${TESTS_E2B_API_KEY}" >> .env.test
         echo "TESTS_SANDBOX_TEAM_ID=${TESTS_SANDBOX_TEAM_ID}" >> .env.test
         echo "TESTS_SANDBOX_USER_ID=${TESTS_SANDBOX_USER_ID}" >> .env.test
