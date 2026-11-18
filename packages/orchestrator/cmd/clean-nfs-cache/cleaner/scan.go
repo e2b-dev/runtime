@@ -125,6 +125,42 @@ func (c *Cleaner) sizeChunks(ctx context.Context, buildPath string) uint64 {
 	return size + otherFilesBytesEstimate
 }
 
+// sizeAndWarmest is sizeChunks plus the warmest atime of as many chunks per
+// data dir as the sampling scan reads; it stops at the first read after floorSec.
+func (c *Cleaner) sizeAndWarmest(ctx context.Context, buildPath string, floorSec int64) (uint64, int64) {
+	var size uint64
+	var warmest int64
+	chunks := 0
+	for _, base := range baseNames {
+		df := c.openDataDir(ctx, buildPath, base)
+		if df == nil {
+			continue
+		}
+		var picks []string
+		n, sz := c.readDataDir(ctx, df, &picks)
+		dir := df.Name()
+		df.Close()
+		size += sz
+		chunks += n
+		rand.Shuffle(len(picks), func(i, j int) { picks[i], picks[j] = picks[j], picks[i] })
+		k := min(len(picks), clampSample(n, c.SampleMinFiles, c.SamplePercent, c.SampleMaxFiles))
+		for _, name := range picks[:k] {
+			c.metrics.recordStatx(ctx)
+			if st, err := c.stat(filepath.Join(dir, name)); err == nil {
+				warmest = max(warmest, st.ATimeUnix)
+			}
+			if warmest > floorSec {
+				break
+			}
+		}
+	}
+	if chunks == 0 {
+		return 0, warmest
+	}
+
+	return size + otherFilesBytesEstimate, warmest
+}
+
 // sampleChunks sizes a build and finds its warmest (most recent) chunk atime. It
 // opens each data dir directly by probing the compression variants (no build-dir
 // readdir) and samples each in turn — read, sample, statx, close — so a sampled

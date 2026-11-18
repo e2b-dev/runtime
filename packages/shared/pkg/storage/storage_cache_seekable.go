@@ -42,6 +42,7 @@ type cachedSeekable struct {
 	flags     featureFlagsClient
 	tracer    trace.Tracer
 	objType   SeekableObjectType
+	index     *indexToucher
 
 	wg sync.WaitGroup
 }
@@ -89,6 +90,8 @@ func (c *cachedSeekable) openReaderUncompressed(ctx context.Context, off, length
 	fp, err := os.Open(chunkPath)
 	RecordReadOpen(ctx, time.Since(start), c.objType, SourceNFS, CompressionNone, err)
 	if err == nil {
+		c.index.touch()
+
 		return newSectionReader(fp, 0, length), SourceNFS, nil
 	}
 
@@ -324,6 +327,7 @@ func (c *cachedSeekable) writeToCache(ctx context.Context, offset int64, finalPa
 	if err := utils.RenameOrDeleteFile(ctx, tempPath, finalPath); err != nil {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
+	c.index.touch()
 
 	return nil
 }
@@ -436,6 +440,7 @@ func (c *cachedSeekable) writeChunkFromFile(ctx context.Context, offset int64, i
 
 		return fmt.Errorf("failed to copy chunk: %w", err)
 	}
+	c.index.touch()
 
 	return nil
 }

@@ -124,6 +124,7 @@ type Cache struct {
 	blockMetrics  blockmetrics.Metrics
 	rootCachePath string
 	peers         peerclient.Resolver
+	cacheIndex    storage.CacheIndexRecorder
 	extendMu      sync.Mutex
 
 	// pinned holds templates a live sandbox depends on. It is the authoritative
@@ -838,7 +839,7 @@ func (c *Cache) getTemplateForBuild(
 	// it will start working only for new orchestrators or new builds.
 	if path, enabled := c.useNFSCache(ctx, isBuilding, isSnapshot); enabled {
 		logger.L().Info(ctx, "using local template cache", zap.String("path", c.rootCachePath))
-		persistence = storage.WrapInNFSCache(ctx, path, persistence, c.flags)
+		persistence = storage.WrapInNFSCache(ctx, path, persistence, c.flags, c.NFSCacheOptions()...)
 		span.SetAttributes(attribute.Bool("use_cache", true))
 	} else {
 		span.SetAttributes(attribute.Bool("use_cache", false))
@@ -1196,6 +1197,21 @@ func (c *Cache) UpdateMetadata(ctx context.Context, buildID string, meta metadat
 	}
 
 	return t.UpdateMetadata(meta)
+}
+
+// SetCacheIndex reports every build used through the NFS cache to r. Call it
+// before the cache serves templates.
+func (c *Cache) SetCacheIndex(r storage.CacheIndexRecorder) {
+	c.cacheIndex = r
+}
+
+// NFSCacheOptions are the options for wrapping storage in the NFS cache.
+func (c *Cache) NFSCacheOptions() []storage.CacheOption {
+	if c == nil || c.cacheIndex == nil {
+		return nil
+	}
+
+	return []storage.CacheOption{storage.WithCacheIndex(c.cacheIndex)}
 }
 
 func (c *Cache) useNFSCache(ctx context.Context, isBuilding bool, isSnapshot bool) (string, bool) {

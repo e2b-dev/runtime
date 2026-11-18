@@ -194,6 +194,12 @@ var (
 	OrchAcceptsCombinedHostFlag         = NewBoolFlag("orch-accepts-combined-host", false)
 	WorkspacesEnabledFlag               = NewBoolFlag("workspacesEnabled", false)
 
+	// NFSCacheIndexWritesFlag lets orchestrators record the builds they use
+	// from the NFS chunk cache in Redis, the last-use index the cache cleaner
+	// evicts from. Read at every flush, so turning it off stops writes within
+	// one flush interval.
+	NFSCacheIndexWritesFlag = NewBoolFlag("nfs-cache-index-writes", false)
+
 	// ClientProxyResumeParkingFlag lets client-proxy retry a wake-on-traffic
 	// resume that failed retryably, read by each request at its own park
 	// transition: off means the first retryable failure is that request's answer.

@@ -17,17 +17,20 @@ const meterName = "github.com/e2b-dev/infra/packages/orchestrator/cmd/clean-nfs-
 const (
 	AttrOp    = "op"
 	AttrPhase = "phase"
+	AttrStop  = "stop"
 
 	// error ops (AttrOp)
 	ValOpRootReaddir  = "root_readdir"
 	ValOpBuildReaddir = "build_readdir"
 	ValOpStat         = "stat"
 	ValOpDelete       = "delete"
+	ValOpIndex        = "index"
 
 	// run phases (AttrPhase) — stack last.phase.duration by these
-	ValPhaseList   = "list"
-	ValPhaseScan   = "scan"
-	ValPhaseDelete = "delete"
+	ValPhaseList       = "list"
+	ValPhaseScan       = "scan"
+	ValPhaseDelete     = "delete"
+	ValPhaseIndexBuild = "index_build"
 )
 
 // Metrics holds the OTEL instruments emitted by the cleaner. Field names mirror
@@ -53,6 +56,11 @@ type Metrics struct {
 	ScanGraced     metric.Int64Counter // builds skipped by the create-time (btime) grace filter
 	RunUnderTarget metric.Int64Counter // emitted once when a run can't free its target (a bump = investigate)
 	Errors         metric.Int64Counter // {op}; logged-and-continued errors, surfaced for dashboards
+
+	IndexRuns        metric.Int64Counter // {stop}; one per run that started from the last-use index
+	IndexStale       metric.Int64Counter // index entries dropped because their build folder was gone
+	IndexSkippedWarm metric.Int64Counter // index candidates kept: used recently on disk or in the index
+	IndexAdded       metric.Int64Counter // builds on disk an index build added (missing from the index)
 
 	// Gauges (one value per run — raw number, no _total, no rate). Phase wall times
 	// and the population/throughput numbers that have no counter/histogram source;
@@ -95,6 +103,10 @@ func NewMetrics(meter metric.Meter) (*Metrics, error) {
 		{&m.ScanGraced, "nfsclean.scan.graced", "Builds skipped by the create-time (btime) grace filter — too new to touch", ""},
 		{&m.RunUnderTarget, "nfsclean.run.under_target", "Incremented once when a run deletes everything it's allowed to and still can't free its target (grace floor or out of builds — either way, couldn't free enough). Any non-zero value = investigate.", ""},
 		{&m.Errors, "nfsclean.errors", "Errors that were logged and skipped (best-effort), by op — so they're visible without grepping Loki", ""},
+		{&m.IndexRuns, "nfsclean.index.runs", "Runs that started from the last-use index, by why the index walk stopped (target, budget, exhausted, index_error, canceled); exhausted and index_error hand the rest to sampling", ""},
+		{&m.IndexStale, "nfsclean.index.stale", "Last-use index entries dropped because their build folder was already gone", ""},
+		{&m.IndexAdded, "nfsclean.index.added", "Builds an index build found on disk but missing from the last-use index, added as the coldest candidates", ""},
+		{&m.IndexSkippedWarm, "nfsclean.index.skipped_warm", "Index candidates kept because the on-disk check or a newer index score showed a recent use — how often the index proposes a warm build", ""},
 	}
 	for _, c := range counters {
 		opts := []metric.Int64CounterOption{metric.WithDescription(c.desc)}

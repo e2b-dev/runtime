@@ -29,6 +29,7 @@ type cachedBlob struct {
 	inner     Blob
 	flags     featureFlagsClient
 	tracer    trace.Tracer
+	index     *indexToucher
 
 	wg sync.WaitGroup
 }
@@ -154,6 +155,7 @@ func (b *cachedBlob) copyFullFileFromCache(ctx context.Context, dst io.Writer) (
 	if ignoreEOF(err) != nil {
 		return count, fmt.Errorf("failed to copy cached file %s: %w", path, err)
 	}
+	b.index.touch()
 
 	return count, nil
 }
@@ -175,6 +177,7 @@ func (b *cachedBlob) writeFileToCache(ctx context.Context, input io.Reader) (int
 	if err := output.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("failed to commit cache file %s: %w", path, err)
 	}
+	b.index.touch()
 
 	return count, nil
 }

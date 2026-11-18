@@ -78,6 +78,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	sandboxcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage/cacheindex"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -827,6 +828,20 @@ func run(config cfg.Config, opts Options) (success bool) {
 
 		return nil
 	}})
+
+	// Last-use index of the NFS chunk cache, read by the cache cleaner. Needs
+	// Redis; without it the cleaner falls back to sampling the cache.
+	if cacheRoot := config.BuilderConfig.SharedChunkCacheDir; redisClient != nil && cacheRoot != "" {
+		cacheIndex := cacheindex.NewWriter(redisClient, cacheindex.WriterConfig{
+			Root: cacheRoot,
+			Enabled: func(ctx context.Context) bool {
+				return featureFlags.BoolFlag(ctx, featureflags.NFSCacheIndexWritesFlag)
+			},
+		})
+		cacheIndex.Start(ctx)
+		templateCache.SetCacheIndex(cacheIndex)
+		closers = append(closers, closer{"nfs cache index", cacheIndex.Close})
+	}
 
 	// clickhouse delivery endpoints
 	clickhouseEndpoints, clickhouseClosers := openClickhouseEndpoints(ctx, config)
