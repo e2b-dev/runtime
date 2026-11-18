@@ -45,6 +45,14 @@ var (
 )
 
 func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.ClusterID) {
+	a.managementRemoveCluster(c, clusterID, false)
+}
+
+func (a *APIStore) ManagementRemoveClusterRegistration(c *gin.Context, clusterID api.ClusterID) {
+	a.managementRemoveCluster(c, clusterID, true)
+}
+
+func (a *APIStore) managementRemoveCluster(c *gin.Context, clusterID uuid.UUID, orphanProjects bool) {
 	ctx := c.Request.Context()
 	attrs := []attribute.KeyValue{telemetry.WithClusterID(clusterID)}
 
@@ -52,7 +60,7 @@ func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.Cluster
 		return
 	}
 
-	err := a.deleteCluster(ctx, clusterID)
+	err := a.deleteCluster(ctx, clusterID, orphanProjects)
 	switch {
 	case errors.Is(err, errLocalClusterDeletion):
 		telemetry.ReportErrorByCode(ctx, http.StatusBadRequest, "delete cluster failed", err, attrs...)
@@ -87,7 +95,7 @@ const clusterDeleteTimeout = time.Minute
 // releases the cluster's templates and has the cluster service remove the
 // record. An assignment requested meanwhile waits and is then refused. An
 // absent cluster still has its templates released.
-func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error {
+func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID, orphanProjects bool) error {
 	// The local cluster's teams and environments store a NULL cluster_id. The
 	// queries below match by equality, which never selects NULL, and its nil ID
 	// is refused outright so a request for it never reaches them.
@@ -105,6 +113,9 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), clusterDeleteTimeout)
 	defer cancel()
+	if orphanProjects {
+		return a.removeCluster(ctx, clusterID, true)
+	}
 	txDB, tx, err := a.sqlcDB.WithTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin cluster delete: %w", err)
@@ -125,7 +136,7 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 		return err
 	}
 	if cluster != nil {
-		if err := a.removeCluster(ctx, clusterID); err != nil {
+		if err := a.removeCluster(ctx, clusterID, false); err != nil {
 			return err
 		}
 		// A sandbox still running on the cluster may have recorded a template
@@ -144,12 +155,12 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 // removeCluster records the cluster's deletion with the cluster service before
 // having it remove the record, so a removal that fails, or that completes
 // after the caller gave up on it, still leaves every later assignment refused.
-func (a *APIStore) removeCluster(ctx context.Context, clusterID uuid.UUID) error {
+func (a *APIStore) removeCluster(ctx context.Context, clusterID uuid.UUID, orphanProjects bool) error {
 	if err := a.recordClusterDeletion(ctx, clusterID); err != nil {
 		return err
 	}
 
-	_, err := a.clusterService.DeleteCluster(ctx, clustersgrpc.DeleteClusterRequest_builder{ClusterId: clusterID.String()}.Build())
+	_, err := a.clusterService.DeleteCluster(ctx, clustersgrpc.DeleteClusterRequest_builder{ClusterId: clusterID.String(), OrphanProjects: orphanProjects}.Build())
 	switch clusterErrorReason(err) {
 	case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED:
 		return errProtectedClusterDeletion

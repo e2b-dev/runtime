@@ -5512,6 +5512,11 @@ type ClientInterface interface {
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ManagementDeleteProject Soft-delete a project.
 	//
 	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
@@ -8050,6 +8055,21 @@ func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterI
 // Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *Client) ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRemoveClusterRegistrationRequest(c.Server, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -13681,6 +13701,40 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	return req, nil
 }
 
+// NewManagementRemoveClusterRegistrationRequest constructs an http.Request for the ManagementRemoveClusterRegistration method
+func NewManagementRemoveClusterRegistrationRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/registration", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewManagementDeleteProjectRequest constructs an http.Request for the ManagementDeleteProject method
 func NewManagementDeleteProjectRequest(server string, projectID openapi_types.UUID) (*http.Request, error) {
 	var err error
@@ -16268,6 +16322,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
+
+	// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -24317,6 +24378,54 @@ func (r ManagementListClusterProjectsResponse) ContentType() string {
 	return ""
 }
 
+type ManagementRemoveClusterRegistrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementRemoveClusterRegistrationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementRemoveClusterRegistrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementRemoveClusterRegistrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementRemoveClusterRegistrationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementDeleteProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28516,6 +28625,19 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseManagementListClusterProjectsResponse(rsp)
+}
+
+// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *ClientWithResponses) ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error) {
+	rsp, err := c.ManagementRemoveClusterRegistration(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementRemoveClusterRegistrationResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -35965,6 +36087,42 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 	return response, nil
 }
 
+// ParseManagementRemoveClusterRegistrationResponse parses an HTTP response from a ManagementRemoveClusterRegistrationWithResponse call
+func ParseManagementRemoveClusterRegistrationResponse(rsp *http.Response) (*ManagementRemoveClusterRegistrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementRemoveClusterRegistrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseManagementDeleteProjectResponse parses an HTTP response from a ManagementDeleteProjectWithResponse call
 func ParseManagementDeleteProjectResponse(rsp *http.Response) (*ManagementDeleteProjectResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38400,6 +38558,9 @@ type ServerInterface interface {
 	// ManagementListClusterProjects List the projects assigned to a cluster.
 	// (GET /unstable/management/clusters/{clusterID}/projects)
 	ManagementListClusterProjects(c *gin.Context, clusterID ClusterID)
+	// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
+	// (DELETE /unstable/management/clusters/{clusterID}/registration)
+	ManagementRemoveClusterRegistration(c *gin.Context, clusterID ClusterID)
 	// ManagementDeleteProject Soft-delete a project.
 	// (DELETE /unstable/management/projects/{projectID})
 	ManagementDeleteProject(c *gin.Context, projectID openapi_types.UUID)
@@ -41468,6 +41629,31 @@ func (siw *ServerInterfaceWrapper) ManagementListClusterProjects(c *gin.Context)
 	siw.Handler.ManagementListClusterProjects(c, clusterID)
 }
 
+// ManagementRemoveClusterRegistration operation middleware
+func (siw *ServerInterfaceWrapper) ManagementRemoveClusterRegistration(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clusterID" -------------
+	var clusterID ClusterID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clusterID", c.Param("clusterID"), &clusterID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter clusterID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ManagementRemoveClusterRegistration(c, clusterID)
+}
+
 // ManagementDeleteProject operation middleware
 func (siw *ServerInterfaceWrapper) ManagementDeleteProject(c *gin.Context) {
 
@@ -42437,6 +42623,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.DELETE(options.BaseURL+"/admin/teams/:teamID/api-keys/:apiKeyID", wrapper.DeleteAdminTeamsTeamIDApiKeysApiKeyID)
 	router.GET(options.BaseURL+"/unstable/management/telemetry/names", wrapper.ManagementTelemetryNames)
 	router.DELETE(options.BaseURL+"/unstable/management/clusters/:clusterID", wrapper.ManagementDeleteCluster)
+	router.DELETE(options.BaseURL+"/unstable/management/clusters/:clusterID/registration", wrapper.ManagementRemoveClusterRegistration)
 	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/projects", wrapper.ManagementListClusterProjects)
 	router.PUT(options.BaseURL+"/unstable/management/clusters/:clusterID/deletion", wrapper.ManagementRequestClusterDeletion)
 	router.GET(options.BaseURL+"/unstable/management/clusters/:clusterID/destroy-readiness", wrapper.ManagementClusterDestroyReadiness)
@@ -43062,77 +43249,78 @@ var swaggerSpec = []string{
 	"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",
-	"DU7MnlX4caVx4lzUqPPoc1k1/SZW0XOUTP6j3/MNKvg6jCRM2kNMfg/9pSC+35Ca9Rlok7vjcZmL26AA",
-	"v4qHv7l/rVGd1cH/rj2LNRcuW8q4qXQIL85I1WWysjqjz+irAr3FnEuMFHz95u2bozevwxPVFNUUfndT",
-	"7RxXe3tPsjrNEf4tvEosVkExXeTUHd4jpaiMGIeHHAxNaZrMTC6Iv/rkBePmBd7QnTTlA3raCPXPSng7",
-	"vBW8zEGkcGr+VtYn1L4UBZOO79daPXoL+I2V+pKVABQFCaDgZXfJvV7Lt4mCGABCdF3U54tBtsK03yDw",
-	"LApdH+89deo5aOK1gsaKRZ3tLnojWDkXaJgoxQ6et3G9d9yZRssbs4wykPAEEvgAYGYkZuPzsIbY0OhY",
-	"xu48emQ5Vz7ED9J/Fpgceb3GyTGlQULNx5oxx1RAyOKmlcavJ9/9nTjh9McF1iRTpyEbxMkSwfeBH11T",
-	"EpO+Y/+8MKK08bFfv7NpPZubhyb9Rp6mndWkLmCsOwz8InAjkWmVYR4TwKHrjJwYtCD3yRP87u87QOIG",
-	"RW+EH9NlfaKriXUT0cEnpLp98k6re2PdRCRGU76ZXbYfJSfS3qJj6gRwrsu9KKkRMHh3O1FWxgtppFZO",
-	"sRzeBWf4qKPccpTsKFrCvYRI0JP+yOcuAqdfqLKicm9Ls6UM9rJ4e2QxchugOMelc0WYO3GCxAznqBh2",
-	"cCmVeY6+igXW2ilZyNVSN4IHTZaJhRV58EBArQNsxvJyKnAFFqIwU8n/o0OYS2Ogly5j3VUfm95fLIql",
-	"4wEvubotRr1petinyRzEBBIEHiyNUgv6ODtTLURpRP4HEBDwEGtu47ImE75cmfOALPoD8B5vZDiTRQEb",
-	"w5xe/u0CbSFjGoMFu6KaTqMjLSuEjVLXA9xKizqA759i8XBui2ZhsitTLQxyR7e9dFuD58qU656Gw713",
-	"wBmHnAtCspYLUQK2i7zpx0EXcsKU58njxKPGdWM/rdJh5CZuDEdxDppoM2372w8f7rvCVQFAl9YZYH2M",
-	"7+RtOb4OxwRf/Sk28nSwzyl1m/BwjjYFD1p+mZMwW8QQ83bmF6yExhkRTi4n6HMVlU/yo6+gGsf6TiIF",
-	"NP6Lxgz6bzCf1wRJpm2YWnxzqqTlbkGVsXNRSxsdcPHuQbrVg5TOJCJ31INf14MUKxKabyMXDlI5vaUF",
-	"3pJs5GbbVip6M5kIMq0TXNE71ixVNiu1kv/6A4hCn4LSRLRhQS5j14W4Tsnw8LfKBJHoFm+2xNi0kBt5",
-	"M+2jeG2YrfUSuTAwB/kCq4xyumlVM38C0DW+fwa+Zd7hvLdFsDQbzn/VJ827YFTxMPTw+SEeN9+DaEoP",
-	"IcDCWr5p4mME2iuzACMsqODN96HViBJCe5/usHe/UpbrrCLjnpfVYkIE0i7J48XOhE/n7ltQaWk05vnh",
-	"eCl8NrJd9gGpHNO3d8jcMIp2iIYNS6lUSKfzhmybIZoIZEaJv0l1wQtZJ1PJOKVqwPSR1yuEHgpP3If+",
-	"gG+Jmfj5rspJPraPHc7pTkXSVJEE4AT83oAfWFGIubDl8iFQ9ypfJDw8g0+6EtlQZSET6dHbQ+aKAQDx",
-	"hbqSmVYTOa1KxG03Byoao8gVekfa5S6j2DDKjkwmiolGLwSRh1bMZbsNaT78dVs7M5ZiStkPQt4QL+vj",
-	"7up7uV5wVgocnxdRSpHaZ6YeouX/iqvQxEdWEeGR3/x7hO8NmltbMyVMm69cVdQAJoTK7m25LLXkW573",
-	"HdMEPUbdbhLYPB592SH027GF2Wkxlgaqp6u3kvP5IMc757hLtUfrAKmyUq3S2WMmVVZUOeBIWSkXAjKD",
-	"y8KzKaFyX3bRK+3RN0graXWJZUsKPSWsQ2dagyVe6fHjgqwsl2pFwjY+90qcFUtdWWCqWzWVDA3fa81U",
-	"t0y3yI1ScNc1yqnvXVxvz420TRRvsvJq6VHJU3Sgz/Yd1aooUqtXhlJs/Wz2buru/QzmdGizE5UMQumQ",
-	"4mUgDh7IlWGZeZeLan1dtqg2SNC0bJqMjs9vmlio7iAsb/OME4HBuLO4I5frJJfxVWq7FR7jwkUJbVdT",
-	"FGWmWEtRsXW5WUYpKlvo77SlS+3rfr5xSqP0Kd8tpdHyrkBpHL+6JCJ3BPf9EFzzYNbRnc/06IqqDE71",
-	"Fnoyq6dEhiG/S5Tyd1GdFTLrZv71zh4ZL8slO5U+Y+pzZstKnLqkcbSoMeMMXo9nsoCnlsseR8kkSotP",
-	"o9bo4RlWSKoPrV34kFbwSBS5o/YQh0JhRdpQ+BzmmuOqjjtyy/yXKDVwFlUVBasMnwo2kQITPsb1duLs",
-	"d6xSBZzGKSz1lBnwS8NxL6URLwYksvM5CpAPoXqmhrPhc+FGvvHsOSEd5aGvvrNdOlvf/+t4gy66tBt1",
-	"+IhYt1GXwcnyQo/byJfnoU5A25ZbuwX/Dqov/whJfFqVgdJ5fEBNwBdyB/xZF6Pno4IKbo9HDy8e14qB",
-	"lewY42fqpgna/dvjw+jzyvSx74Tl+J6nwujonWe157XRgxRKA4nd6S47RlvYf/KzDEKPHv+JLxb/uSh1",
-	"fjx6sMvegPPKuVgi97rgReXDNM8E+/zpLRMq0zkpp1LpaOduNaNYa58w0LULteFi64WekZnCR5mihQsg",
-	"Ib4sCp2L0fMJL4xILwEbj8ab1uJyAD+0Lt9sswbXeGTssoAf4HocdbcAnM4pMaVWsIGGoyMGHoX7zlA8",
-	"mMnY/fjKedAHVczK3NjSqp18gNav/VJS8CYxPII3rhHUjzbOwyENLttYPl/0Lc31xACvUdJUk3MrdmCc",
-	"tKl2PSbwZIm5vgX5tusw8PdUR+4tCksOg7cvIAdsqePafz3148aj/9450pYXO59ogrWdsbVvfKP15+5u",
-	"wGZ8b3RfXDx+kFarpW/Bvjp5Lmqndv4OBp06h+Q+3IlLY8Uc0+RUyse1REIzdZaGIWRTJhIo6LPB5fnB",
-	"J7ZGhYLJ9ELkePtRwK0tlxEt1Gkm2Gcj2CNg4o+fPWN1vb39w1cHB8eqU3ZPl2y2XMyEMuw+3/nXmO3t",
-	"/DRmOw/GYMydYVqQaBRIt7/LfsGaRr7WfbakWEyQQfLxsQo+tj6UBt0jl42MZfSOpNBmndOeyKZthULQ",
-	"LkQpNSpU/NaOlS9KDletzKQtliwruDFyIimFm+ETrGuI4GH3D2e6KvKdT/AXvQEfwLjkX8UmpTCzY8Ut",
-	"HLRtPYC8mFEfEaQ1cS4KvkvGFRobMG8M3qLH6nXw//Ran3oIx86oLhRMJ8pSlycgtcTgPHE9T+bSIDB3",
-	"j9W+YlLtLEo9LYXpZGZaO6JUJ77vC8YVq9S50pfqWOnKZnou6oEeP145kGt/4gbAgCcjwlG7lC7ii8gq",
-	"l5nPL5XChI/Vp3ZTK1ReHzxm/XOH4wF9r95wLnheSAXqgMowz9eO1UKUBm4alfkK8uwSDh8jrd2bhWK0",
-	"HGbSbFg2HzO5SF0Z2rSrMV/wpYCaCvsh8xfghPiykCVoGiQdP0lQHIt1Bxo8Vl4AoCujlgAOalDu/FUs",
-	"G4LAnH/xxRAeP3s2bhVHWAAsShjzf/+d7/xrb+ennV//x7/dXmHs9+LSsa6/Pb7tAmBBekins/A8ENJ8",
-	"hKj1SIqInqg3m6jmJQ+63qZoEjOiddIFtaWmTrbYWK15s9v8WZdnMs+FutZNPr35hb/3pVKudeG3lAGp",
-	"xTrQ36SQmXWp6ePIA88s7w+8Xx6EnHTh7talhNdCEcbqGNkd6rGlsF6dCAuRipJffllgcr263aVUub5k",
-	"99ffUA9eNNMPXnIT3yo5XSXXeYaPH9/OGW4B3pBNtAPQcBVC3wU3hixU0vjbnd0fdol/A3jfBs1ozeYQ",
-	"ou221Xot4nJ2SDfQeRSggEv+0ZZEBFWhD6qegHyvsXa/xtTFPoo0SOSRzLOLaiEOQu/o+ZO9VuUjOa/m",
-	"o+d74QaXyoqpKPF5diXwPruNu+5QlJAxCzHsGlHj2d6T21m7zASrFL/gEoOFr3ULT29D1MjOQW6GV4eu",
-	"rk/c+CFVA+4N7+XAftVARxfecJJzTpL9pYNDCkk3kS+Q4BOVR1oASuuOz4RL8GM7Q6+cag4+AkdHb4Px",
-	"jZ4/+Gv0VsI3MTRxOgB8sznfS3/k3vyJnOjJ3p5nTLFTdfdR6JZ44vM8nUxREuBTiBKslLtcwImodsdu",
-	"ZKgH/1vXFy8KLKHvsmXAPTV1jz2h6ouERs294TF+FeYyxybcnKMS4HQu5hpe66hFP12rRQk+e6/c4V3V",
-	"ae/6X05uZY3X09eb9w8c8lryfpql12WOv9W7zRFH37vth4mPuRmF7SYxouECWtf26Q+qCHb0dGV2D57H",
-	"vbbQP4t6Amy42hIa2NBbars1D+oa7ywvKb2gN3d532ZYFvlcG7zD6Y5x9hKp2FwWhXSXQo9BKiNvg6Rt",
-	"TCr7p6ej8RpJtZvG8gu0juTlVcvsWRZ69zVW5e660fNHe3t748YinzyGRdK0/vtmaw72yCGQ7VlyMK8O",
-	"NoUCpqy0hL6jTcBqWCEuROE021Wpdhn0Zmei0Jf0dqMGHJXj4JTfD1touMki32KHxPpecSN2jFBGotOx",
-	"qc5IB0mvXKYVrnwuDPo0+QslvSrj/X961KF/ut3qsI6cAch/e7ydg0yDedzk5XRnIWz73CP5rr8Val+a",
-	"tQ4xddPkNXAUfU6Fk3bcANAbt8nf4nkPMEBrIomBev/IMVi4QMQGIxxqemxwhaxT9rL7i/IfJw+2yqry",
-	"QzkWRLVur+BTEJ/sNfgSfL0rS/mdVo91x9zmC+HDGu+50O7hb/6fqypWgvgY+Qadkbc/kS1wgXFd+N17",
-	"MVP9NQwrcC600jq33lCbeDX3OQoL29qR9uaDBGgeb0Pc1N30LiTgh6ZFf/xMqonemBTRCE7hBE28+bzI",
-	"YdDIva6lM4JuN0Qo168v8qujXX2jVNbtRfSLwEcReaIqp8Iut6jKuaMvT18tQlhBYavvtWRp5rRO/JBc",
-	"iCGTMrTdZb+gNVq17dVj51NjQkQKWtB0eR7V1nM1SLmh2unwE9jY0NEtnUmI1MEJyr5aYeaYzMfDyziv",
-	"bxqZYcH/56Z5CO4fj2io187jdOLM+mScV/Xvw6nmZpfeyoJ+3bbSO2efO2efO2efO2efH8LZZxPx7M5z",
-	"5Vt4rvyYOl8SP4OiBcWUdWLvk6bud01gCLh2h1iQtAD6ZIUG+DsUCN2b8m9PNhAJr3UVbgH+WekX0id2",
-	"koMAdvnuXbs7gX1nWheCq9HX71nuXLvq70fSXLvUWxDRXjlx7GorvQ1B5LNalBrIBSuiXAsG3znvbui8",
-	"uwag35nQs3a136OYs3LRP7JPa6TKe7JSptFFNR9myuZz5lun7Enh082bcGmujQ24Lv9OZzd3euMr2kgb",
-	"mOExzf+ybVw1ic9h6LQAHSHdjYQueky73bhFmnVf5ZF3wAq89rGLXZjdWU9uleXGyNohg5jdPvyN/rG2",
-	"sJar3LuKDqiRo4S/uWE3fk769aTM+Il84w38C4meu7h357t2w7jnUGQd7o373U2irmheX3G53wh27X0r",
-	"tkm5By7uEPcbuXSs4Za4K3h8EIZVZTF6PppZuzDPHz7kC7krHp/t8sUCccr1/62dMcmgbdX9WPtyRj9i",
-	"Isr474XcgbrC8W84evR3LTjWY4usFNaMvv769f8/AA==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

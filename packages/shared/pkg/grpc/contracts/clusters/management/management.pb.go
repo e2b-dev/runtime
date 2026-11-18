@@ -1427,10 +1427,11 @@ func (b0 UpdateClusterResponse_builder) Build() *UpdateClusterResponse {
 }
 
 type DeleteClusterRequest struct {
-	state                protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ClusterId string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_OrphanProjects bool                   `protobuf:"varint,2,opt,name=orphan_projects,json=orphanProjects"`
+	xxx_hidden_ClusterId      string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *DeleteClusterRequest) Reset() {
@@ -1458,11 +1459,22 @@ func (x *DeleteClusterRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+func (x *DeleteClusterRequest) GetOrphanProjects() bool {
+	if x != nil {
+		return x.xxx_hidden_OrphanProjects
+	}
+	return false
+}
+
 func (x *DeleteClusterRequest) GetClusterId() string {
 	if x != nil {
 		return x.xxx_hidden_ClusterId
 	}
 	return ""
+}
+
+func (x *DeleteClusterRequest) SetOrphanProjects(v bool) {
+	x.xxx_hidden_OrphanProjects = v
 }
 
 func (x *DeleteClusterRequest) SetClusterId(v string) {
@@ -1472,13 +1484,16 @@ func (x *DeleteClusterRequest) SetClusterId(v string) {
 type DeleteClusterRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	ClusterId string
+	// Keep project placements pointed at the unavailable cluster until reassigned.
+	OrphanProjects bool
+	ClusterId      string
 }
 
 func (b0 DeleteClusterRequest_builder) Build() *DeleteClusterRequest {
 	m0 := &DeleteClusterRequest{}
 	b, x := &b0, m0
 	_, _ = b, x
+	x.xxx_hidden_OrphanProjects = b.OrphanProjects
 	x.xxx_hidden_ClusterId = b.ClusterId
 	return m0
 }
@@ -2065,8 +2080,9 @@ const file_e2b_clusters_management_v1_management_proto_rawDesc = "" +
 	" \x01(\tB\f\xbaH\x04r\x02\x10\x01\xaa\x01\x02\b\x01R\x11telemetryClientId\x12\x19\n" +
 	"\x04etag\x18\v \x01(\tB\x05\xaa\x01\x02\b\x01R\x04etag\"V\n" +
 	"\x15UpdateClusterResponse\x12=\n" +
-	"\acluster\x18\x01 \x01(\v2#.e2b.clusters.management.v1.ClusterR\acluster\"e\n" +
-	"\x14DeleteClusterRequest\x12M\n" +
+	"\acluster\x18\x01 \x01(\v2#.e2b.clusters.management.v1.ClusterR\acluster\"\x8e\x01\n" +
+	"\x14DeleteClusterRequest\x12'\n" +
+	"\x0forphan_projects\x18\x02 \x01(\bR\x0eorphanProjects\x12M\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tB.\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01R\tclusterId\"\x17\n" +
 	"\x15DeleteClusterResponse\"\x8e\x01\n" +

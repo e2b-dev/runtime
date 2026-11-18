@@ -400,6 +400,6 @@ func TestAClusterDeleteFinishesWhenTheCallerLeaves(t *testing.T) {
 		}).Once()
 	withClusterService(t, db, store, clusterService)
 
-	require.NoError(t, store.deleteCluster(request, clusterID))
+	require.NoError(t, store.deleteCluster(request, clusterID, false))
 	require.True(t, templateDeleted(t, db, templateID))
 }

@@ -7827,6 +7827,23 @@ paths:
         "503":
           $ref: "#/components/responses/503"
 
+  /unstable/management/clusters/{clusterID}/registration:
+    parameters:
+      - $ref: "#/components/parameters/clusterID"
+    delete:
+      operationId: managementRemoveClusterRegistration
+      summary: Remove a cluster and leave surviving projects without a runtime.
+      tags: [admin]
+      security:
+        - AdminJWTAuth: []
+      responses:
+        "204":
+          description: The cluster is unavailable. Its projects retain their placement until reassigned.
+        "409":
+          $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
   /unstable/management/clusters/{clusterID}/projects:
     parameters:
       - $ref: "#/components/parameters/clusterID"
