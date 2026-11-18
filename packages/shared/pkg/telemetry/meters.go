@@ -487,6 +487,10 @@ const (
 	// ClientProxyResumeParkingRejectedCounterName counts callers shed with a
 	// 503 because the parking lot was full when their flight first retried.
 	ClientProxyResumeParkingRejectedCounterName CounterType = "client_proxy.resume.parking.rejected"
+	// ClientProxyProbeCounterName counts the sandbox probe requests the
+	// client proxy answered, by answer
+	// (found|claimed|not_found|unknown|canceled).
+	ClientProxyProbeCounterName CounterType = "client_proxy.probe.count"
 )
 
 const (
@@ -1021,6 +1025,7 @@ var counterDesc = map[CounterType]string{
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
+	ClientProxyProbeCounterName:                 "Sandbox probe requests the client proxy answered (answer=found|claimed|not_found|unknown|canceled)",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "Hugepage sandboxes placed under a hugepage limit on a node the limit could not bound, by node and reason (no_capacity | no_page_size).",
 }
@@ -1096,6 +1101,7 @@ var counterUnits = map[CounterType]string{
 	TCPFirewallErrorsTotal:                       "{error}",
 	ClientProxyResumeFlightCounterName:           "{request}",
 	ClientProxyResumeParkingRejectedCounterName:  "{request}",
+	ClientProxyProbeCounterName:                  "{request}",
 	TCPFirewallDecisionsTotal:                    "{decision}",
 
 	OrchestratorTemplateCacheAncestorResolutionsCounterName: "{ancestor}",
