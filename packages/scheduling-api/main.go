@@ -89,6 +89,10 @@ func run() int {
 		_ = log.Sync()
 	}()
 
+	if err := tel.StartRuntimeInstrumentation(); err != nil {
+		log.Warn(ctx, "failed to start runtime instrumentation", zap.Error(err))
+	}
+
 	drain := shutdownDrain
 	if env.IsLocal() {
 		drain = 0
