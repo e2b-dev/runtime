@@ -318,11 +318,11 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 	}
 
 	// Register child work before the foreground request releases its hold.
-		buildDone := s.info.TrackWork()
-		s.wg.Add(1)
-		go func(ctx context.Context) {
-			defer s.wg.Done()
-			defer buildDone()
+	buildDone := s.info.TrackWork()
+	s.wg.Add(1)
+	go func(ctx context.Context) {
+		defer s.wg.Done()
+		defer buildDone()
 
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -359,11 +359,11 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 		if err := s.buildLimiter.Acquire(ctx, 1); err != nil {
 			buildInfo.SetFail(builderrors.UnwrapUserError(err))
 			return
-			}
-			defer s.buildLimiter.Release(1)
-			s.activeBuilds.Add(1)
-			defer s.activeBuilds.Add(-1)
-			if err := ctx.Err(); err != nil {
+		}
+		defer s.buildLimiter.Release(1)
+		s.activeBuilds.Add(1)
+		defer s.activeBuilds.Add(-1)
+		if err := ctx.Err(); err != nil {
 			buildInfo.SetFail(builderrors.UnwrapUserError(err))
 			return
 		}
