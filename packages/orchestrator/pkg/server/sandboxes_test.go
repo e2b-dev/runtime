@@ -40,7 +40,6 @@ import (
 
 var (
 	startTime = time.Now()
-	endTime   = time.Now().Add(time.Hour)
 
 	listSandboxID   = id.Generate()
 	listTeamID      = "6c6f2ba0-9c62-4f2a-9ab8-0a0a9c6f3e11"
@@ -58,7 +57,6 @@ func Test_server_List(t *testing.T) {
 		want    *orchestrator.SandboxListResponse
 		wantErr bool
 		data    []*sandbox.Sandbox
-		endAt   time.Time
 
 		poweredOff bool
 		// requestedMB is the hotplug memory the sandbox asked to plug.
@@ -89,12 +87,10 @@ func Test_server_List(t *testing.T) {
 					},
 				},
 			},
-			endAt: endTime,
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
 						StartTime:   timestamppb.New(startTime),
-						EndTime:     timestamppb.New(endTime),
 						SandboxId:   listSandboxID,
 						TeamId:      listTeamID,
 						ExecutionId: listExecutionID,
@@ -129,13 +125,11 @@ func Test_server_List(t *testing.T) {
 					},
 				},
 			},
-			endAt: endTime,
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
 						// ClientId:  "client-id",
 						StartTime:   timestamppb.New(startTime),
-						EndTime:     timestamppb.New(endTime),
 						SandboxId:   listSandboxID,
 						TeamId:      listTeamID,
 						ExecutionId: listExecutionID,
@@ -173,13 +167,11 @@ func Test_server_List(t *testing.T) {
 					},
 				},
 			},
-			endAt: endTime,
 			want: &orchestrator.SandboxListResponse{
 				Sandboxes: []*orchestrator.RunningSandbox{
 					{
 						// ClientId:  "client-id",
 						StartTime:   timestamppb.New(startTime),
-						EndTime:     timestamppb.New(endTime),
 						SandboxId:   listSandboxID,
 						TeamId:      listTeamID,
 						ExecutionId: listExecutionID,
@@ -207,7 +199,6 @@ func Test_server_List(t *testing.T) {
 			}
 			for _, sbx := range tt.data {
 				sbx.SetStartedAt(startTime)
-				sbx.SetEndAt(tt.endAt)
 				sbx.SetMemoryHotplugRequestedMBForTest(tt.requestedMB)
 				sandboxes.AssignNetwork(t.Context(), sbx)
 				sandboxes.MarkRunning(t.Context(), sbx)

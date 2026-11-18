@@ -99,7 +99,6 @@ func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreat
 	running := &orchestrator.RunningSandbox{
 		ClientId:    s.clientID,
 		StartTime:   startTime,
-		EndTime:     req.GetEndTime(),
 		SandboxId:   sbxID,
 		TeamId:      req.GetSandbox().GetTeamId(),
 		ExecutionId: req.GetSandbox().GetExecutionId(),
@@ -118,6 +117,8 @@ func (s *SandboxServer) Create(_ context.Context, req *orchestrator.SandboxCreat
 	return &orchestrator.SandboxCreateResponse{ClientId: s.clientID}, nil
 }
 
+// Update accepts end time and egress updates but ignores them: nothing here
+// expires a sandbox, and there's no real network.
 func (s *SandboxServer) Update(_ context.Context, req *orchestrator.SandboxUpdateRequest) (*emptypb.Empty, error) {
 	if req.GetSandboxId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "sandbox_id is required")
@@ -126,17 +127,9 @@ func (s *SandboxServer) Update(_ context.Context, req *orchestrator.SandboxUpdat
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	sbx, ok := s.sandboxes[req.GetSandboxId()]
-	if !ok {
+	if _, ok := s.sandboxes[req.GetSandboxId()]; !ok {
 		return nil, status.Errorf(codes.NotFound, "sandbox %q not found", req.GetSandboxId())
 	}
-
-	if req.GetEndTime() != nil {
-		sbx.EndTime = req.GetEndTime()
-	}
-
-	// Egress updates are accepted but ignored — there's no real network here.
-	_ = req.GetEgress()
 
 	return &emptypb.Empty{}, nil
 }

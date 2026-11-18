@@ -1834,7 +1834,6 @@ type RunningSandbox struct {
 	Config    *SandboxConfig         `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
 	ClientId  string                 `protobuf:"bytes,2,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
 	StartTime *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
-	EndTime   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
 	// Minimal set required to detect an orphaned sandbox and kill it.
 	// sandbox_id + team_id form the store key. execution_id is carried in the
 	// edge sandbox-catalog delete event, so a cluster node's routing entry is
@@ -1911,13 +1910,6 @@ func (x *RunningSandbox) GetClientId() string {
 func (x *RunningSandbox) GetStartTime() *timestamppb.Timestamp {
 	if x != nil {
 		return x.StartTime
-	}
-	return nil
-}
-
-func (x *RunningSandbox) GetEndTime() *timestamppb.Timestamp {
-	if x != nil {
-		return x.EndTime
 	}
 	return nil
 }
@@ -2217,13 +2209,12 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x18SandboxCheckpointNetwork\x12;\n" +
 	"\tplacement\x18\x01 \x01(\v2\x18.SandboxNetworkPlacementH\x00R\tplacement\x88\x01\x01B\f\n" +
 	"\n" +
-	"_placement\"\xe2\x03\n" +
+	"_placement\"\xbb\x03\n" +
 	"\x0eRunningSandbox\x12*\n" +
 	"\x06config\x18\x01 \x01(\v2\x0e.SandboxConfigB\x02\x18\x01R\x06config\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x129\n" +
 	"\n" +
-	"start_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x125\n" +
-	"\bend_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\aendTime\x12\x1d\n" +
+	"start_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x05 \x01(\tR\tsandboxId\x12\x17\n" +
 	"\ateam_id\x18\x06 \x01(\tR\x06teamId\x12!\n" +
@@ -2237,7 +2228,7 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\tdisk_kept\x18\f \x01(\bR\bdiskKept\x12 \n" +
 	"\tmemory_mb\x18\r \x01(\x03H\x00R\bmemoryMb\x88\x01\x01B\f\n" +
 	"\n" +
-	"_memory_mb\"D\n" +
+	"_memory_mbJ\x04\b\x04\x10\x05R\bend_time\"D\n" +
 	"\x13SandboxListResponse\x12-\n" +
 	"\tsandboxes\x18\x01 \x03(\v2\x0f.RunningSandboxR\tsandboxes*\xdd\x01\n" +
 	"\n" +
@@ -2337,28 +2328,27 @@ var file_orchestrator_proto_depIdxs = []int32{
 	15, // 25: SandboxCheckpointNetwork.placement:type_name -> SandboxNetworkPlacement
 	1,  // 26: RunningSandbox.config:type_name -> SandboxConfig
 	32, // 27: RunningSandbox.start_time:type_name -> google.protobuf.Timestamp
-	32, // 28: RunningSandbox.end_time:type_name -> google.protobuf.Timestamp
-	0,  // 29: RunningSandbox.guest_event:type_name -> GuestEvent
-	24, // 30: SandboxListResponse.sandboxes:type_name -> RunningSandbox
-	3,  // 31: SandboxIam.TokensEntry.value:type_name -> SandboxIamToken
-	9,  // 32: SandboxNetworkEgressConfig.RulesEntry.value:type_name -> SandboxNetworkDomainRules
-	13, // 33: SandboxService.Create:input_type -> SandboxCreateRequest
-	16, // 34: SandboxService.Update:input_type -> SandboxUpdateRequest
-	33, // 35: SandboxService.List:input_type -> google.protobuf.Empty
-	17, // 36: SandboxService.Delete:input_type -> SandboxDeleteRequest
-	18, // 37: SandboxService.Pause:input_type -> SandboxPauseRequest
-	21, // 38: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
-	14, // 39: SandboxService.Create:output_type -> SandboxCreateResponse
-	33, // 40: SandboxService.Update:output_type -> google.protobuf.Empty
-	25, // 41: SandboxService.List:output_type -> SandboxListResponse
-	33, // 42: SandboxService.Delete:output_type -> google.protobuf.Empty
-	20, // 43: SandboxService.Pause:output_type -> SandboxPauseResponse
-	22, // 44: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
-	39, // [39:45] is the sub-list for method output_type
-	33, // [33:39] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	0,  // 28: RunningSandbox.guest_event:type_name -> GuestEvent
+	24, // 29: SandboxListResponse.sandboxes:type_name -> RunningSandbox
+	3,  // 30: SandboxIam.TokensEntry.value:type_name -> SandboxIamToken
+	9,  // 31: SandboxNetworkEgressConfig.RulesEntry.value:type_name -> SandboxNetworkDomainRules
+	13, // 32: SandboxService.Create:input_type -> SandboxCreateRequest
+	16, // 33: SandboxService.Update:input_type -> SandboxUpdateRequest
+	33, // 34: SandboxService.List:input_type -> google.protobuf.Empty
+	17, // 35: SandboxService.Delete:input_type -> SandboxDeleteRequest
+	18, // 36: SandboxService.Pause:input_type -> SandboxPauseRequest
+	21, // 37: SandboxService.Checkpoint:input_type -> SandboxCheckpointRequest
+	14, // 38: SandboxService.Create:output_type -> SandboxCreateResponse
+	33, // 39: SandboxService.Update:output_type -> google.protobuf.Empty
+	25, // 40: SandboxService.List:output_type -> SandboxListResponse
+	33, // 41: SandboxService.Delete:output_type -> google.protobuf.Empty
+	20, // 42: SandboxService.Pause:output_type -> SandboxPauseResponse
+	22, // 43: SandboxService.Checkpoint:output_type -> SandboxCheckpointResponse
+	38, // [38:44] is the sub-list for method output_type
+	32, // [32:38] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_orchestrator_proto_init() }
