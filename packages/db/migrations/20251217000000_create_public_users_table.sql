@@ -10,15 +10,6 @@ CREATE TABLE IF NOT EXISTS public.users (
     UNIQUE (email)
 );
 
--- Grant INSERT permission to trigger_user
-GRANT INSERT ON public.users TO trigger_user;
-
--- Grant UPDATE permission to trigger_user
--- We need to grant SELECT permission to trigger_user as well, so it can filter by id
-GRANT SELECT (id) ON public.users TO trigger_user;
-
-GRANT UPDATE ON public.users TO trigger_user;
-
 -- Create trigger function to update data from auth.users to public.users
 CREATE OR REPLACE FUNCTION public.sync_insert_auth_users_to_public_users_trigger() RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -48,10 +39,6 @@ BEGIN
     RETURN NEW;
 END;
 $func$ SECURITY DEFINER SET search_path = public;
-
--- Set function owner to trigger_user
-ALTER FUNCTION public.sync_insert_auth_users_to_public_users_trigger() OWNER TO trigger_user;
-ALTER FUNCTION public.sync_update_auth_users_to_public_users_trigger() OWNER TO trigger_user;
 
 -- Create trigger on auth.users to copy data to public.users
 CREATE OR REPLACE TRIGGER sync_inserts_to_public_users

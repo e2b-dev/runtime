@@ -15,33 +15,30 @@ DROP FUNCTION IF EXISTS public.sync_delete_auth_users_to_public_users_trigger();
 DROP FUNCTION IF EXISTS public.post_user_signup();
 DROP FUNCTION IF EXISTS public.extra_for_post_user_signup(uuid, uuid);
 
-REVOKE INSERT ON public.users FROM trigger_user;
-REVOKE SELECT (id) ON public.users FROM trigger_user;
-REVOKE UPDATE ON public.users FROM trigger_user;
-REVOKE DELETE ON public.users FROM trigger_user;
+-- trigger_user exists only where an earlier release created it.
+-- +goose StatementBegin
+DO $revoke$
+BEGIN
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'trigger_user') THEN
+        REVOKE INSERT ON public.users FROM trigger_user;
+        REVOKE SELECT (id) ON public.users FROM trigger_user;
+        REVOKE UPDATE ON public.users FROM trigger_user;
+        REVOKE DELETE ON public.users FROM trigger_user;
 
-REVOKE SELECT, INSERT, TRIGGER ON public.teams FROM trigger_user;
-REVOKE INSERT ON public.users_teams FROM trigger_user;
-REVOKE INSERT ON public.team_api_keys FROM trigger_user;
-REVOKE INSERT ON public.access_tokens FROM trigger_user;
+        REVOKE SELECT, INSERT, TRIGGER ON public.teams FROM trigger_user;
+        REVOKE INSERT ON public.users_teams FROM trigger_user;
+        REVOKE INSERT ON public.team_api_keys FROM trigger_user;
+        REVOKE INSERT ON public.access_tokens FROM trigger_user;
 
-REVOKE CREATE, USAGE ON SCHEMA public FROM trigger_user;
-REVOKE USAGE ON SCHEMA auth FROM trigger_user;
+        REVOKE CREATE, USAGE ON SCHEMA public FROM trigger_user;
+        REVOKE USAGE ON SCHEMA auth FROM trigger_user;
+    END IF;
+END
+$revoke$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-
-GRANT CREATE, USAGE ON SCHEMA public TO trigger_user;
-GRANT USAGE ON SCHEMA auth TO trigger_user;
-
-GRANT SELECT, INSERT, TRIGGER ON public.teams TO trigger_user;
-GRANT INSERT ON public.users_teams TO trigger_user;
-GRANT INSERT ON public.users TO trigger_user;
-GRANT SELECT (id) ON public.users TO trigger_user;
-GRANT UPDATE ON public.users TO trigger_user;
-GRANT DELETE ON public.users TO trigger_user;
-GRANT INSERT ON public.team_api_keys TO trigger_user;
-GRANT INSERT ON public.access_tokens TO trigger_user;
 
 CREATE OR REPLACE FUNCTION public.extra_for_post_user_signup(user_id uuid, team_id uuid)
     RETURNS void
@@ -51,8 +48,6 @@ DECLARE
 BEGIN
 END
 $extra_for_post_user_signup$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.extra_for_post_user_signup(uuid, uuid) OWNER TO trigger_user;
 
 CREATE OR REPLACE FUNCTION public.post_user_signup()
     RETURNS TRIGGER
@@ -71,8 +66,6 @@ BEGIN
     RETURN NEW;
 END
 $post_user_signup$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.post_user_signup() OWNER TO trigger_user;
 
 CREATE OR REPLACE FUNCTION public.sync_insert_auth_users_to_public_users_trigger() RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -110,10 +103,6 @@ BEGIN
     RETURN OLD;
 END;
 $func$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.sync_insert_auth_users_to_public_users_trigger() OWNER TO trigger_user;
-ALTER FUNCTION public.sync_update_auth_users_to_public_users_trigger() OWNER TO trigger_user;
-ALTER FUNCTION public.sync_delete_auth_users_to_public_users_trigger() OWNER TO trigger_user;
 
 CREATE TRIGGER sync_inserts_to_public_users
     AFTER INSERT ON auth.users
