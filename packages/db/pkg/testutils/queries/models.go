@@ -190,6 +190,11 @@ type ProjectionProjectMember struct {
 	UpdatedAt time.Time
 }
 
+type ProjectionProjectPlacement struct {
+	ProjectID uuid.UUID
+	Revision  int64
+}
+
 type ProjectionProjectSetting struct {
 	ProjectID                        uuid.UUID
 	Revision                         int64

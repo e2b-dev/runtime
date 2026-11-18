@@ -81,6 +81,13 @@ func TestManagementAssignProjectClusterRejectsDifferentAssignment(t *testing.T) 
 	requireClusterErrorCode(t, response, clusterAssignmentAlreadyAssignedCode)
 	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
 	require.Equal(t, firstID, assignedProjectCluster(t, db, projectID))
+
+	versioned := newProjectFixture().request()
+	versioned.ClusterId, versioned.ClusterRevision = &firstID, new(int64(1))
+	require.Equal(t, http.StatusOK, callUpsertProject(t, store, projectID, versioned).Code)
+	response = callManagementAssignProjectCluster(t, store, projectID, secondID)
+	require.Equal(t, http.StatusConflict, response.Code)
+	requireClusterErrorCode(t, response, clusterAssignmentAlreadyAssignedCode)
 }
 
 func TestManagementAssignProjectClusterAssignsAndEvictsTheProject(t *testing.T) {

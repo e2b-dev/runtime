@@ -92,24 +92,9 @@ SELECT locked_team.cluster_id,
        EXISTS (SELECT FROM assigned) AS assigned
 FROM locked_team;
 
--- name: DetachTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = sqlc.arg(team_id)::uuid
-    FOR UPDATE
-),
-detached AS (
-    UPDATE public.teams AS team
-    SET cluster_id = NULL
-    FROM locked_team
-    WHERE team.id = sqlc.arg(team_id)::uuid
-      AND locked_team.cluster_id = sqlc.arg(cluster_id)::uuid
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM detached) AS detached
-FROM locked_team;
+-- name: DetachTeamCluster :exec
+UPDATE public.teams SET cluster_id = NULL
+WHERE id = sqlc.arg(team_id)::uuid AND cluster_id = sqlc.arg(cluster_id)::uuid;
 
 -- name: LockTeamClusterSync :exec
 -- Serializes the syncs of one team's cluster to the cluster service, so each

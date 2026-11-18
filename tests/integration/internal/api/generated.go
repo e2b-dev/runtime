@@ -1284,7 +1284,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, cluster_assignment_revision_required, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -1450,8 +1450,11 @@ type ManagementDecidedAt = time.Time
 
 // ManagementProject defines model for ManagementProject.
 type ManagementProject struct {
-	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	// ClusterId Remote cluster to use. With a revision, omission selects the local cluster.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
+
+	// ClusterRevision Revision of the cluster assignment. Older revisions preserve the current target; the same revision with a different target is a conflict. The response reports the stored revision once the assignment is versioned.
+	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
 	Email string             `json:"email"`
@@ -1567,12 +1570,15 @@ type ManagementProjectSettingsRequest struct {
 	Settings ProjectSettings `json:"settings"`
 }
 
-// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every push. The optional cluster assignment is preserved when omitted.
+// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every push. Without a cluster revision, omitting the cluster preserves its assignment.
 //
 // A project's tier is not among them, and this side assigns none. Limits arrive separately and in full through managementUpsertProjectLimits.
 type ManagementProjectUpsertRequest struct {
-	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	// ClusterId Remote cluster to use. With a revision, omission selects the local cluster.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
+
+	// ClusterRevision Revision of the cluster assignment. Older revisions preserve the current target; the same revision with a different target is a conflict. The response reports the stored revision once the assignment is versioned.
+	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
 	Email string `json:"email"`
@@ -5560,14 +5566,14 @@ type ClientInterface interface {
 
 	// ManagementDetachProjectCluster Detach a cluster assignment from a project.
 	//
-	// Answers 404 when the project is missing or deleted.
+	// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 	//
 	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
 	ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementAssignProjectCluster Assign a cluster to a project.
 	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
 	ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8178,7 +8184,7 @@ func (c *Client) ManagementApplyProjectBlock(ctx context.Context, projectID open
 
 // ManagementDetachProjectCluster Detach a cluster assignment from a project.
 //
-// Answers 404 when the project is missing or deleted.
+// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 //
 // Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
 func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8195,7 +8201,7 @@ func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID o
 
 // ManagementAssignProjectCluster Assign a cluster to a project.
 //
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 //
 // Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
 func (c *Client) ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16319,7 +16325,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
 	//
-	// Answers 404 when the project is missing or deleted.
+	// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16328,7 +16334,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
 	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28610,7 +28616,7 @@ func (c *ClientWithResponses) ManagementApplyProjectBlockWithResponse(ctx contex
 
 // ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
 //
-// Answers 404 when the project is missing or deleted.
+// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28625,7 +28631,7 @@ func (c *ClientWithResponses) ManagementDetachProjectClusterWithResponse(ctx con
 
 // ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
 //
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
+// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
 //
 // Returns a wrapper object for the known response body format(s).
 //

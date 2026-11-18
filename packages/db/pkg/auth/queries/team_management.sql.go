@@ -7,6 +7,7 @@ package authqueries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -134,7 +135,7 @@ func (q *Queries) InsertManagedTeam(ctx context.Context, arg InsertManagedTeamPa
 
 const lockManagedTeam = `-- name: LockManagedTeam :one
 
-SELECT slug, cluster_id FROM public.teams
+SELECT slug, cluster_id, deleted_at FROM public.teams
 WHERE id = $1::uuid
 FOR UPDATE
 `
@@ -142,6 +143,7 @@ FOR UPDATE
 type LockManagedTeamRow struct {
 	Slug      string
 	ClusterID *uuid.UUID
+	DeletedAt *time.Time
 }
 
 // Project reconciliation for the control-plane management interface. The caller
@@ -153,7 +155,7 @@ type LockManagedTeamRow struct {
 func (q *Queries) LockManagedTeam(ctx context.Context, id uuid.UUID) (LockManagedTeamRow, error) {
 	row := q.db.QueryRow(ctx, lockManagedTeam, id)
 	var i LockManagedTeamRow
-	err := row.Scan(&i.Slug, &i.ClusterID)
+	err := row.Scan(&i.Slug, &i.ClusterID, &i.DeletedAt)
 	return i, err
 }
 
@@ -163,7 +165,7 @@ SET
     name = $1::text,
     slug = $2::text,
     email = $3::text,
-    cluster_id = COALESCE($4::uuid, cluster_id)
+    cluster_id = $4::uuid
 WHERE id = $5::uuid
 RETURNING id, name, slug, email, cluster_id
 `

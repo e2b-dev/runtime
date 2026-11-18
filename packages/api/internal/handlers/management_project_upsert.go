@@ -31,17 +31,27 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 
 		return
 	}
+	var revision int64
+	if body.ClusterRevision != nil {
+		revision = *body.ClusterRevision
+		if revision <= 0 || body.ClusterId != nil && *body.ClusterId == uuid.Nil {
+			a.sendAPIStoreError(c, http.StatusBadRequest, "Invalid project placement")
+
+			return
+		}
+	}
 	// Without a cluster service the pool never loads a remote cluster.
 	if body.ClusterId != nil && *body.ClusterId != uuid.Nil && !a.requireClusterService(c) {
 		return
 	}
 
 	stored, created, err := a.managementService.UpsertProject(ctx, a.riverClient, management.Project{
-		ClusterID: body.ClusterId,
-		ID:        projectID,
-		Name:      body.Name,
-		Slug:      body.Slug,
-		Email:     body.Email,
+		ClusterID:       body.ClusterId,
+		ClusterRevision: revision,
+		ID:              projectID,
+		Name:            body.Name,
+		Slug:            body.Slug,
+		Email:           body.Email,
 	})
 	if err != nil {
 		a.sendProjectUpsertError(c, err, attrs...)
@@ -49,12 +59,17 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 		return
 	}
 
+	var storedRevision *int64
+	if stored.ClusterRevision > 0 {
+		storedRevision = &stored.ClusterRevision
+	}
 	c.JSON(upsertStatus(created), api.ManagementProject{
-		ClusterId: stored.ClusterID,
-		Id:        stored.ID,
-		Name:      stored.Name,
-		Slug:      stored.Slug,
-		Email:     stored.Email,
+		ClusterId:       stored.ClusterID,
+		ClusterRevision: storedRevision,
+		Id:              stored.ID,
+		Name:            stored.Name,
+		Slug:            stored.Slug,
+		Email:           stored.Email,
 	})
 }
 
@@ -64,6 +79,11 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 	if message := projectConflictMessage(err); message != "" {
 		telemetry.ReportErrorByCode(ctx, http.StatusConflict, "upsert project failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusConflict, message)
+
+		return
+	}
+	if errors.Is(err, management.ErrProjectNotFound) {
+		a.sendAPIStoreError(c, http.StatusNotFound, "Project not found")
 
 		return
 	}
@@ -82,6 +102,8 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 // failure is not one the caller can resolve by changing the request.
 func projectConflictMessage(err error) string {
 	switch {
+	case errors.Is(err, management.ErrPlacementConflict):
+		return "Cluster assignment conflicts with the stored revision"
 	case errors.Is(err, management.ErrProjectSlugTaken):
 		return "Slug is already taken on this control plane"
 	case errors.Is(err, management.ErrProjectRaced):

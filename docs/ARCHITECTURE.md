@@ -411,8 +411,16 @@ retries.
 
 - `PUT /unstable/management/projects/{projectID}` creates or reconciles a project and answers 201
   or 200 to say which. A project is a `public.teams` row created from a caller-supplied UUID, with
-  no tier. An optional cluster ID is stored on the project; omitting it preserves the current
-  assignment. A changed slug renames the project and, in the same transaction, gives each of its
+  no tier. An unversioned write that omits the cluster ID preserves the assignment. The writer
+  may send `cluster_revision` with the target (omit `cluster_id` for local).
+  The API records the applied revision in `projection.project_placements` in the same
+  transaction as `teams.cluster_id`, including on first creation. A detach keeps the revision;
+  a project that has never received a versioned placement has no projection row.
+  Scheduling reads only the team’s cluster ID. The response returns the stored target and revision after cache
+  eviction, even for a metadata-only upsert that preserves a versioned placement. An older revision
+  cannot restore its target, and an equal revision naming a different
+  target returns 409. An unversioned write cannot change a versioned target. A changed slug
+  renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the
   request assigns a cluster whose deletion is recorded, or when a concurrent request created the
@@ -552,7 +560,9 @@ remain refused. The delete runs to the end even if its caller leaves, and deleti
 cluster still releases its templates.
 Assignment rejections carry a stable `error_code` (`cluster_assignment_*`) in the shared error
 response; callers use that code rather than the human-readable message, and treat uncoded or
-unknown reasons as generic errors.
+unknown reasons as generic errors. Assigning a project already on a different cluster returns
+`cluster_assignment_already_assigned`. An unversioned assign from local or detach from its
+matching cluster returns `cluster_assignment_revision_required` if the placement is versioned.
 
 The operator dashboard reads and edits cluster records at the cluster service, not through the
 API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API

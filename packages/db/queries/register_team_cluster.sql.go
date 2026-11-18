@@ -108,24 +108,9 @@ func (q *Queries) DetachDeletedTemplatesFromCluster(ctx context.Context, cluster
 	return err
 }
 
-const detachTeamCluster = `-- name: DetachTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = $1::uuid
-    FOR UPDATE
-),
-detached AS (
-    UPDATE public.teams AS team
-    SET cluster_id = NULL
-    FROM locked_team
-    WHERE team.id = $1::uuid
-      AND locked_team.cluster_id = $2::uuid
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM detached) AS detached
-FROM locked_team
+const detachTeamCluster = `-- name: DetachTeamCluster :exec
+UPDATE public.teams SET cluster_id = NULL
+WHERE id = $1::uuid AND cluster_id = $2::uuid
 `
 
 type DetachTeamClusterParams struct {
@@ -133,16 +118,9 @@ type DetachTeamClusterParams struct {
 	ClusterID uuid.UUID
 }
 
-type DetachTeamClusterRow struct {
-	ClusterID *uuid.UUID
-	Detached  bool
-}
-
-func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterParams) (DetachTeamClusterRow, error) {
-	row := q.db.QueryRow(ctx, detachTeamCluster, arg.TeamID, arg.ClusterID)
-	var i DetachTeamClusterRow
-	err := row.Scan(&i.ClusterID, &i.Detached)
-	return i, err
+func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterParams) error {
+	_, err := q.db.Exec(ctx, detachTeamCluster, arg.TeamID, arg.ClusterID)
+	return err
 }
 
 const getLiveTeamCluster = `-- name: GetLiveTeamCluster :one

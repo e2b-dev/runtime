@@ -17,6 +17,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
+	"github.com/e2b-dev/infra/packages/api/internal/management"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
@@ -28,11 +29,12 @@ import (
 )
 
 const (
-	clusterAssignmentInvalidCode         = "cluster_assignment_invalid"
-	clusterAssignmentProjectNotFoundCode = "cluster_assignment_project_not_found"
-	clusterAssignmentClusterNotFoundCode = "cluster_assignment_cluster_not_found"
-	clusterAssignmentAlreadyAssignedCode = "cluster_assignment_already_assigned"
-	clusterAssignmentClusterDeletingCode = "cluster_assignment_cluster_deleting"
+	clusterAssignmentInvalidCode          = "cluster_assignment_invalid"
+	clusterAssignmentProjectNotFoundCode  = "cluster_assignment_project_not_found"
+	clusterAssignmentClusterNotFoundCode  = "cluster_assignment_cluster_not_found"
+	clusterAssignmentAlreadyAssignedCode  = "cluster_assignment_already_assigned"
+	clusterAssignmentClusterDeletingCode  = "cluster_assignment_cluster_deleting"
+	clusterAssignmentRevisionRequiredCode = "cluster_assignment_revision_required"
 )
 
 var (
@@ -329,6 +331,10 @@ func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID open
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentClusterDeletingCode, ClientMsg: "Cluster is being deleted"})
 
 		return
+	case errors.Is(err, management.ErrPlacementConflict):
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentRevisionRequiredCode, ClientMsg: "Cluster assignment requires a revision"})
+
+		return
 	case err != nil:
 		telemetry.ReportCriticalError(ctx, "assign cluster to project failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to assign cluster to team")
@@ -370,13 +376,16 @@ func (a *APIStore) assignTeamCluster(ctx context.Context, teamID, clusterID uuid
 	if err != nil {
 		return false, err
 	}
-	switch {
-	case current == nil:
+	if current != nil && *current != clusterID {
+		return false, nil
+	}
+	if current == nil {
+		if err := requireUnversionedPlacement(ctx, txDB, teamID); err != nil {
+			return false, err
+		}
 		if err := clusterassign.Check(ctx, a.clusterService, clusterID); err != nil {
 			return false, err
 		}
-	case *current != clusterID:
-		return false, nil
 	}
 
 	result, err := txDB.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{
@@ -413,9 +422,14 @@ func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID open
 	ctx := c.Request.Context()
 	attrs := []attribute.KeyValue{telemetry.WithTeamID(projectID.String()), telemetry.WithClusterID(clusterID)}
 
-	result, err := a.detachTeamCluster(ctx, projectID, clusterID)
+	detached, err := a.detachTeamCluster(ctx, projectID, clusterID)
 	if dberrors.IsNotFoundError(err) {
 		a.sendAPIStoreError(c, http.StatusNotFound, "Team not found")
+
+		return
+	}
+	if errors.Is(err, management.ErrPlacementConflict) {
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentRevisionRequiredCode, ClientMsg: "Cluster assignment requires a revision"})
 
 		return
 	}
@@ -425,7 +439,7 @@ func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID open
 
 		return
 	}
-	if result.ClusterID != nil && !result.Detached {
+	if !detached {
 		a.sendAPIStoreError(c, http.StatusConflict, "Team is assigned to a different cluster")
 
 		return
@@ -441,32 +455,47 @@ func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID open
 	c.Status(http.StatusNoContent)
 }
 
-// detachTeamCluster takes the team off the cluster when it is on it, and
-// reports the cluster it was on.
-func (a *APIStore) detachTeamCluster(ctx context.Context, teamID, clusterID uuid.UUID) (queries.DetachTeamClusterRow, error) {
+// A team already on the local cluster satisfies a repeated detach.
+func (a *APIStore) detachTeamCluster(ctx context.Context, teamID, clusterID uuid.UUID) (bool, error) {
 	txDB, tx, err := a.sqlcDB.WithTx(ctx)
 	if err != nil {
-		return queries.DetachTeamClusterRow{}, fmt.Errorf("begin cluster detachment: %w", err)
+		return false, fmt.Errorf("begin cluster detachment: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	result, err := txDB.DetachTeamCluster(ctx, queries.DetachTeamClusterParams{
-		TeamID:    teamID,
-		ClusterID: clusterID,
-	})
+	current, err := txDB.LockTeamCluster(ctx, teamID)
 	if err != nil {
-		return queries.DetachTeamClusterRow{}, err
+		return false, err
 	}
-	if result.Detached {
-		if err := a.enqueueTeamClusterSync(ctx, tx, teamID); err != nil {
-			return queries.DetachTeamClusterRow{}, err
-		}
+	if current == nil || *current != clusterID {
+		return current == nil, nil
+	}
+	if err := requireUnversionedPlacement(ctx, txDB, teamID); err != nil {
+		return false, err
+	}
+	if err := txDB.DetachTeamCluster(ctx, queries.DetachTeamClusterParams{TeamID: teamID, ClusterID: clusterID}); err != nil {
+		return false, err
+	}
+	if err := a.enqueueTeamClusterSync(ctx, tx, teamID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return queries.DetachTeamClusterRow{}, fmt.Errorf("commit cluster detachment: %w", err)
+		return false, fmt.Errorf("commit cluster detachment: %w", err)
 	}
 
-	return result, nil
+	return true, nil
+}
+
+func requireUnversionedPlacement(ctx context.Context, txDB *sqlcdb.Client, teamID uuid.UUID) error {
+	revision, err := txDB.GetProjectPlacementRevision(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("read project placement revision: %w", err)
+	}
+	if revision > 0 {
+		return management.ErrPlacementConflict
+	}
+
+	return nil
 }
 
 // optionalOf reads an optional proto field as a pointer.

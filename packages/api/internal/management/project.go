@@ -14,6 +14,7 @@ import (
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -26,7 +27,8 @@ var (
 
 	// ErrProjectRaced reports an id inserted between the existence check and
 	// this request's own insert.
-	ErrProjectRaced = errors.New("project was created concurrently")
+	ErrProjectRaced      = errors.New("project was created concurrently")
+	ErrPlacementConflict = errors.New("cluster assignment conflicts with the stored revision")
 )
 
 // JobEnqueuer enqueues a job outside any transaction.
@@ -43,11 +45,12 @@ type JobEnqueuer interface {
 // the new one. The old names stay, because rewriting them would break every
 // reference a user has already scripted.
 type Project struct {
-	ClusterID *uuid.UUID
-	ID        uuid.UUID
-	Name      string
-	Slug      string
-	Email     string
+	ClusterID       *uuid.UUID
+	ClusterRevision int64
+	ID              uuid.UUID
+	Name            string
+	Slug            string
+	Email           string
 }
 
 // UpsertProject creates a project or reconciles an existing one, reporting
@@ -67,18 +70,18 @@ func (s *Service) UpsertProject(ctx context.Context, jobs JobEnqueuer, project P
 		return Project{}, false, err
 	}
 
-	// A reconcile changes the team, so every cached copy of it is stale — its
-	// own entry, each API key's, each member's. A create has nothing cached.
-	// Logged rather than returned: the row is committed, and a retry cannot
-	// improve on a stale cache.
-	if !created {
+	// A placement acknowledgement covers cache eviction, including on replay.
+	if !created || stored.ClusterRevision > 0 {
 		if err := s.cache.InvalidateTeamCache(ctx, project.ID); err != nil {
+			if stored.ClusterRevision > 0 {
+				return Project{}, false, fmt.Errorf("invalidate project placement cache: %w", err)
+			}
 			logger.L().Error(ctx, "invalidating team cache after project reconcile",
 				logger.WithTeamID(project.ID.String()), zap.Error(err))
 		}
 	}
 
-	if stored.ClusterID != nil {
+	if stored.ClusterID != nil || project.ClusterRevision > 0 && s.clusters != nil {
 		if _, err := jobs.Insert(ctx, outbox.SyncTeamClusterAssignment{TeamID: project.ID}, nil); err != nil {
 			return Project{}, false, fmt.Errorf("enqueue team cluster sync: %w", err)
 		}
@@ -107,9 +110,21 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 		}
 	}
 	current, err := txDB.LockManagedTeam(ctx, project.ID)
+	placements := queries.New(tx)
+	var appliedRevision int64
 
 	switch {
 	case err == nil:
+		if current.DeletedAt != nil {
+			return Project{}, false, ErrProjectNotFound
+		}
+		appliedRevision, err = placements.GetProjectPlacementRevision(ctx, project.ID)
+		if err != nil {
+			return Project{}, false, fmt.Errorf("read project placement revision: %w", err)
+		}
+		if err := project.resolvePlacement(current.ClusterID, appliedRevision); err != nil {
+			return Project{}, false, err
+		}
 		if err = s.checkNewAssignment(ctx, project.ClusterID, current.ClusterID); err == nil {
 			stored, err = reconcileProject(ctx, txDB, project, current.Slug)
 		}
@@ -125,12 +140,35 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 	if err != nil {
 		return Project{}, false, err
 	}
+	if project.ClusterRevision > appliedRevision {
+		if err := placements.RecordProjectPlacementRevision(ctx, queries.RecordProjectPlacementRevisionParams{
+			ProjectID: project.ID, Revision: project.ClusterRevision,
+		}); err != nil {
+			return Project{}, false, fmt.Errorf("record project placement revision: %w", err)
+		}
+	}
+	stored.ClusterRevision = project.ClusterRevision
 
 	if err := tx.Commit(ctx); err != nil {
 		return Project{}, false, fmt.Errorf("commit project upsert: %w", err)
 	}
 
 	return stored, created, nil
+}
+
+func (p *Project) resolvePlacement(current *uuid.UUID, appliedRevision int64) error {
+	switch {
+	case p.ClusterRevision == 0 && p.ClusterID == nil,
+		p.ClusterRevision > 0 && p.ClusterRevision < appliedRevision:
+		p.ClusterID, p.ClusterRevision = current, appliedRevision
+	case appliedRevision > 0 && p.ClusterRevision <= appliedRevision:
+		if (p.ClusterID == nil) != (current == nil) || p.ClusterID != nil && *p.ClusterID != *current {
+			return ErrPlacementConflict
+		}
+		p.ClusterRevision = appliedRevision
+	}
+
+	return nil
 }
 
 // checkNewAssignment refuses moving a team to a cluster no team may be newly

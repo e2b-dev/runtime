@@ -3928,6 +3928,7 @@ components:
             idempotency_outcome_unknown, cluster_assignment_invalid,
             cluster_assignment_project_not_found, cluster_assignment_cluster_not_found,
             cluster_assignment_already_assigned, cluster_assignment_cluster_deleting,
+            cluster_assignment_revision_required,
             sandbox_snapshot_guest_agent_unresponsive (a plain resume of a
             snapshot taken while the sandbox guest agent was not responding;
             resume it with memory: false).
@@ -4472,8 +4473,8 @@ components:
       type: object
       description: >-
         The properties of a project this side stores. Name, slug and email are
-        synchronized on every push. The optional cluster assignment is preserved
-        when omitted.
+        synchronized on every push. Without a cluster revision, omitting the
+        cluster preserves its assignment.
 
 
         A project's tier is not among them, and this side assigns none. Limits
@@ -4483,7 +4484,15 @@ components:
         cluster_id:
           type: string
           format: uuid
-          description: Cluster assignment to synchronize. Omission preserves the existing assignment.
+          description: Remote cluster to use. With a revision, omission selects the local cluster.
+        cluster_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Revision of the cluster assignment.
+            Older revisions preserve the current target; the same revision with a different target is a conflict.
+            The response reports the stored revision once the assignment is versioned.
         name:
           type: string
           minLength: 1
@@ -7912,7 +7921,9 @@ paths:
       summary: Assign a cluster to a project.
       description: >-
         Assigns the cluster when the project has no cluster assigned. Replaying the identical
-        assignment succeeds; replacing a different assigned cluster returns a conflict.
+        assignment succeeds; replacing a different assigned cluster returns
+        cluster_assignment_already_assigned. Assigning a project with versioned local
+        placement returns cluster_assignment_revision_required.
         Answers 404 when the project is missing or deleted.
       tags: [admin]
       security:
@@ -7935,7 +7946,9 @@ paths:
     delete:
       operationId: managementDetachProjectCluster
       summary: Detach a cluster assignment from a project.
-      description: Answers 404 when the project is missing or deleted.
+      description: >-
+        Detaching a matching versioned assignment returns cluster_assignment_revision_required.
+        Answers 404 when the project is missing or deleted.
       tags: [admin]
       security:
         - AdminJWTAuth: []
