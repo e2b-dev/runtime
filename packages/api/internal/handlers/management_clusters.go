@@ -66,6 +66,9 @@ func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.Cluster
 	case errors.Is(err, errClusterAssignmentsSettling):
 		telemetry.ReportErrorByCode(ctx, http.StatusServiceUnavailable, "delete cluster failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Cluster assignments are still being cleared, retry the delete")
+	case status.Code(err) == codes.Unavailable:
+		telemetry.ReportError(ctx, "delete cluster temporarily unavailable", err, attrs...)
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusServiceUnavailable, ClientMsg: "Retry the cluster deletion", Retryable: apierrors.CanRetry})
 	case err != nil:
 		telemetry.ReportCriticalError(ctx, "delete cluster failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to delete cluster")
@@ -222,6 +225,9 @@ func (a *APIStore) ManagementRequestClusterDeletion(c *gin.Context, clusterID ap
 	case errors.Is(err, errProtectedClusterDeletion):
 		telemetry.ReportErrorByCode(ctx, http.StatusConflict, "request cluster deletion failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusConflict, "Cluster has deletion protection turned on")
+	case status.Code(err) == codes.Unavailable:
+		telemetry.ReportError(ctx, "record cluster deletion temporarily unavailable", err, attrs...)
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusServiceUnavailable, ClientMsg: "Retry the cluster deletion", Retryable: apierrors.CanRetry})
 	case err != nil:
 		telemetry.ReportCriticalError(ctx, "request cluster deletion failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to record cluster deletion")

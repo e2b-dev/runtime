@@ -542,7 +542,9 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
 request has the cluster service record the deletion, returns a conflict while deletion
-protection is on, and succeeds for an absent cluster and on repeat. From then on deletion
+protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
+temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
+with `Should-Retry: true`. Once deletion is recorded,
 protection stays off, and the API refuses to newly assign a team to the cluster
 (`cluster_assignment_cluster_deleting` from the assignment route, a conflict from the project
 upsert carrying the cluster ID); keeping a team's current cluster is not a new assignment. A new

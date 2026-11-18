@@ -22,6 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
@@ -476,6 +477,28 @@ func TestManagementRequestClusterDeletion(t *testing.T) {
 		store, _ := newClusterServiceStore(t)
 		require.Equal(t, http.StatusBadRequest, callManagementRequestClusterDeletion(t, store, consts.LocalClusterID))
 	})
+}
+
+func TestClusterDeletionIsRetryableWhenTheMarkerCannotBeRecorded(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	clusterID := uuid.New()
+	store, service := newClusterServiceStore(t)
+	store.sqlcDB = db.SqlcClient
+	service.EXPECT().GetCluster(mock.Anything, mock.Anything).Return(clustersgrpc.GetClusterResponse_builder{
+		Cluster: clustersgrpc.Cluster_builder{ClusterId: clusterID.String()}.Build(),
+	}.Build(), nil).Once()
+	service.EXPECT().UpdateCluster(mock.Anything, mock.MatchedBy(isDeletionRequest)).Return(nil, status.Error(codes.Unavailable, "retry later")).Twice()
+
+	path := "/unstable/management/clusters/" + clusterID.String()
+	for _, res := range []*httptest.ResponseRecorder{
+		callManagement(t, store, http.MethodPut, path+"/deletion", ""),
+		callManagementDeleteCluster(t, store, clusterID),
+	} {
+		require.Equal(t, http.StatusServiceUnavailable, res.Code, res.Body.String())
+		require.Equal(t, "true", res.Header().Get(apierrors.ShouldRetryHeader))
+	}
 }
 
 func TestManagementListClusterProjectsListsLiveAssignments(t *testing.T) {
