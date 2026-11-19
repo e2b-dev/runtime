@@ -81,7 +81,7 @@ type policy struct {
 }
 
 func (c ServerConfig) policy(ctx context.Context) policy {
-	mode, source := ModeOff, SourceFallback
+	mode, source := ModeOff, SourceStatic
 	if c.Mode != nil {
 		mode, source = modeWithSource(ctx, c.Mode)
 	}
@@ -370,7 +370,7 @@ func (c ClientConfig) metrics() *Metrics {
 
 func (c ClientConfig) clientMode(ctx context.Context) (ClientMode, string) {
 	if c.Mode == nil {
-		return ClientOff, SourceFallback
+		return ClientOff, SourceStatic
 	}
 
 	return clientModeWithSource(ctx, c.Mode)

@@ -218,7 +218,7 @@ func TestProcessHopReportsWhereItsModeCameFrom(t *testing.T) {
 		{name: "malformed after a refusal at start", withReader: true, served: []string{"on", "bogus"}, wantMode: ClientOff, wantSource: SourceFallback},
 		{name: "malformed after a refusal that followed an accepted off", withReader: true, served: []string{"off", "on", "bogus"}, wantMode: ClientOff, wantSource: SourceFlag},
 		{name: "on with names is accepted", withReader: true, served: []string{"on"}, expect: []string{serverID}, wantMode: ClientOn, wantSource: SourceFlag},
-		{name: "no flag reader keeps the fallback", served: []string{"on"}, expect: []string{serverID}, wantMode: ClientOff, wantSource: SourceFallback},
+		{name: "no flag reader makes the hop static", served: []string{"on"}, expect: []string{serverID}, wantMode: ClientOff, wantSource: SourceStatic},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,7 +304,7 @@ func TestProcessRecordsTheListenerModeBeforeAnyTraffic(t *testing.T) {
 
 	_ = NewServerCredentials(cfg)
 
-	assert.Equal(t, int64(1), mustPoint(t, reader, MetricMode, attribute.String(AttrListener, "public_grpc"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceFallback)))
+	assert.Equal(t, int64(1), mustPoint(t, reader, MetricMode, attribute.String(AttrListener, "public_grpc"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceStatic)))
 }
 
 // Under required a plaintext request reaches only the health path, and a
