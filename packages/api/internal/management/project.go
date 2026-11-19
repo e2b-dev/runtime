@@ -14,7 +14,6 @@ import (
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
@@ -43,12 +42,11 @@ type JobEnqueuer interface {
 // the new one. The old names stay, because rewriting them would break every
 // reference a user has already scripted.
 type Project struct {
-	ClusterID       *uuid.UUID
-	ClusterRevision int64
-	ID              uuid.UUID
-	Name            string
-	Slug            string
-	Email           string
+	ClusterID *uuid.UUID
+	ID        uuid.UUID
+	Name      string
+	Slug      string
+	Email     string
 }
 
 // UpsertProject creates a project or reconciles an existing one, reporting
@@ -73,7 +71,7 @@ func (s *Service) UpsertProject(ctx context.Context, jobs JobEnqueuer, project P
 		return Project{}, false, fmt.Errorf("invalidate project placement cache: %w", err)
 	}
 
-	if stored.ClusterID != nil || project.ClusterRevision > 0 && s.clusters != nil {
+	if stored.ClusterID != nil {
 		if _, err := jobs.Insert(ctx, outbox.SyncTeamClusterAssignment{TeamID: project.ID}, nil); err != nil {
 			return Project{}, false, fmt.Errorf("enqueue team cluster sync: %w", err)
 		}
@@ -102,20 +100,13 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 		}
 	}
 	current, err := txDB.LockManagedTeam(ctx, project.ID)
-	placements := queries.New(tx)
-	var appliedRevision int64
-
 	switch {
 	case err == nil:
 		if current.DeletedAt != nil {
 			return Project{}, false, ErrProjectNotFound
 		}
-		if !project.matchesCluster(current.ClusterID) {
+		if project.ClusterID != nil && (current.ClusterID == nil || *project.ClusterID != *current.ClusterID) {
 			return Project{}, false, ErrProjectClusterFixed
-		}
-		appliedRevision, err = placements.GetProjectPlacementRevision(ctx, project.ID)
-		if err != nil {
-			return Project{}, false, fmt.Errorf("read project placement revision: %w", err)
 		}
 		stored, err = reconcileProject(ctx, txDB, project, current.Slug)
 	case dberrors.IsNotFoundError(err):
@@ -133,29 +124,11 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 	if err != nil {
 		return Project{}, false, err
 	}
-	if project.ClusterRevision > appliedRevision {
-		if err := placements.RecordProjectPlacementRevision(ctx, queries.RecordProjectPlacementRevisionParams{
-			ProjectID: project.ID, Revision: project.ClusterRevision,
-		}); err != nil {
-			return Project{}, false, fmt.Errorf("record project placement revision: %w", err)
-		}
-	}
-	stored.ClusterRevision = max(appliedRevision, project.ClusterRevision)
-
 	if err := tx.Commit(ctx); err != nil {
 		return Project{}, false, fmt.Errorf("commit project upsert: %w", err)
 	}
 
 	return stored, created, nil
-}
-
-func (p Project) matchesCluster(stored *uuid.UUID) bool {
-	if p.ClusterID == nil {
-		// Without a revision an omitted cluster is a metadata-only update.
-		return p.ClusterRevision == 0 || stored == nil
-	}
-
-	return stored != nil && *p.ClusterID == *stored
 }
 
 func createProject(ctx context.Context, txDB *authqueries.Queries, project Project) (Project, error) {

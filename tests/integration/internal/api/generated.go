@@ -1450,11 +1450,8 @@ type ManagementDecidedAt = time.Time
 
 // ManagementProject defines model for ManagementProject.
 type ManagementProject struct {
-	// ClusterId Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
+	// ClusterId Remote cluster fixed at creation. Omit to create a local project or to preserve an existing project's cluster. A different cluster returns 409. The response reports the stored cluster; local projects omit it.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
-
-	// ClusterRevision With a revision, an omitted cluster_id means local. A different target returns 409 regardless of revision. For the original target the response reports the highest accepted revision.
-	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
 	Email string             `json:"email"`
@@ -1574,11 +1571,8 @@ type ManagementProjectSettingsRequest struct {
 //
 // A project's tier is not among them, and this side assigns none. Limits arrive separately and in full through managementUpsertProjectLimits.
 type ManagementProjectUpsertRequest struct {
-	// ClusterId Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
+	// ClusterId Remote cluster fixed at creation. Omit to create a local project or to preserve an existing project's cluster. A different cluster returns 409. The response reports the stored cluster; local projects omit it.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
-
-	// ClusterRevision With a revision, an omitted cluster_id means local. A different target returns 409 regardless of revision. For the original target the response reports the highest accepted revision.
-	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
 	Email string `json:"email"`

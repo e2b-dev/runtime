@@ -31,22 +31,12 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 
 		return
 	}
-	var revision int64
-	if body.ClusterRevision != nil {
-		revision = *body.ClusterRevision
-		if revision <= 0 || body.ClusterId != nil && *body.ClusterId == uuid.Nil {
-			a.sendAPIStoreError(c, http.StatusBadRequest, "Invalid project placement")
-
-			return
-		}
-	}
 	stored, created, err := a.managementService.UpsertProject(ctx, a.riverClient, management.Project{
-		ClusterID:       body.ClusterId,
-		ClusterRevision: revision,
-		ID:              projectID,
-		Name:            body.Name,
-		Slug:            body.Slug,
-		Email:           body.Email,
+		ClusterID: body.ClusterId,
+		ID:        projectID,
+		Name:      body.Name,
+		Slug:      body.Slug,
+		Email:     body.Email,
 	})
 	if err != nil {
 		a.sendProjectUpsertError(c, err, attrs...)
@@ -54,17 +44,12 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 		return
 	}
 
-	var storedRevision *int64
-	if stored.ClusterRevision > 0 {
-		storedRevision = &stored.ClusterRevision
-	}
 	c.JSON(upsertStatus(created), api.ManagementProject{
-		ClusterId:       stored.ClusterID,
-		ClusterRevision: storedRevision,
-		Id:              stored.ID,
-		Name:            stored.Name,
-		Slug:            stored.Slug,
-		Email:           stored.Email,
+		ClusterId: stored.ClusterID,
+		Id:        stored.ID,
+		Name:      stored.Name,
+		Slug:      stored.Slug,
+		Email:     stored.Email,
 	})
 }
 

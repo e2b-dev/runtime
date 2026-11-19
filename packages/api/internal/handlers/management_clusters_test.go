@@ -34,13 +34,13 @@ func TestProjectReplacementAfterClusterRegistrationRemoval(t *testing.T) {
 	original, other := createCluster(t, db), createCluster(t, db)
 	project := newProjectFixture()
 	request := project.request()
-	request.ClusterId, request.ClusterRevision = &original, new(int64(1))
+	request.ClusterId = &original
 	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, request).Code)
 
 	removed := callManagement(t, store, http.MethodDelete, "/unstable/management/clusters/"+original.String()+"/registration", "")
 	require.Equal(t, http.StatusNoContent, removed.Code, removed.Body.String())
 	require.False(t, clusterExists(t, db, original))
-	request.ClusterId, request.ClusterRevision = &other, new(int64(2))
+	request.ClusterId = &other
 	require.Equal(t, http.StatusConflict, callUpsertProject(t, store, project.id, request).Code)
 	require.Equal(t, &original, teamCluster(t, db, project.id))
 

@@ -351,7 +351,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   follow the teardown's. `sync_team_cluster_assignment` copies a team's cluster to the
   cluster service, which records it as a project assignment. Every write of a team's cluster
   enqueues it: a project deletion in its transaction when a cluster service is configured, and a
-  project upsert that leaves the project on a cluster or carries a cluster revision after its
+  project upsert that leaves the project on a remote cluster after its
   commit, because that row is written through the auth pool. A
   failed enqueue there fails the upsert, so the caller's retry enqueues it. The job reads the
   team when it runs, under a per-team advisory lock it holds until the cluster service has
@@ -412,13 +412,9 @@ retries.
 - `PUT /unstable/management/projects/{projectID}` creates or reconciles a project and answers 201
   or 200 to say which. A project is a `public.teams` row created from a caller-supplied UUID, with
   no tier. Creation fixes the project's cluster: omit `cluster_id` for local or supply its remote
-  cluster ID. An update may omit both cluster fields to change metadata, or repeat the original
-  target. A different target returns 409 without changing the project, regardless of revision.
-  With `cluster_revision` present, omitting `cluster_id` explicitly requests local.
-  The API records the highest accepted revision for that target in `projection.project_placements`
-  and returns it when present. Every successful upsert includes cache eviction, even on creation
-  or replay without a revision. Scheduling reads only
-  `teams.cluster_id`. A changed slug
+  cluster ID. An update may omit `cluster_id` to preserve the original home. Naming a different
+  cluster returns 409 without changing the project. Every success returns the stored project ID
+  and home after cache eviction, including on replay. Scheduling reads `teams.cluster_id`. A changed slug
   renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the

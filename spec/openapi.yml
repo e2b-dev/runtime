@@ -4505,15 +4505,10 @@ components:
         cluster_id:
           type: string
           format: uuid
-          description: Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
-        cluster_revision:
-          type: integer
-          format: int64
-          minimum: 1
           description: >-
-            With a revision, an omitted cluster_id means local. A different target returns 409
-            regardless of revision. For the original target the response reports the highest
-            accepted revision.
+            Remote cluster fixed at creation. Omit to create a local project or to preserve an
+            existing project's cluster. A different cluster returns 409. The response reports
+            the stored cluster; local projects omit it.
         name:
           type: string
           minLength: 1
