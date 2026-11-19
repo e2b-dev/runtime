@@ -92,3 +92,31 @@ func validateCPU(limits *types.TeamLimits, cpu int64, field string) *api.APIErro
 		Code:      http.StatusBadRequest,
 	}
 }
+
+// LimitMaxMemory validates a requested memory maximum against the template's
+// boot RAM and the team's allowance. Memory above boot RAM is added in
+// MemoryHotplugSlotMiB slots.
+func LimitMaxMemory(limits *types.TeamLimits, ramMB int64, maxMemoryMB int32) (int64, *api.APIError) {
+	maxMB := int64(maxMemoryMB)
+	region := maxMB - ramMB
+
+	var message string
+	switch {
+	case region < 0:
+		message = fmt.Sprintf("Max memory must be at least the memory (%d MiB)", ramMB)
+	case region%constants.MemoryHotplugSlotMiB != 0:
+		message = fmt.Sprintf("Max memory minus memory (%d MiB) must be a multiple of %d MiB", region, constants.MemoryHotplugSlotMiB)
+	case region > constants.MaxMemoryHotplugMiB:
+		message = fmt.Sprintf("Max memory can be at most %d MiB above the memory", constants.MaxMemoryHotplugMiB)
+	case maxMB > limits.MaxRamMb:
+		message = fmt.Sprintf("Max memory can't be higher than %d MiB (if you need to increase this limit, please contact support)", limits.MaxRamMb)
+	default:
+		return maxMB, nil
+	}
+
+	return 0, &api.APIError{
+		Err:       errors.New(message),
+		ClientMsg: message,
+		Code:      http.StatusBadRequest,
+	}
+}

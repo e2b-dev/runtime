@@ -295,6 +295,7 @@ func (a *APIStore) startTemplateBuildV2(c *gin.Context, templateID api.TemplateI
 		build.FreeDiskSizeMb, // Customer's free-space target after customer steps run.
 		build.RamMb,
 		build.MaxVcpu,
+		build.MaxRamMb,
 		body.ReadyCmd,
 		body.FromImage,
 		body.FromTemplate,
@@ -325,14 +326,10 @@ func (a *APIStore) startTemplateBuildV2(c *gin.Context, templateID api.TemplateI
 }
 
 // builderMinVersion is the oldest builder allowed to run the build. A builder
-// older than the gate drops maxVCpuCount and builds a fixed-size template, so a
-// resizable build must only go to one that honours it.
+// older than the gate drops maxVCpuCount or maxMemoryMB and builds a fixed-size
+// template, so a resizable build must only go to one that honours them.
 func builderMinVersion(build queries.EnvBuild) *semver.Version {
-	if build.MaxVcpu != nil {
-		return apiclusters.ResizableTemplateBuildsMinVersion
-	}
-
-	return nil
+	return apiclusters.TemplateBuilderMinVersion(build.MaxVcpu, build.MaxRamMb)
 }
 
 // userAgentToTemplateVersion returns the template semver version based on the user agent string.

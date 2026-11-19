@@ -47,7 +47,7 @@ page AS (
   LIMIT sqlc.arg(build_limit)
 )
 SELECT eb.id, eb.created_at, eb.updated_at, eb.finished_at, eb.status_group,
-       eb.vcpu, eb.max_vcpu, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version,
+       eb.vcpu, eb.max_vcpu, eb.max_ram_mb, eb.start_memory_mb, eb.ram_mb, eb.total_disk_size_mb, eb.envd_version,
        COALESCE(p.tags, '{}')::text[] AS tags
 FROM page p
 JOIN public.env_builds eb ON eb.id = p.id

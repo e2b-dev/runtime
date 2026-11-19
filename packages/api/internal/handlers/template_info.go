@@ -129,7 +129,8 @@ func templateInfoToAPI(ctx context.Context, row queries.GetTeamTemplateInfoRow) 
 			FinishedAt:  row.DefaultBuildFinishedAt,
 			CpuCount:    api.CPUCount(sharedUtils.DerefOrDefault(row.DefaultBuildVcpu, 0)),
 			MaxCpuCount: sharedUtils.CastPtr(row.DefaultBuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
-			MemoryMB:    api.MemoryMB(sharedUtils.DerefOrDefault(row.DefaultBuildRamMb, 0)),
+			MaxMemoryMB: sharedUtils.CastPtr(row.DefaultBuildMaxRamMb, func(v int64) api.MemoryMB { return api.MemoryMB(v) }),
+			MemoryMB:    templateMemoryMB(sharedUtils.DerefOrDefault(row.DefaultBuildRamMb, 0), row.DefaultBuildMaxRamMb, row.DefaultBuildStartMemoryMb),
 			DiskSizeMB:  sharedUtils.CastPtr(row.DefaultBuildTotalDiskSizeMb, func(v int64) api.DiskSizeMB { return api.DiskSizeMB(v) }),
 			EnvdVersion: row.DefaultBuildEnvdVersion,
 		}

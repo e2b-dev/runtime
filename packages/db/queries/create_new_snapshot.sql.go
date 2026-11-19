@@ -93,6 +93,7 @@ new_build as (
         cpu_model_name,
         cpu_flags,
         max_vcpu,
+        max_ram_mb,
         filesystem_only
     )
     VALUES (
@@ -114,6 +115,7 @@ new_build as (
         (SELECT eb.cpu_model_name FROM "public"."env_builds" eb WHERE eb.id = $21),
         (SELECT eb.cpu_flags FROM "public"."env_builds" eb WHERE eb.id = $21),
         (SELECT eb.max_vcpu FROM "public"."env_builds" eb WHERE eb.id = $21),
+        (SELECT eb.max_ram_mb FROM "public"."env_builds" eb WHERE eb.id = $21),
         $22
     )
     RETURNING id as build_id

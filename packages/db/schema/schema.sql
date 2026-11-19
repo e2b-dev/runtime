@@ -199,7 +199,9 @@ CREATE TABLE public.env_builds (
     team_id uuid,
     filesystem_only boolean NOT NULL DEFAULT false,
     envd_unresponsive boolean,
-    max_vcpu bigint
+    max_vcpu bigint,
+    max_ram_mb bigint,
+    start_memory_mb bigint
 ) WITH (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.01);
 
 ALTER TABLE public.env_builds ALTER COLUMN status SET STATISTICS 2000;

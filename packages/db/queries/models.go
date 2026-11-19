@@ -63,6 +63,8 @@ type EnvBuild struct {
 	FilesystemOnly     bool
 	EnvdUnresponsive   *bool
 	MaxVcpu            *int64
+	MaxRamMb           *int64
+	StartMemoryMb      *int64
 }
 
 type EnvDefault struct {

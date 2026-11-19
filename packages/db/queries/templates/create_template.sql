@@ -49,7 +49,9 @@ INSERT INTO "public"."env_builds" (
     ready_cmd,
     dockerfile,
     version,
-    max_vcpu
+    max_vcpu,
+    max_ram_mb,
+    start_memory_mb
 ) VALUES (
     @build_id,
     sqlc.arg(template_id)::text,
@@ -65,5 +67,7 @@ INSERT INTO "public"."env_builds" (
     @ready_cmd,
     @dockerfile,
     @version,
-    @max_vcpu
+    @max_vcpu,
+    @max_ram_mb,
+    sqlc.narg(start_memory_mb)
 );

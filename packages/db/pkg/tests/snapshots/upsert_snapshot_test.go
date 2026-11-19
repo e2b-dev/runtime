@@ -365,3 +365,72 @@ func TestUpsertSnapshot_CopiesMaxVcpuFromSourceBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestUpsertSnapshot_CopiesMaxRamMbFromSourceBuild(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		sourceMax *int64
+	}{
+		{name: "source with max_ram_mb", sourceMax: new(int64(6144))},
+		{name: "source without max_ram_mb", sourceMax: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := testutils.SetupDatabase(t)
+			ctx := t.Context()
+
+			teamID := testutils.CreateTestTeam(t, client)
+			baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
+			sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
+
+			err := client.SqlcClient.TestsRawSQL(ctx,
+				"UPDATE public.env_builds SET max_ram_mb = $1 WHERE id = $2", tt.sourceMax, sourceBuildID)
+			require.NoError(t, err)
+
+			totalDiskSize := int64(1024)
+			params := queries.UpsertSnapshotParams{
+				TemplateID:         "test-template-" + uuid.New().String(),
+				TeamID:             teamID,
+				SandboxID:          "sandbox-" + uuid.New().String(),
+				BaseTemplateID:     baseTemplateID,
+				StartedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				Vcpu:               2,
+				RamMb:              2048,
+				TotalDiskSizeMb:    &totalDiskSize,
+				Metadata:           types.JSONBStringMap{},
+				KernelVersion:      "6.1.0",
+				FirecrackerVersion: "1.4.0",
+				Config:             &types.PausedSandboxConfig{Version: types.PausedSandboxConfigVersion},
+				OriginNodeID:       "node-1",
+				SourceBuildID:      sourceBuildID,
+				StatusGroup:        "in_progress",
+			}
+
+			for range 2 {
+				result, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+				require.NoError(t, err)
+
+				var got *int64
+				var bootRAM int64
+				err = client.SqlcClient.TestsRawSQLQuery(ctx,
+					"SELECT max_ram_mb, ram_mb FROM public.env_builds WHERE id = $1",
+					func(rows pgx.Rows) error {
+						require.True(t, rows.Next())
+
+						return rows.Scan(&got, &bootRAM)
+					},
+					result.BuildID,
+				)
+				require.NoError(t, err)
+				assert.Equal(t, tt.sourceMax, got)
+				assert.Equal(t, params.RamMb, bootRAM)
+				params.SourceBuildID = result.BuildID
+			}
+		})
+	}
+}

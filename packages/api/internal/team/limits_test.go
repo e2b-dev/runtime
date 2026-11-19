@@ -209,3 +209,48 @@ func TestLimitMaxCPU(t *testing.T) {
 		})
 	}
 }
+
+func TestLimitMaxMemory(t *testing.T) {
+	t.Parallel()
+
+	limits := &types.TeamLimits{MaxVcpu: 8, MaxRamMb: 8192}
+	tests := []struct {
+		name  string
+		ramMB int64
+		max   int32
+		want  int64
+		msg   string
+	}{
+		{name: "equal to memory", ramMB: 1024, max: 1024, want: 1024},
+		{name: "one block above", ramMB: 1024, max: 1152, want: 1152},
+		{name: "team cap", ramMB: 2048, max: 8192, want: 8192},
+		{name: "below memory", ramMB: 2048, max: 1024, msg: "Max memory must be at least the memory (2048 MiB)"},
+		{name: "not whole blocks", ramMB: 1024, max: 1100, msg: "Max memory minus memory (76 MiB) must be a multiple of 128 MiB"},
+		{name: "above team limit", ramMB: 1024, max: 9216, msg: "Max memory can't be higher than 8192 MiB (if you need to increase this limit, please contact support)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, apiErr := LimitMaxMemory(limits, tt.ramMB, tt.max)
+			if tt.msg == "" {
+				require.Nil(t, apiErr)
+				assert.Equal(t, tt.want, got)
+
+				return
+			}
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+			assert.Equal(t, tt.msg, apiErr.ClientMsg)
+			assert.Error(t, apiErr.Err)
+		})
+	}
+
+	t.Run("region above the hotplug maximum", func(t *testing.T) {
+		t.Parallel()
+
+		_, apiErr := LimitMaxMemory(&types.TeamLimits{MaxRamMb: 1 << 30}, 1024, int32(1024+128*1024+128))
+		require.NotNil(t, apiErr)
+		assert.Equal(t, "Max memory can be at most 131072 MiB above the memory", apiErr.ClientMsg)
+	})
+}

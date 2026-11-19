@@ -277,3 +277,81 @@ func TestRequestTemplateBuildMaxCPUInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestTemplateBuildMaxMemory(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+	db := setup.GetTestDBClient(t)
+
+	for _, test := range []struct {
+		name string
+		max  api.MemoryMB
+		want *int64
+	}{
+		{name: "above-memory", max: 3072, want: new(int64(3072))},
+		{name: "equal-memory", max: 1024, want: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
+				Name:        new("test-request-build-max-memory-" + test.name + "-" + uuid.NewString()),
+				CpuCount:    new(api.CPUCount(2)),
+				MemoryMB:    new(api.MemoryMB(1024)),
+				MaxMemoryMB: new(test.max),
+			}, setup.WithAPIKey())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusAccepted, resp.StatusCode(), string(resp.Body))
+			require.NotNil(t, resp.JSON202)
+			t.Cleanup(func() {
+				deleted, err := c.DeleteTemplatesTemplateIDWithResponse(context.WithoutCancel(t.Context()), resp.JSON202.TemplateID, setup.WithAPIKey())
+				require.NoError(t, err)
+				require.Equal(t, http.StatusNoContent, deleted.StatusCode())
+			})
+
+			var got, startMB *int64
+			var bootRAM int64
+			err = db.Db.TestsRawSQLQuery(t.Context(), `SELECT max_ram_mb, ram_mb, start_memory_mb FROM public.env_builds WHERE id = $1`, func(rows pgx.Rows) error {
+				require.True(t, rows.Next())
+
+				return rows.Scan(&got, &bootRAM, &startMB)
+			}, resp.JSON202.BuildID)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, int64(1024), bootRAM)
+			if test.want != nil {
+				assert.Equal(t, new(int64(1024)), startMB, "a build with a maximum starts at boot RAM")
+			} else {
+				assert.Nil(t, startMB, "a build without a maximum records no start size")
+			}
+		})
+	}
+}
+
+func TestRequestTemplateBuildMaxMemoryInvalid(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+
+	for _, test := range []struct {
+		name string
+		max  api.MemoryMB
+		want string
+	}{
+		{name: "below-memory", max: 512, want: "Max memory must be at least the memory (1024 MiB)"},
+		{name: "partial-block", max: 1100, want: "Max memory minus memory (76 MiB) must be a multiple of 128 MiB"},
+		{name: "above-ratio", max: 4224, want: "Max memory can be at most 4096 MiB for a memory of 1024 MiB"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resp, err := c.PostV3TemplatesWithResponse(t.Context(), nil, api.TemplateBuildRequestV3{
+				Name:        new("test-request-build-max-memory-" + test.name + "-" + uuid.NewString()),
+				CpuCount:    new(api.CPUCount(2)),
+				MemoryMB:    new(api.MemoryMB(1024)),
+				MaxMemoryMB: new(test.max),
+			}, setup.WithAPIKey())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode(), string(resp.Body))
+			require.NotNil(t, resp.JSON400)
+			assert.Equal(t, test.want, resp.JSON400.Message)
+		})
+	}
+}

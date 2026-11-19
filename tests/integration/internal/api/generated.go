@@ -2621,7 +2621,10 @@ type Template struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this template starts with: the build's memory, or for a snapshot template of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Names Names of the template (namespace/alias format when namespaced)
@@ -2672,7 +2675,10 @@ type TemplateBuild struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this build starts with: the build's memory, or for a snapshot of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Status Status of the template build
@@ -2731,6 +2737,9 @@ type TemplateBuildRequestV3 struct {
 
 	// MaxCpuCount Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
+
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB. memoryMB is what they boot with; the rest is added when a sandbox asks for it. Must be at least memoryMB, and the difference a multiple of 128 MiB.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
@@ -2797,7 +2806,10 @@ type TemplateBuildWithTags struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this build starts with: the build's memory, or for a snapshot of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Status Status of the template build
@@ -3021,7 +3033,10 @@ type TemplateWithBuilds struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this template starts with: the build's memory, or for a snapshot template of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Names Names of the template (namespace/alias format when namespaced)
