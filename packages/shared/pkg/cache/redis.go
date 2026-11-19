@@ -157,6 +157,32 @@ func (rc *RedisCache[V]) GetOrSet(ctx context.Context, key string, dataCallback 
 	return res.value, res.err
 }
 
+// GetOrSetFresh is GetOrSet for a cache whose entries can be stale in a way
+// only the reader can tell, such as an entry an older writer wrote without the
+// fields this one reads. A stale hit is replaced through the locked paths: the
+// entry is deleted (ordered after any write in flight) and refilled by
+// GetOrSet, whose backfill holds the lock a concurrent Delete waits on, so an
+// invalidation that lands during the refill still wins. If another writer has
+// put a stale entry back by then, the fresh value is returned without being
+// written.
+func (rc *RedisCache[V]) GetOrSetFresh(ctx context.Context, key string, dataCallback DataCallback[V], stale func(V) bool) (V, error) {
+	value, err := rc.GetOrSet(ctx, key, dataCallback)
+	if err != nil || !stale(value) {
+		return value, err
+	}
+
+	rc.Delete(ctx, key)
+	value, err = rc.GetOrSet(ctx, key, dataCallback)
+	if err != nil || !stale(value) {
+		return value, err
+	}
+
+	callbackCtx, cancel := context.WithTimeout(ctx, rc.config.RefreshTimeout)
+	defer cancel()
+
+	return dataCallback(callbackCtx, key)
+}
+
 // Set stores a value in Redis.
 func (rc *RedisCache[V]) Set(ctx context.Context, key string, value V) {
 	rc.setInRedis(ctx, key, value)

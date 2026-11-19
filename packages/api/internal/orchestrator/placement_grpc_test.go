@@ -27,6 +27,7 @@ import (
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusters"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -451,6 +452,36 @@ func TestPlacementTargetLabels(t *testing.T) {
 	for sbx, want := range map[*sandbox.Sandbox]codes.Code{&banned: codes.FailedPrecondition, &missing: codes.FailedPrecondition, &unread: codes.Unavailable} {
 		require.Equal(t, want, status.Code(move(*sbx, shared)), sbx.TeamID)
 	}
+}
+
+// A move goes only to an orchestrator that has every version-gated capability
+// the sandbox's start needed, as placement would have required of it.
+func TestPlacementTargetFeatureFloor(t *testing.T) {
+	t.Parallel()
+	h, service := localPlacementHarness(t)
+	old := h.node("node-old", api.NodeStatusReady, nodemanager.WithOrchestratorVersion("0.30.202611091000"), nodemanager.WithServiceInstanceID(uuid.NewString()))
+	current := h.node("node-new", api.NodeStatusReady, nodemanager.WithOrchestratorVersion(clusters.SandboxMemoryResizeMinVersion.String()), nodemanager.WithServiceInstanceID(uuid.NewString()))
+	cpuOld := h.node("node-cpu-old", api.NodeStatusReady, nodemanager.WithOrchestratorVersion("0.16.202610010000"), nodemanager.WithServiceInstanceID(uuid.NewString()))
+	memory := h.runningWith(t, func(sbx *sandbox.Sandbox) { sbx.RequiredFeatures = []string{"memory-resize"} })
+	resizable := h.runningWith(t, func(sbx *sandbox.Sandbox) { sbx.RequiredFeatures = []string{"resizable-vcpu"} })
+	plain := h.running(t)
+	client := placementClient(t, service, mtls.Peer{ID: placementCaller, ChainVerified: true}, nil)
+	move := func(sbx sandbox.Sandbox, target *nodemanager.Node) error {
+		_, err := client.GetSandboxPlacement(t.Context(), placementpb.GetSandboxPlacementRequest_builder{TeamId: sbx.TeamID.String(), SandboxId: sbx.SandboxID, ExpectedExecutionId: sbx.ExecutionID, ExpectedSourceNodeId: sbx.NodeID, TargetNodeId: target.ID}.Build())
+
+		return err
+	}
+
+	err := move(memory, old)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
+	assert.Contains(t, status.Convert(err).Message(), "predates a capability")
+	require.NoError(t, move(memory, current), "a target at the floor is kept")
+
+	err = move(resizable, cpuOld)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
+	require.NoError(t, move(resizable, old), "the CPU floor is older than the memory one")
+
+	require.NoError(t, move(plain, cpuOld), "a sandbox that needed no gated capability moves anywhere")
 }
 
 // Every refusal names its reason: the caller shows it to the operator.

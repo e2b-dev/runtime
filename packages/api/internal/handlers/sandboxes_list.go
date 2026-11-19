@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -603,7 +604,7 @@ func snapshotsToPaginatedSandboxes(ctx context.Context, snapshots []queries.GetS
 				SandboxID:               snapshot.SandboxID,
 				StartedAt:               snapshot.SandboxStartedAt.Time,
 				CpuCount:                int32(record.BuildVcpu),
-				MemoryMB:                int32(record.BuildRamMb),
+				MemoryMB:                pausedSandboxMemoryMB(record.BuildRamMb, record.BuildMaxRamMb, record.BuildStartMemoryMb),
 				DiskSizeMB:              diskSize,
 				EndAt:                   record.BuildCreatedAt,
 				State:                   api.Paused,
@@ -667,7 +668,7 @@ func instanceInfoToPaginatedSandboxes(runningSandboxes []sandbox.Sandbox) []util
 				SandboxID:    info.SandboxID,
 				StartedAt:    info.StartTime,
 				CpuCount:     api.CPUCount(info.VCpu),
-				MemoryMB:     api.MemoryMB(info.RamMB),
+				MemoryMB:     api.MemoryMB(info.TotalMemoryMB()),
 				DiskSizeMB:   api.DiskSizeMB(info.TotalDiskSizeMB),
 				EndAt:        info.EndTime,
 				State:        state,
@@ -796,4 +797,12 @@ func (a *APIStore) getSnapshots(ctx context.Context, order utils.SortDirection, 
 			return queries.GetSnapshotsWithCursorRow(row)
 		}), nil
 	}
+}
+
+// pausedSandboxMemoryMB is the memory a paused sandbox resumes with when it
+// names no size, as the resume decides it.
+func pausedSandboxMemoryMB(ramMB int64, maxRAMMB, startMemoryMB *int64) int32 {
+	memoryMB, _ := orchestrator.BuildStartMemoryMB(ramMB, maxRAMMB, startMemoryMB)
+
+	return int32(memoryMB)
 }

@@ -22,6 +22,11 @@ const (
 	// v2 carries the build's envd_unresponsive mark; a replica without it
 	// must not refill an entry a replica with it reads.
 	snapshotCacheKeyPrefix = "snapshot:last:v2"
+
+	// SnapshotInfoFormat marks an entry written with the build's max_ram_mb and
+	// start_memory_mb. The key stays shared with older replicas so their
+	// invalidations still reach it; an entry without the mark is refetched.
+	SnapshotInfoFormat = 1
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/cache/snapshots")
@@ -33,9 +38,10 @@ type SnapshotInfo struct {
 	Snapshot queries.Snapshot `json:"snapshot"`
 	EnvBuild queries.EnvBuild `json:"env_build"`
 	NotFound bool             `json:"not_found,omitempty"`
+	Format   int              `json:"format,omitempty"`
 }
 
-var errNotFoundSentinel = &SnapshotInfo{NotFound: true}
+var errNotFoundSentinel = &SnapshotInfo{NotFound: true, Format: SnapshotInfoFormat}
 
 var ErrSnapshotNotFound = errors.New("snapshot not found")
 
@@ -63,7 +69,11 @@ func (c *SnapshotCache) Get(ctx context.Context, sandboxID string) (*SnapshotInf
 	ctx, span := tracer.Start(ctx, "get last snapshot")
 	defer span.End()
 
-	info, err := c.cache.GetOrSet(ctx, sandboxID, c.fetchFromDB)
+	// An entry below the current format was written by an older replica,
+	// without the fields this one reads, and is refilled under the cache lock.
+	info, err := c.cache.GetOrSetFresh(ctx, sandboxID, c.fetchFromDB, func(info *SnapshotInfo) bool {
+		return info.Format < SnapshotInfoFormat
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +103,7 @@ func (c *SnapshotCache) fetchFromDB(ctx context.Context, sandboxID string) (*Sna
 		Names:    row.Names,
 		Snapshot: row.Snapshot,
 		EnvBuild: row.EnvBuild,
+		Format:   SnapshotInfoFormat,
 	}, nil
 }
 

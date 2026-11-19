@@ -75,6 +75,13 @@ var ResizableTemplateBuildsMinVersion = semver.New(0, 16, 202610191109, "", "")
 // field and builds a template whose memory cannot grow.
 var TemplateMemoryMaximumMinVersion = semver.New(0, 30, 202611091759, "", "")
 
+// SandboxMemoryResizeMinVersion is the first orchestrator release that both
+// plugs SandboxConfig.memory_mb at start and reserves only boot RAM plus that
+// size in huge pages. An older one either drops the field and starts the
+// sandbox at its previous size, or reserves the template's whole maximum while
+// the API counts the size it asked for.
+var SandboxMemoryResizeMinVersion = semver.New(0, 30, 202611161749, "", "")
+
 // TemplateBuilderMinVersion is the oldest builder that honours every sizing
 // field a build sets, or nil when it sets none.
 func TemplateBuilderMinVersion(maxVCpu, maxMemoryMB *int64) *semver.Version {

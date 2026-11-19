@@ -62,6 +62,9 @@ func (o *Orchestrator) migrationNodes(ctx context.Context, sbx sandbox.Sandbox, 
 	if filterByLabels && !placement.NodeSatisfiesLabels(target, requiredLabels) {
 		return nil, nil, fmt.Errorf("%w: the target lacks the sandbox's scheduling labels", errNodeUnavailable)
 	}
+	if !placement.NodeSatisfiesFeatures(target, placement.RequireNamed(sbx.RequiredFeatures)) {
+		return nil, nil, fmt.Errorf("%w: the target's orchestrator predates a capability the sandbox runs with", errNodeUnavailable)
+	}
 	node := sbx.ToNodeSandbox()
 	resources := nodemanager.SandboxResources{CPUs: node.VCpu, MiBMemory: node.RamMB, HugePages: node.HugePages}
 	memory := placement.MemoryRequirementFor(ctx, o.featureFlagsClient, sbx.TeamID, sbx.SandboxID)

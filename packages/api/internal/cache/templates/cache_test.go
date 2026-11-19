@@ -1,11 +1,14 @@
 package templatecache
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -192,4 +195,45 @@ func TestTemplateCache_ResolveAliasWithMetadata(t *testing.T) {
 	assert.Equal(t, templateID, metadata.TemplateID)
 	assert.Equal(t, teamID, metadata.TeamID)
 	assert.Equal(t, consts.LocalClusterID, metadata.ClusterID)
+}
+
+// An older replica writes entries without the format mark under the same key. Get
+// refetches such an entry from the database instead of serving it, rewrites it with
+// the mark, and invalidation still reaches it.
+func TestTemplateCache_RefetchesAnEntryWithoutTheFormatMark(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	redisClient := redis_utils.SetupContainerInstance(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	templateID := testutils.CreateTestTemplate(t, db, teamID)
+	buildID := testutils.CreateTestBuild(t, ctx, db, templateID, types.BuildStatusGroupReady)
+	testutils.CreateTestBuildAssignment(t, ctx, db, templateID, buildID, "default")
+
+	tc := NewTemplateCache(db.SqlcClient, redisClient)
+	defer tc.Close(ctx)
+
+	redisKey := tc.cache.RedisKey(buildCacheKey(templateID, "default"))
+	stale, err := json.Marshal(TemplateInfo{
+		Template: &api.Template{TemplateID: templateID, BuildID: "stale-build"},
+		TeamID:   teamID,
+		Tag:      "default",
+	})
+	require.NoError(t, err)
+	require.NoError(t, redisClient.Set(ctx, redisKey, stale, time.Minute).Err())
+
+	tmpl, _, err := tc.Get(ctx, templateID, nil, teamID, consts.LocalClusterID)
+	require.NoError(t, err)
+	assert.Equal(t, buildID.String(), tmpl.BuildID, "the stale entry was not served")
+
+	data, err := redisClient.Get(ctx, redisKey).Bytes()
+	require.NoError(t, err)
+	var stored TemplateInfo
+	require.NoError(t, json.Unmarshal(data, &stored))
+	assert.Equal(t, templateInfoFormat, stored.Format)
+
+	require.NotEmpty(t, tc.InvalidateAllTags(ctx, templateID))
+	assert.Equal(t, int64(0), redisClient.Exists(ctx, redisKey).Val())
+	assert.Equal(t, "template:info", templateCacheKeyPrefix, "the key stays shared with older replicas")
 }

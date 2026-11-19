@@ -1431,8 +1431,13 @@ inherit the stored CPU count.
 Memory follows the same shape behind the same flag. A build registered with a max memory
 (`maxMemoryMB`, whole 128 MiB slots above `memoryMB`) gets a hotplug region from template
 builders at or above the release that understands it. The build records `max_ram_mb` and, as its
-start size, its boot RAM; a snapshot build copies `max_ram_mb` from the build it was taken from.
-Templates report as `memoryMB` the size a create from them starts with.
+start size, its boot RAM. Templates report as `memoryMB` the size a create from them starts with.
+Every start from a build with a max memory sends the resolved size as `memory_mb` and is placed
+only on orchestrators at or above the release that plugs it and reserves only boot RAM plus it. A
+pause records the sandbox's whole size as the snapshot build's `start_memory_mb`, and copies
+`max_ram_mb` from the source build (or from the snapshot's newest build that has one), so the size
+takes effect only when that build is ready. Placement and node accounting count the whole size;
+when it is unknown, placement counts the max memory.
 
 The project provisioning system enqueues a base build when a cluster-backed project becomes active.
 The job registers and starts an ordinary base build, then completes when the API accepts it.

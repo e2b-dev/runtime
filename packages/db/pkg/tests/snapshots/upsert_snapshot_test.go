@@ -434,3 +434,136 @@ func TestUpsertSnapshot_CopiesMaxRamMbFromSourceBuild(t *testing.T) {
 		})
 	}
 }
+
+// A pause records the sandbox's whole size on its new build, and the resume
+// reads it from the latest ready build: a pause whose build never becomes ready
+// leaves the size of the last ready build in force.
+func TestUpsertSnapshot_StartMemoryFollowsTheReadyBuild(t *testing.T) {
+	t.Parallel()
+
+	client := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, client)
+	baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
+	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
+	require.NoError(t, client.SqlcClient.TestsRawSQL(ctx,
+		"UPDATE public.env_builds SET max_ram_mb = 4096, start_memory_mb = 1024 WHERE id = $1", sourceBuildID))
+
+	totalDiskSize := int64(1024)
+	envdVersion := "v1.0.0"
+	sandboxID := "sandbox-" + uuid.New().String()
+	params := queries.UpsertSnapshotParams{
+		TemplateID:         "test-template-" + uuid.New().String(),
+		TeamID:             teamID,
+		SandboxID:          sandboxID,
+		BaseTemplateID:     baseTemplateID,
+		StartedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		Vcpu:               2,
+		RamMb:              1024,
+		TotalDiskSizeMb:    &totalDiskSize,
+		Metadata:           types.JSONBStringMap{},
+		KernelVersion:      "6.1.0",
+		FirecrackerVersion: "1.4.0",
+		EnvdVersion:        &envdVersion,
+		Config:             &types.PausedSandboxConfig{Version: types.PausedSandboxConfigVersion},
+		OriginNodeID:       "node-1",
+		SourceBuildID:      sourceBuildID,
+		StatusGroup:        types.BuildStatusGroupReady,
+		StartMemoryMb:      new(int64(2048)),
+	}
+
+	first, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, new(int64(4096)), first.MaxRamMb, "the upsert returns the new build's maximum")
+	last, err := client.SqlcClient.GetLastSnapshot(ctx, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, first.BuildID, last.EnvBuild.ID)
+	assert.Equal(t, new(int64(2048)), last.EnvBuild.StartMemoryMb)
+	assert.Equal(t, new(int64(4096)), last.EnvBuild.MaxRamMb)
+	assert.Equal(t, int64(1024), last.EnvBuild.RamMb)
+
+	// The sandbox grew to 4096 MiB and its next pause failed: the new build
+	// stays in progress and the resume keeps the ready one's 2048 MiB.
+	params.SourceBuildID = first.BuildID
+	params.StatusGroup = types.BuildStatusGroupInProgress
+	params.StartMemoryMb = new(int64(4096))
+	second, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+	require.NoError(t, err)
+	require.NotEqual(t, first.BuildID, second.BuildID)
+
+	last, err = client.SqlcClient.GetLastSnapshot(ctx, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, first.BuildID, last.EnvBuild.ID)
+	assert.Equal(t, new(int64(2048)), last.EnvBuild.StartMemoryMb)
+
+	// Once the new build is ready, its size is the sandbox's.
+	require.NoError(t, client.SqlcClient.TestsRawSQL(ctx,
+		"UPDATE public.env_builds SET status_group = 'ready' WHERE id = $1", second.BuildID))
+	last, err = client.SqlcClient.GetLastSnapshot(ctx, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, second.BuildID, last.EnvBuild.ID)
+	assert.Equal(t, new(int64(4096)), last.EnvBuild.StartMemoryMb)
+}
+
+// A snapshot build an older writer made without max_ram_mb loses the
+// maximum for that build only: the next upsert falls back to the snapshot's
+// newest build that has one, so the sandbox keeps its memory maximum.
+func TestUpsertSnapshot_MaxRamMbHealsAfterAnOlderWriter(t *testing.T) {
+	t.Parallel()
+
+	client := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, client)
+	baseTemplateID := testutils.CreateTestTemplate(t, client, teamID)
+	sourceBuildID := testutils.CreateTestBuild(t, ctx, client, baseTemplateID, types.BuildStatusGroupReady)
+	require.NoError(t, client.SqlcClient.TestsRawSQL(ctx,
+		"UPDATE public.env_builds SET max_ram_mb = 4096, start_memory_mb = 1024 WHERE id = $1", sourceBuildID))
+
+	totalDiskSize := int64(1024)
+	envdVersion := "v1.0.0"
+	sandboxID := "sandbox-" + uuid.New().String()
+	params := queries.UpsertSnapshotParams{
+		TemplateID:         "test-template-" + uuid.New().String(),
+		TeamID:             teamID,
+		SandboxID:          sandboxID,
+		BaseTemplateID:     baseTemplateID,
+		StartedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		Vcpu:               2,
+		RamMb:              1024,
+		TotalDiskSizeMb:    &totalDiskSize,
+		Metadata:           types.JSONBStringMap{},
+		KernelVersion:      "6.1.0",
+		FirecrackerVersion: "1.4.0",
+		EnvdVersion:        &envdVersion,
+		Config:             &types.PausedSandboxConfig{Version: types.PausedSandboxConfigVersion},
+		OriginNodeID:       "node-1",
+		SourceBuildID:      sourceBuildID,
+		StatusGroup:        types.BuildStatusGroupReady,
+		StartMemoryMb:      new(int64(2048)),
+	}
+
+	first, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, new(int64(4096)), first.MaxRamMb)
+
+	// An older API pauses the sandbox: its build carries neither column.
+	params.SourceBuildID = first.BuildID
+	params.StartMemoryMb = nil
+	older, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+	require.NoError(t, err)
+	require.NoError(t, client.SqlcClient.TestsRawSQL(ctx,
+		"UPDATE public.env_builds SET max_ram_mb = NULL, start_memory_mb = NULL WHERE id = $1", older.BuildID))
+
+	// The next pause by this version starts from that build and restores the maximum.
+	params.SourceBuildID = older.BuildID
+	healed, err := client.SqlcClient.UpsertSnapshot(ctx, params)
+	require.NoError(t, err)
+	assert.Equal(t, new(int64(4096)), healed.MaxRamMb, "the maximum comes back from the snapshot's newest build that has one")
+	last, err := client.SqlcClient.GetLastSnapshot(ctx, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, healed.BuildID, last.EnvBuild.ID)
+	assert.Equal(t, new(int64(4096)), last.EnvBuild.MaxRamMb)
+	assert.Nil(t, last.EnvBuild.StartMemoryMb, "the size stays unknown; the start reports it and bounds it by the maximum")
+}

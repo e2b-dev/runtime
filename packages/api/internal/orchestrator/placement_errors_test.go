@@ -136,6 +136,34 @@ func TestPlacementAPIError(t *testing.T) {
 			wantMsg:       "Failed to place sandbox: invalid volume mount path",
 		},
 		{
+			// The API sent the size from its own record, not from the request:
+			// the node refusing it means the record disagrees with the snapshot,
+			// a stored-data defect, never the caller's error.
+			name:          "memory shrink refused by the node for a size the caller did not name",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatusWith(t, codes.InvalidArgument, "memory hotplug refused (shrink): the requested memory does not fit the sandbox: a memory resume cannot shrink the sandbox: it asks for 0 MiB above boot RAM and its snapshot had 1024 MiB", http.StatusBadRequest)},
+			wantCode:      http.StatusInternalServerError,
+			wantErrorCode: errCodeSandboxMemoryRecordMismatch,
+			wantMsg:       "Failed to place sandbox: the memory recorded for this sandbox does not match its snapshot; if the problem persists, contact us",
+		},
+		{
+			name:          "memory size refused by the node for a size the caller did not name",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatusWith(t, codes.InvalidArgument, "memory hotplug refused (invalid_request): the requested memory does not fit the sandbox: 1026 MiB above boot RAM is not a whole number of 128 MiB slots", http.StatusBadRequest)},
+			wantCode:      http.StatusInternalServerError,
+			wantErrorCode: errCodeSandboxMemoryRecordMismatch,
+			wantMsg:       "Failed to place sandbox: the memory recorded for this sandbox does not match its snapshot; if the problem persists, contact us",
+		},
+		{
+			// A platform refusal of the region stays a server error.
+			name:          "memory hotplug region refused by the node",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatusWith(t, codes.FailedPrecondition, "memory hotplug refused (kernel): vmlinux-5.10", http.StatusInternalServerError)},
+			wantCode:      http.StatusInternalServerError,
+			wantErrorCode: "sandbox_create_refused",
+			wantMsg:       "Failed to place sandbox: memory hotplug refused (kernel): vmlinux-5.10",
+		},
+		{
 			// The auto-pause policy is a field of the request: the node's
 			// 400 is the client's when the pause refusal's detail marks it.
 			name:          "create refused for an auto-pause the guest cannot take is the client's",

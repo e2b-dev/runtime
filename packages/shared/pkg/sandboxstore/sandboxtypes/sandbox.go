@@ -85,19 +85,28 @@ type Sandbox struct {
 	Alias      *string `json:"alias,omitempty"`
 	Domain     *string `json:"domain,omitempty"`
 
-	ExecutionID        string            `json:"executionID"`
-	TeamID             uuid.UUID         `json:"teamID"`
-	BuildID            uuid.UUID         `json:"buildID"`
-	BaseTemplateID     string            `json:"baseTemplateID"`
-	Metadata           map[string]string `json:"metadata"`
-	MaxInstanceLength  time.Duration     `json:"maxInstanceLength"`
-	StartTime          time.Time         `json:"startTime"`
-	EndTime            time.Time         `json:"endTime"`
-	VCpu               int64             `json:"vCpu"`
-	TotalDiskSizeMB    int64             `json:"totalDiskSizeMB"`
-	RamMB              int64             `json:"ramMB"`
-	KernelVersion      string            `json:"kernelVersion"`
-	FirecrackerVersion string            `json:"firecrackerVersion"`
+	ExecutionID       string            `json:"executionID"`
+	TeamID            uuid.UUID         `json:"teamID"`
+	BuildID           uuid.UUID         `json:"buildID"`
+	BaseTemplateID    string            `json:"baseTemplateID"`
+	Metadata          map[string]string `json:"metadata"`
+	MaxInstanceLength time.Duration     `json:"maxInstanceLength"`
+	StartTime         time.Time         `json:"startTime"`
+	EndTime           time.Time         `json:"endTime"`
+	VCpu              int64             `json:"vCpu"`
+	TotalDiskSizeMB   int64             `json:"totalDiskSizeMB"`
+	RamMB             int64             `json:"ramMB"`
+	MemoryMB          int64             `json:"memoryMB,omitempty"`
+	// PlacedMemoryMB is the memory placement charged the node when it was more
+	// than TotalMemoryMB: a start whose size the API did not know is charged the
+	// template's maximum. Only node accounting reads it, so a kill releases what
+	// the start charged; billing and the API's answers keep TotalMemoryMB.
+	PlacedMemoryMB int64 `json:"placedMemoryMB,omitempty"`
+	// RequiredFeatures names the version-gated orchestrator capabilities the
+	// sandbox's start needed, so a move to another node needs them too.
+	RequiredFeatures   []string `json:"requiredFeatures,omitempty"`
+	KernelVersion      string   `json:"kernelVersion"`
+	FirecrackerVersion string   `json:"firecrackerVersion"`
 	// FirecrackerVersionResolved records whether FirecrackerVersion is the
 	// orchestrator-RESOLVED version the sandbox actually runs (frozen at
 	// start, echoed on the create response) rather than the build's declared
@@ -159,6 +168,12 @@ type Sandbox struct {
 	LifecycleHoldUntil int64  `json:"lifecycleHoldUntil,omitempty"`
 }
 
+// TotalMemoryMB is the memory the sandbox runs with. RamMB is boot RAM, and
+// MemoryMB the whole memory once the sandbox has grown above it; 0 until then.
+func (s Sandbox) TotalMemoryMB() int64 {
+	return max(s.RamMB, s.MemoryMB)
+}
+
 // Held reports whether the record is held at now: a hold past its deadline
 // is released.
 func (s Sandbox) Held(now time.Time) bool {
@@ -191,7 +206,8 @@ type NodeSandbox struct {
 	// check, since the store write may not have landed yet.
 	StartTime time.Time
 	// VCpu, RamMB and HugePages correct the node's optimistic resource
-	// accounting after a kill.
+	// accounting after a kill. RamMB is the whole memory the sandbox runs
+	// with, boot RAM and any it has grown by.
 	VCpu      int64
 	RamMB     int64
 	HugePages bool
@@ -221,7 +237,7 @@ func (s Sandbox) ToNodeSandbox() NodeSandbox {
 		ClusterID:   s.ClusterID,
 		StartTime:   s.StartTime,
 		VCpu:        s.VCpu,
-		RamMB:       s.RamMB,
+		RamMB:       max(s.TotalMemoryMB(), s.PlacedMemoryMB),
 		HugePages:   true,
 	}
 }

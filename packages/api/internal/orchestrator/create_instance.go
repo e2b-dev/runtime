@@ -438,6 +438,8 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, cpuErr
 	}
 
+	memoryMB, memoryKnown := BuildStartMemoryMB(sbxData.Build.RamMb, sbxData.Build.MaxRamMb, sbxData.Build.StartMemoryMb)
+
 	if _, err := fcversion.New(sbxData.Build.FirecrackerVersion); err != nil {
 		errMsg := fmt.Errorf("failed to get fcSemver for firecracker fcSemver '%s': %w", sbxData.Build.FirecrackerVersion, err)
 
@@ -531,6 +533,21 @@ func (o *Orchestrator) CreateSandbox(
 		// byte-identical to before the field existed.
 		sbxRequest.FilesystemBoot = new(true)
 	}
+	if sbxData.Build.MaxRamMb != nil && memoryKnown {
+		// Every start from a build with a memory maximum sends the size the API
+		// accounts and bills, so the orchestrator enforces that number and the
+		// placement gate covers the start. A build that does not record its size
+		// sends none: the orchestrator keeps its snapshot's, which the API does
+		// not know. A build that cannot grow runs at boot RAM, which needs no field.
+		sbxRequest.Sandbox.MemoryMb = memoryMB
+	}
+	if sbxData.Build.MaxRamMb != nil && !memoryKnown {
+		reportMemorySizeUnknown(ctx, "start", sbxData.Build.RamMb, *sbxData.Build.MaxRamMb,
+			logger.WithSandboxID(sandboxID),
+			logger.WithTemplateID(sbxData.TemplateID),
+			logger.WithBuildID(sbxData.Build.ID.String()),
+		)
+	}
 
 	cpuRequirement := o.resolveCPURequirement(ctx, sandboxID, team, sbxData)
 	// Recorded before placement runs: a placement the pin starved is the case
@@ -580,8 +597,9 @@ func (o *Orchestrator) CreateSandbox(
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
 	requirements := placement.Requirements{
-		CPU:    cpuRequirement,
-		Memory: placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
+		CPU:       cpuRequirement,
+		Memory:    placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
+		MemoryMiB: placementMemoryMiB(sbxData.Build, memoryMB, memoryKnown),
 	}
 
 	placed, err := placement.PlaceSandboxCompletingStartedCreate(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, requirements, labelFilteringEnabled, allLabels, completeStartedCreateUntil)
@@ -611,7 +629,12 @@ func (o *Orchestrator) CreateSandbox(
 			)
 		}
 
-		return sandbox.Sandbox{}, placementAPIError(err)
+		apiErr := placementAPIError(err)
+		if code := memoryRefusalCodeOf(err); code != "" {
+			reportMemoryRecordMismatch(ctx, err, sandboxID, sbxData, code, sbxRequest.GetSandbox().GetMemoryMb())
+		}
+
+		return sandbox.Sandbox{}, apiErr
 	}
 
 	node = placed.Node
@@ -696,6 +719,17 @@ func (o *Orchestrator) CreateSandbox(
 	sbx.NetworkPlacement = placed.Response.GetNetworkPlacement()
 	sbx.PausedTTL = sbxData.PausedTTL
 	sbx.PausedTTLStored = sbxData.PausedTTLStored
+	if sbxData.Build.MaxRamMb != nil && memoryKnown {
+		// Set whenever the size is known, boot RAM included, so a record that
+		// lost the field reads as unknown and its pause records no size.
+		sbx.MemoryMB = memoryMB
+	}
+	if charged := requirements.MemoryMiB; charged > sbx.TotalMemoryMB() {
+		sbx.PlacedMemoryMB = charged
+	}
+	if names := placement.RequestFeatureNames(sbxRequest); len(names) > 0 {
+		sbx.RequiredFeatures = names
+	}
 
 	// An orchestrator that predates the filesystem_boot field ignores it and
 	// memory-restores; only the echo proves the demand was honored. Kill the
