@@ -23,6 +23,7 @@ import (
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/pool"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management/clienttests"
 )
@@ -49,6 +50,19 @@ func newSingleClusterService(t *testing.T, clusterID uuid.UUID, state clusterSta
 	t.Helper()
 
 	s := &singleClusterService{MockClusterServiceClient: clienttests.NewMockClusterServiceClient(t), state: state}
+	s.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, _ *clustersgrpc.CheckProjectCreationRequest, _ ...grpc.CallOption) (*clustersgrpc.CheckProjectCreationResponse, error) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			switch s.state {
+			case clusterAbsent:
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			case clusterDeleting:
+				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED)
+			default:
+				return clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil
+			}
+		}).Maybe()
 	s.EXPECT().GetCluster(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, _ *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
 			s.mu.Lock()
@@ -141,6 +155,59 @@ func TestUpsertProjectChecksANewClusterWithTheClusterService(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		require.Equal(t, &clusterID, teamCluster(t, db, project.id))
 	})
+
+	t.Run("the project has a conflicting placement", func(t *testing.T) {
+		t.Parallel()
+
+		db := testutils.SetupDatabase(t)
+		store, _ := newManagementStore(t, db)
+		cluster, project := uuid.New(), newProjectFixture()
+		service := clienttests.NewMockClusterServiceClient(t)
+		service.EXPECT().CheckProjectCreation(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.CheckProjectCreationRequest) bool {
+			return req.GetProjectId() == project.id.String() && req.GetClusterId() == cluster.String()
+		})).Return(nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT)).Once()
+		withClusterService(t, db, store, service)
+		req := project.request()
+		req.ClusterId = &cluster
+		response := callUpsertProject(t, store, project.id, req)
+		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	})
+}
+
+func TestRemoteProjectCreationRetriesUnavailableAdmission(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		code       codes.Code
+		wantStatus int
+		wantRetry  string
+	}{
+		{codes.Unavailable, http.StatusServiceUnavailable, "true"},
+		{codes.Unimplemented, http.StatusInternalServerError, ""},
+	} {
+		t.Run(tc.code.String(), func(t *testing.T) {
+			t.Parallel()
+
+			db := testutils.SetupDatabase(t)
+			store, _ := newManagementStore(t, db)
+			service := clienttests.NewMockClusterServiceClient(t)
+			withClusterService(t, db, store, service)
+			project, cluster := newProjectFixture(), uuid.New()
+			req := project.request()
+			req.ClusterId = &cluster
+			service.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).Return(nil, status.Error(tc.code, "check failed")).Once()
+
+			response := callUpsertProject(t, store, project.id, req)
+			require.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			require.Equal(t, tc.wantRetry, response.Header().Get(apierrors.ShouldRetryHeader))
+			if tc.wantRetry != "" {
+				service.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).Return(clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil).Once()
+				retry := callUpsertProject(t, store, project.id, req)
+				require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
+				require.Equal(t, &cluster, teamCluster(t, db, project.id))
+			}
+		})
+	}
 }
 
 // An assignment holding the lock may have read the cluster before its

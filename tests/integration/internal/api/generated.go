@@ -24353,6 +24353,11 @@ func (r ManagementDeleteProjectResponse) ContentType() string {
 	return ""
 }
 
+// ManagementUpsertProjectResponse503Headers the declared response headers of an HTTP 503 response for ManagementUpsertProject
+type ManagementUpsertProjectResponse503Headers struct {
+	ShouldRetry *bool
+}
+
 type ManagementUpsertProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24371,7 +24376,9 @@ type ManagementUpsertProjectResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
+	JSON503 *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ManagementUpsertProjectResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -24410,7 +24417,7 @@ func (r ManagementUpsertProjectResponse) GetJSON500() *N500 {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementUpsertProjectResponse) GetJSON503() *N503 {
+func (r ManagementUpsertProjectResponse) GetJSON503() *Error {
 	return r.JSON503
 }
 
@@ -35934,12 +35941,25 @@ func ParseManagementUpsertProjectResponse(rsp *http.Response) (*ManagementUpsert
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ManagementUpsertProjectResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

@@ -12,6 +12,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -68,7 +69,11 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 		return
 	}
 	if errors.Is(err, clusterassign.ErrUnavailable) {
-		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Cluster management is not available")
+		apierrors.SendAPIError(c, &apierrors.APIError{
+			Code:      http.StatusServiceUnavailable,
+			ClientMsg: "Cluster management is not available",
+			Retryable: apierrors.CanRetry,
+		})
 
 		return
 	}
@@ -95,6 +100,8 @@ func projectConflictMessage(err error) string {
 		return "Project was created concurrently, retry"
 	case errors.Is(err, clusterassign.ErrDeleting):
 		return "Cluster is being deleted"
+	case errors.Is(err, clusterassign.ErrPlacementConflict):
+		return "Project cannot be created on this cluster"
 	}
 
 	return ""

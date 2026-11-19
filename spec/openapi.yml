@@ -8005,7 +8005,14 @@ paths:
         "500":
           $ref: "#/components/responses/500"
         "503":
-          $ref: "#/components/responses/503"
+          description: Cluster admission is unavailable. The project upsert can be retried.
+          headers:
+            Should-Retry:
+              $ref: "#/components/headers/ShouldRetry"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       operationId: managementDeleteProject
       summary: Soft-delete a project.

@@ -120,6 +120,18 @@ func clusterServiceFor(t *testing.T, db *testutils.Database) *clienttests.MockCl
 
 	records := recordsOf(db)
 	clusterService := clienttests.NewMockClusterServiceClient(t)
+	clusterService.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, req *clustersgrpc.CheckProjectCreationRequest, _ ...grpc.CallOption) (*clustersgrpc.CheckProjectCreationResponse, error) {
+			cluster, ok := records.get(uuid.MustParse(req.GetClusterId()))
+			switch {
+			case !ok:
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			case cluster.HasDeletionRequestedAt():
+				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED)
+			default:
+				return clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil
+			}
+		}).Maybe()
 	clusterService.EXPECT().GetCluster(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, req *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
 			cluster, ok := records.get(uuid.MustParse(req.GetClusterId()))

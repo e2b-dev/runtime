@@ -418,8 +418,9 @@ retries.
   renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the
-  request assigns a cluster whose deletion is recorded, or when a concurrent request created the
-  same project first.
+  request conflicts with the project's placement, a draining cluster has not admitted that project,
+  or a concurrent request created the same project first. If the cluster service is unavailable
+  during remote creation, the API returns 503 with `Should-Retry: true` before it inserts the team.
 - `PUT .../members/{userID}` applies the desired presence for one user, gated by a monotonic
   per-project/user revision in `projection.project_members`; a duplicate or older revision
   succeeds without changing target state. A present projection carries the user's OIDC
@@ -536,12 +537,12 @@ with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting an
 request has the cluster service record the deletion, returns a conflict while deletion
 protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
 temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
-with `Should-Retry: true`. Once deletion is recorded, protection stays off, and the project upsert
-refuses to newly assign a team to the cluster with a conflict; keeping a team's current cluster is
-not a new assignment. A new assignment checks the cluster with the cluster service while holding a
-per-cluster advisory lock in the database, and the deletion request takes that lock once the
-deletion is recorded. So an assignment either commits before the request returns, where the
-caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
+with `Should-Retry: true`. Once deletion is recorded, protection stays off. A project already
+admitted to this cluster may finish creation during the drain; its claim prevents final
+removal. A new remote team checks admission with `CheckProjectCreation` while holding the
+per-cluster advisory lock in the database. The response carries no cluster credentials. The
+deletion request takes that lock after recording the drain. Deleting each project clears its
+team's cluster; the caller releases its claim after the deletion is acknowledged.
 The cluster delete then checks deletion protection with the cluster service, and in one
 transaction holding the same lock refuses a cluster a live team still uses, soft-deletes its
 templates and clears it from teams and templates deleted earlier, has the cluster service record

@@ -111,7 +111,7 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 		stored, err = reconcileProject(ctx, txDB, project, current.Slug)
 	case dberrors.IsNotFoundError(err):
 		if project.ClusterID != nil {
-			if err := clusterassign.Check(ctx, s.clusters, *project.ClusterID); err != nil {
+			if err := clusterassign.Check(ctx, s.clusters, *project.ClusterID, project.ID); err != nil {
 				return Project{}, false, err
 			}
 		}
