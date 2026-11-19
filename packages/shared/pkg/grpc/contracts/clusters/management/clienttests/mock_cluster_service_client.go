@@ -131,6 +131,89 @@ func (_c *MockClusterServiceClient_AssignProject_Call) RunAndReturn(run func(ctx
 	return _c
 }
 
+// AuthenticateWorkload provides a mock function for the type MockClusterServiceClient
+func (_mock *MockClusterServiceClient) AuthenticateWorkload(ctx context.Context, in *management.AuthenticateWorkloadRequest, opts ...grpc.CallOption) (*management.AuthenticateWorkloadResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for AuthenticateWorkload")
+	}
+
+	var r0 *management.AuthenticateWorkloadResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.AuthenticateWorkloadRequest, ...grpc.CallOption) (*management.AuthenticateWorkloadResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.AuthenticateWorkloadRequest, ...grpc.CallOption) *management.AuthenticateWorkloadResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*management.AuthenticateWorkloadResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *management.AuthenticateWorkloadRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClusterServiceClient_AuthenticateWorkload_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AuthenticateWorkload'
+type MockClusterServiceClient_AuthenticateWorkload_Call struct {
+	*mock.Call
+}
+
+// AuthenticateWorkload is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *management.AuthenticateWorkloadRequest
+//   - opts ...grpc.CallOption
+func (_e *MockClusterServiceClient_Expecter) AuthenticateWorkload(ctx any, in any, opts ...any) *MockClusterServiceClient_AuthenticateWorkload_Call {
+	return &MockClusterServiceClient_AuthenticateWorkload_Call{Call: _e.mock.On("AuthenticateWorkload",
+		append([]any{ctx, in}, opts...)...)}
+}
+
+func (_c *MockClusterServiceClient_AuthenticateWorkload_Call) Run(run func(ctx context.Context, in *management.AuthenticateWorkloadRequest, opts ...grpc.CallOption)) *MockClusterServiceClient_AuthenticateWorkload_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *management.AuthenticateWorkloadRequest
+		if args[1] != nil {
+			arg1 = args[1].(*management.AuthenticateWorkloadRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClusterServiceClient_AuthenticateWorkload_Call) Return(authenticateWorkloadResponse *management.AuthenticateWorkloadResponse, err error) *MockClusterServiceClient_AuthenticateWorkload_Call {
+	_c.Call.Return(authenticateWorkloadResponse, err)
+	return _c
+}
+
+func (_c *MockClusterServiceClient_AuthenticateWorkload_Call) RunAndReturn(run func(ctx context.Context, in *management.AuthenticateWorkloadRequest, opts ...grpc.CallOption) (*management.AuthenticateWorkloadResponse, error)) *MockClusterServiceClient_AuthenticateWorkload_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // CheckProjectCreation provides a mock function for the type MockClusterServiceClient
 func (_mock *MockClusterServiceClient) CheckProjectCreation(ctx context.Context, in *management.CheckProjectCreationRequest, opts ...grpc.CallOption) (*management.CheckProjectCreationResponse, error) {
 	var tmpRet mock.Arguments

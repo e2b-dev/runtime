@@ -137,6 +137,7 @@ type Config struct {
 	APIInternalGrpcPort uint16 `env:"API_INTERNAL_GRPC_PORT" envDefault:"5009"`
 	APIEdgeGrpcPort     uint16 `env:"API_EDGE_GRPC_PORT"     envDefault:"5109"`
 
+	ResumeVerificationJWKS   string `env:"RESUME_VERIFICATION_JWKS"`
 	ClientProxyOIDCIssuerURL string `env:"CLIENT_PROXY_OIDC_ISSUER_URL"`
 
 	SandboxAccessTokenHashSeed string `env:"SANDBOX_ACCESS_TOKEN_HASH_SEED"`

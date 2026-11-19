@@ -19,6 +19,114 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	WorkloadIdentityService_AuthenticateTelemetry_FullMethodName = "/e2b.clusters.management.v1.WorkloadIdentityService/AuthenticateTelemetry"
+)
+
+// WorkloadIdentityServiceClient is the client API for WorkloadIdentityService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Gateways verify a workload without access to cluster management methods.
+type WorkloadIdentityServiceClient interface {
+	AuthenticateTelemetry(ctx context.Context, in *AuthenticateTelemetryRequest, opts ...grpc.CallOption) (*AuthenticateTelemetryResponse, error)
+}
+
+type workloadIdentityServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewWorkloadIdentityServiceClient(cc grpc.ClientConnInterface) WorkloadIdentityServiceClient {
+	return &workloadIdentityServiceClient{cc}
+}
+
+func (c *workloadIdentityServiceClient) AuthenticateTelemetry(ctx context.Context, in *AuthenticateTelemetryRequest, opts ...grpc.CallOption) (*AuthenticateTelemetryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticateTelemetryResponse)
+	err := c.cc.Invoke(ctx, WorkloadIdentityService_AuthenticateTelemetry_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// WorkloadIdentityServiceServer is the server API for WorkloadIdentityService service.
+// All implementations must embed UnimplementedWorkloadIdentityServiceServer
+// for forward compatibility.
+//
+// Gateways verify a workload without access to cluster management methods.
+type WorkloadIdentityServiceServer interface {
+	AuthenticateTelemetry(context.Context, *AuthenticateTelemetryRequest) (*AuthenticateTelemetryResponse, error)
+	mustEmbedUnimplementedWorkloadIdentityServiceServer()
+}
+
+// UnimplementedWorkloadIdentityServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedWorkloadIdentityServiceServer struct{}
+
+func (UnimplementedWorkloadIdentityServiceServer) AuthenticateTelemetry(context.Context, *AuthenticateTelemetryRequest) (*AuthenticateTelemetryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AuthenticateTelemetry not implemented")
+}
+func (UnimplementedWorkloadIdentityServiceServer) mustEmbedUnimplementedWorkloadIdentityServiceServer() {
+}
+func (UnimplementedWorkloadIdentityServiceServer) testEmbeddedByValue() {}
+
+// UnsafeWorkloadIdentityServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to WorkloadIdentityServiceServer will
+// result in compilation errors.
+type UnsafeWorkloadIdentityServiceServer interface {
+	mustEmbedUnimplementedWorkloadIdentityServiceServer()
+}
+
+func RegisterWorkloadIdentityServiceServer(s grpc.ServiceRegistrar, srv WorkloadIdentityServiceServer) {
+	// If the following call panics, it indicates UnimplementedWorkloadIdentityServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&WorkloadIdentityService_ServiceDesc, srv)
+}
+
+func _WorkloadIdentityService_AuthenticateTelemetry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateTelemetryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkloadIdentityServiceServer).AuthenticateTelemetry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkloadIdentityService_AuthenticateTelemetry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkloadIdentityServiceServer).AuthenticateTelemetry(ctx, req.(*AuthenticateTelemetryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// WorkloadIdentityService_ServiceDesc is the grpc.ServiceDesc for WorkloadIdentityService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var WorkloadIdentityService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "e2b.clusters.management.v1.WorkloadIdentityService",
+	HandlerType: (*WorkloadIdentityServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AuthenticateTelemetry",
+			Handler:    _WorkloadIdentityService_AuthenticateTelemetry_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "e2b/clusters/management/v1/management.proto",
+}
+
+const (
+	ClusterService_AuthenticateWorkload_FullMethodName     = "/e2b.clusters.management.v1.ClusterService/AuthenticateWorkload"
 	ClusterService_CreateCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/CreateCluster"
 	ClusterService_GetCluster_FullMethodName               = "/e2b.clusters.management.v1.ClusterService/GetCluster"
 	ClusterService_CheckProjectCreation_FullMethodName     = "/e2b.clusters.management.v1.ClusterService/CheckProjectCreation"
@@ -38,6 +146,7 @@ const (
 // each project is assigned to. The local cluster has no record, and a project
 // on it has no assignment.
 type ClusterServiceClient interface {
+	AuthenticateWorkload(ctx context.Context, in *AuthenticateWorkloadRequest, opts ...grpc.CallOption) (*AuthenticateWorkloadResponse, error)
 	CreateCluster(ctx context.Context, in *CreateClusterRequest, opts ...grpc.CallOption) (*CreateClusterResponse, error)
 	GetCluster(ctx context.Context, in *GetClusterRequest, opts ...grpc.CallOption) (*GetClusterResponse, error)
 	// Checks admission to a remote cluster without reserving a placement or returning credentials.
@@ -56,6 +165,16 @@ type clusterServiceClient struct {
 
 func NewClusterServiceClient(cc grpc.ClientConnInterface) ClusterServiceClient {
 	return &clusterServiceClient{cc}
+}
+
+func (c *clusterServiceClient) AuthenticateWorkload(ctx context.Context, in *AuthenticateWorkloadRequest, opts ...grpc.CallOption) (*AuthenticateWorkloadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthenticateWorkloadResponse)
+	err := c.cc.Invoke(ctx, ClusterService_AuthenticateWorkload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *clusterServiceClient) CreateCluster(ctx context.Context, in *CreateClusterRequest, opts ...grpc.CallOption) (*CreateClusterResponse, error) {
@@ -156,6 +275,7 @@ func (c *clusterServiceClient) LookupProjectAssignments(ctx context.Context, in 
 // each project is assigned to. The local cluster has no record, and a project
 // on it has no assignment.
 type ClusterServiceServer interface {
+	AuthenticateWorkload(context.Context, *AuthenticateWorkloadRequest) (*AuthenticateWorkloadResponse, error)
 	CreateCluster(context.Context, *CreateClusterRequest) (*CreateClusterResponse, error)
 	GetCluster(context.Context, *GetClusterRequest) (*GetClusterResponse, error)
 	// Checks admission to a remote cluster without reserving a placement or returning credentials.
@@ -176,6 +296,9 @@ type ClusterServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedClusterServiceServer struct{}
 
+func (UnimplementedClusterServiceServer) AuthenticateWorkload(context.Context, *AuthenticateWorkloadRequest) (*AuthenticateWorkloadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AuthenticateWorkload not implemented")
+}
 func (UnimplementedClusterServiceServer) CreateCluster(context.Context, *CreateClusterRequest) (*CreateClusterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateCluster not implemented")
 }
@@ -222,6 +345,24 @@ func RegisterClusterServiceServer(s grpc.ServiceRegistrar, srv ClusterServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&ClusterService_ServiceDesc, srv)
+}
+
+func _ClusterService_AuthenticateWorkload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthenticateWorkloadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).AuthenticateWorkload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_AuthenticateWorkload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).AuthenticateWorkload(ctx, req.(*AuthenticateWorkloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _ClusterService_CreateCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -393,6 +534,10 @@ var ClusterService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "e2b.clusters.management.v1.ClusterService",
 	HandlerType: (*ClusterServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AuthenticateWorkload",
+			Handler:    _ClusterService_AuthenticateWorkload_Handler,
+		},
 		{
 			MethodName: "CreateCluster",
 			Handler:    _ClusterService_CreateCluster_Handler,

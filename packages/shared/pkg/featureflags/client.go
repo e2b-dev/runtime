@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
@@ -182,10 +183,19 @@ func NewClientWithLogLevel(deploymentEnvironment, serviceName, serviceVersion st
 		return newClient(ldClient, true, deploymentEnvironment, serviceName), nil
 	}
 
+	if path := os.Getenv(projectedTokenEnv); path != "" {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(path), "registered")); errors.Is(err, os.ErrNotExist) {
+			opts = append(opts, WithStartOnInitTimeout())
+		}
+	}
+
 	return connect(sdkKey, cfg, waitForInit, deploymentEnvironment, serviceName, opts...)
 }
 
 func configureAuthentication(cfg *ldclient.Config) (string, error) {
+	if path := os.Getenv(projectedTokenEnv); path != "" {
+		return configureProjected(cfg, path)
+	}
 	if launchDarklyApiKey != "" {
 		return launchDarklyApiKey, nil
 	}

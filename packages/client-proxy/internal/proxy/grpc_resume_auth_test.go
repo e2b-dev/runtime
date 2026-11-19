@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
@@ -335,4 +338,60 @@ func TestOAuthGrpcResumeAuthTokenRefreshIsBounded(t *testing.T) {
 	_, err = auth.authorize(t.Context())
 	require.Error(t, err)
 	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+type testResumeExchange struct {
+	proxygrpc.ResumeTokenServiceClient
+
+	credentials []string
+}
+
+func (e *testResumeExchange) ExchangeResumeToken(ctx context.Context, _ *proxygrpc.ExchangeResumeTokenRequest, _ ...grpc.CallOption) (*proxygrpc.ExchangeResumeTokenResponse, error) {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	e.credentials = append(e.credentials, md.Get("authorization")...)
+
+	return &proxygrpc.ExchangeResumeTokenResponse{AccessToken: "signed", ExpiresAtUnix: time.Now().Add(15 * time.Minute).Unix()}, nil
+}
+
+func TestProjectedResumeTokenRotation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "token")
+	exchange := &testResumeExchange{}
+	auth := newProjectedResumeAuth(t.Context(), path, exchange)
+	for _, raw := range []string{"first", "rotated"} {
+		require.NoError(t, os.WriteFile(path, []byte(raw), 0o600))
+		for range 2 {
+			ctx, err := auth.authorize(t.Context())
+			require.NoError(t, err)
+			md, _ := metadata.FromOutgoingContext(ctx)
+			require.Equal(t, []string{"Bearer signed"}, md.Get(proxygrpc.MetadataAuthorization))
+		}
+		auth.token.Expiry = time.Now().Add(-time.Minute)
+	}
+	require.Equal(t, []string{"Bearer first", "Bearer rotated"}, exchange.credentials)
+}
+
+func TestProjectedResumeServesUnexpiredTokenDuringRefresh(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	auth := &oauthGrpcResumeAuth{
+		serveUntilExpiry: true,
+		token:            &oauth2.Token{AccessToken: "previous", Expiry: time.Now().Add(45 * time.Second)},
+		fetch: func() (*oauth2.Token, error) {
+			close(started)
+			<-release
+
+			return nil, errors.New("registry unavailable")
+		},
+	}
+	token, err := auth.getToken(t.Context())
+	close(release)
+	require.NoError(t, err)
+	require.Equal(t, "previous", token.AccessToken)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		require.Fail(t, "expected refresh during final minute")
+	}
 }

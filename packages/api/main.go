@@ -540,8 +540,17 @@ func run() int {
 	if err != nil {
 		l.Fatal(ctx, "failed to create client proxy OIDC verifier", zap.Error(err))
 	}
-	if !oauth.Configured(config.ClientProxyOIDCIssuerURL) {
-		l.Warn(ctx, "client proxy OIDC is not configured; edge proxy gRPC requests will be rejected")
+	if !oauth.Configured(config.ClientProxyOIDCIssuerURL) && config.ClusterServiceGrpcAddress == "" {
+		l.Warn(ctx, "client proxy authentication is not configured; edge proxy gRPC requests will be rejected")
+	}
+	if config.ResumeVerificationJWKS != "" {
+		clientProxyOAuthVerifier, err = handlers.NewRegionalResumeVerifier(config.ResumeVerificationJWKS, clientProxyOAuthVerifier)
+		if err != nil {
+			l.Fatal(ctx, "invalid regional resume verification keys", zap.Error(err))
+		}
+		if err := apiStore.RegisterResumeExchange(edgeGrpcServer); err != nil {
+			l.Fatal(ctx, "configure regional resume exchange", zap.Error(err))
+		}
 	}
 	proxygrpc.RegisterSandboxServiceServer(edgeGrpcServer, handlers.NewSandboxService(apiStore, true, clientProxyOAuthVerifier))
 
