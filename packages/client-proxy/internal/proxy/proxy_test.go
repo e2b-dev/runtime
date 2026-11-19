@@ -1001,7 +1001,7 @@ func TestNewClientProxy_AnswersProbeRequests(t *testing.T) {
 		{
 			name:       "sandbox on another plane",
 			resumer:    resumeError(status.Error(codes.NotFound, "snapshot not found")),
-			wantStatus: http.StatusBadGateway,
+			wantStatus: http.StatusNotFound,
 			wantAnswer: "false",
 		},
 		{

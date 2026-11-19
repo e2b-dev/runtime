@@ -74,8 +74,13 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 					answer = ProbeFound
 				}
 			case PresenceAbsent:
+				// Not the not-found page's 502, which load balancers count as
+				// a server error; the asker reads only the header.
 				w.Header().Set(HeaderProbe, "false")
-				answer = ProbeNotFound
+				o.observe(ctx, ProbeNotFound)
+				w.WriteHeader(http.StatusNotFound)
+
+				return
 			case PresenceUnknown:
 				// No header: the asker cannot tell from this proxy.
 			}

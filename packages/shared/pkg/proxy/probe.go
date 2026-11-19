@@ -12,8 +12,9 @@ import (
 // without forwarding the request. A proxy built WithProbe answers a request
 // carrying "true" with the same header set to "true" when the sandbox is
 // here, "false" when it is not, and leaves it out when it cannot tell. A
-// sandbox it routes is answered 204 instead of being forwarded; every other
-// answer is the page the request would get anyway.
+// sandbox it routes is answered 204 instead of being forwarded, and one it
+// does not have 404; every other answer is the page the request would get
+// anyway.
 const HeaderProbe = "X-E2b-Sandbox-Probe"
 
 // ProbeAnswer is what a proxy told a HeaderProbe request.

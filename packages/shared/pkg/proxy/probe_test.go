@@ -97,7 +97,7 @@ func TestProxyAnswersProbeRequests(t *testing.T) {
 		wantRequests int32
 	}{
 		{name: "routed sandbox is answered without forwarding", probe: true, wantStatus: http.StatusNoContent, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeFound}},
-		{name: "unknown sandbox", probe: true, err: NewErrSandboxNotFound("sbx", PresenceAbsent), wantStatus: http.StatusBadGateway, wantAnswer: "false", wantObserved: []ProbeAnswer{ProbeNotFound}},
+		{name: "unknown sandbox", probe: true, err: NewErrSandboxNotFound("sbx", PresenceAbsent), wantStatus: http.StatusNotFound, wantAnswer: "false", wantObserved: []ProbeAnswer{ProbeNotFound}},
 		{name: "held sandbox without a route keeps the not-found page", probe: true, err: NewErrSandboxNotFound("sbx", PresenceHeld), wantStatus: http.StatusBadGateway, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeClaimed}},
 		{name: "failed lookup cannot tell", probe: true, err: NewErrSandboxNotFound("sbx", PresenceUnknown), wantStatus: http.StatusBadGateway, wantObserved: []ProbeAnswer{ProbeUnknown}},
 		{name: "sandbox found but refused keeps its page", probe: true, err: NewErrSandboxResumePermissionDenied("sbx", nil), wantStatus: http.StatusForbidden, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeClaimed}},
