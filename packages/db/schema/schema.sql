@@ -411,11 +411,6 @@ CREATE TABLE projection.project_members (
     PRIMARY KEY (project_id, user_id)
 );
 
-CREATE TABLE projection.project_placements (
-    project_id uuid PRIMARY KEY REFERENCES public.teams (id) ON DELETE CASCADE,
-    revision bigint NOT NULL CHECK (revision > 0)
-);
-
 CREATE TABLE projection.project_settings (
     project_id uuid PRIMARY KEY REFERENCES public.teams (id) ON DELETE CASCADE,
     revision bigint NOT NULL CHECK (revision > 0),
