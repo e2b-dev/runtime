@@ -97,9 +97,18 @@ func (u *raUpstream) openedChunks() []int64 {
 func readAheadFlags(t *testing.T, window, nodeMax int) *featureflags.Client {
 	t.Helper()
 
+	return readAheadFlagValue(t, ldvalue.ObjectBuild().
+		Set("chunks", ldvalue.Int(window)).
+		Set("nodeMaxInflight", ldvalue.Int(nodeMax)).
+		Build())
+}
+
+// readAheadFlagValue serves v as the rootfs-read-ahead flag.
+func readAheadFlagValue(t *testing.T, v ldvalue.Value) *featureflags.Client {
+	t.Helper()
+
 	td := ldtestdata.DataSource()
-	td.Update(td.Flag(featureflags.RootfsReadAheadChunks.Key()).ValueForAll(ldvalue.Int(window)))
-	td.Update(td.Flag(featureflags.RootfsReadAheadNodeMaxInflight.Key()).ValueForAll(ldvalue.Int(nodeMax)))
+	td.Update(td.Flag(featureflags.RootfsReadAheadFlag.Key()).ValueForAll(v))
 	ff, err := featureflags.NewClientWithDatasource(td)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
@@ -107,20 +116,16 @@ func readAheadFlags(t *testing.T, window, nodeMax int) *featureflags.Client {
 	return ff
 }
 
-// readAheadFlagsWithStreams is readAheadFlags with the streams flag set too;
-// readAheadFlags leaves it at its default.
+// readAheadFlagsWithStreams is readAheadFlags with the streams field set too;
+// readAheadFlags leaves it out, so it takes its default.
 func readAheadFlagsWithStreams(t *testing.T, window, nodeMax, streams int) *featureflags.Client {
 	t.Helper()
 
-	td := ldtestdata.DataSource()
-	td.Update(td.Flag(featureflags.RootfsReadAheadChunks.Key()).ValueForAll(ldvalue.Int(window)))
-	td.Update(td.Flag(featureflags.RootfsReadAheadNodeMaxInflight.Key()).ValueForAll(ldvalue.Int(nodeMax)))
-	td.Update(td.Flag(featureflags.RootfsReadAheadStreams.Key()).ValueForAll(ldvalue.Int(streams)))
-	ff, err := featureflags.NewClientWithDatasource(td)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
-
-	return ff
+	return readAheadFlagValue(t, ldvalue.ObjectBuild().
+		Set("chunks", ldvalue.Int(window)).
+		Set("nodeMaxInflight", ldvalue.Int(nodeMax)).
+		Set("streams", ldvalue.Int(streams)).
+		Build())
 }
 
 // raCountsByChunker holds, per chunker, its read-ahead bytes by outcome
@@ -338,7 +343,7 @@ func TestReadAhead_StreamsIsClamped(t *testing.T) {
 			c := newRAChunker(t, ff, storage.RootFSObjectType, u)
 			defer c.Close()
 
-			assert.Equal(t, tc.wants, c.readAheadStreams(t.Context()))
+			assert.Equal(t, tc.wants, c.readAheadSettings(t.Context()).streams)
 		})
 	}
 }
@@ -503,7 +508,7 @@ func TestReadAhead_WindowIsClamped(t *testing.T) {
 	c := newRAChunker(t, readAheadFlags(t, 1000, 32), storage.RootFSObjectType, u)
 	defer c.Close()
 
-	assert.Equal(t, readAheadMaxChunks, c.readAheadWindow(t.Context()))
+	assert.Equal(t, readAheadMaxChunks, c.readAheadSettings(t.Context()).window)
 }
 
 func TestReadAhead_NodeCap(t *testing.T) {
@@ -877,5 +882,31 @@ func TestFetchAttrsMarkReadAheadOnly(t *testing.T) {
 		assert.Equal(t, "rootfs", ahead[storage.AttrFileType].AsString())
 		assert.Equal(t, "gcs", ahead[storage.AttrSource].AsString())
 		assert.Equal(t, demand[storage.AttrOutcome], ahead[storage.AttrOutcome], "same outcome label as a demand fetch")
+	}
+}
+
+func TestReadAhead_MalformedFlagIsOff(t *testing.T) {
+	t.Parallel()
+
+	for name, v := range map[string]ldvalue.Value{
+		"a bare number":         ldvalue.Int(8),
+		"chunks as a string":    ldvalue.Parse([]byte(`{"chunks": "8"}`)),
+		"an array":              ldvalue.Parse([]byte(`[8, 16, 32]`)),
+		"an object without any": ldvalue.Parse([]byte(`{}`)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			u := newRAUpstream(6)
+			c := newRAChunker(t, readAheadFlagValue(t, v), storage.RootFSObjectType, u)
+			defer c.Close()
+
+			for idx := range int64(4) {
+				readChunk(t, c, u, idx)
+			}
+			waitReadAheadIdle(t, c)
+			assert.Equal(t, []int64{0, 1, 2, 3}, u.openedChunks(), "a sequential reader gets no read-ahead")
+			assert.Zero(t, c.readAheadSettings(t.Context()).window)
+		})
 	}
 }

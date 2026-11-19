@@ -303,20 +303,32 @@ func olderSlot(a, b *readAheadStream) bool {
 	return a.lastUse < b.lastUse
 }
 
-// readAheadWindow returns how many chunks to keep fetching ahead of a
-// sequential reader of this file, 0 if read-ahead is off for it.
-func (c *Chunker) readAheadWindow(ctx context.Context) int {
-	if c.readAhead.unread == nil {
-		return 0
-	}
-
-	return min(c.featureFlags.IntFlag(ctx, featureflags.RootfsReadAheadChunks), readAheadMaxChunks)
+// readAheadSettings is one evaluation of the rootfs-read-ahead flag for a cold
+// read, clamped.
+type readAheadSettings struct {
+	// window is how many chunks to keep fetching ahead of a sequential reader
+	// of this file, 0 if read-ahead is off for it.
+	window int
+	// streams is how many sequential readers of this file to follow at once,
+	// between 1 and readAheadMaxStreams.
+	streams int
+	// nodeLimit caps the read-ahead fetches in flight on the node.
+	nodeLimit int64
 }
 
-// readAheadStreams returns how many sequential readers of this file to follow
-// at once, between 1 and readAheadMaxStreams.
-func (c *Chunker) readAheadStreams(ctx context.Context) int {
-	return max(1, min(c.featureFlags.IntFlag(ctx, featureflags.RootfsReadAheadStreams), readAheadMaxStreams))
+// readAheadSettings evaluates the rootfs-read-ahead flag once. Files that are
+// never read ahead skip the evaluation and get window 0.
+func (c *Chunker) readAheadSettings(ctx context.Context) readAheadSettings {
+	if c.readAhead.unread == nil {
+		return readAheadSettings{}
+	}
+	cfg := featureflags.GetRootfsReadAheadConfig(ctx, c.featureFlags)
+
+	return readAheadSettings{
+		window:    min(cfg.Chunks, readAheadMaxChunks),
+		streams:   max(1, min(cfg.Streams, readAheadMaxStreams)),
+		nodeLimit: int64(cfg.NodeMaxInflight),
+	}
 }
 
 // readAheadOnColdRead runs for a read of [off, off+length) the cache could not
@@ -327,7 +339,8 @@ func (c *Chunker) readAheadOnColdRead(ctx context.Context, off, length int64, up
 	if length <= 0 {
 		return
 	}
-	window := c.readAheadWindow(ctx)
+	settings := c.readAheadSettings(ctx)
+	window := settings.window
 	if window <= 0 {
 		return
 	}
@@ -339,8 +352,7 @@ func (c *Chunker) readAheadOnColdRead(ctx context.Context, off, length int64, up
 	if err != nil || lastLen <= 0 {
 		return
 	}
-	nodeLimit := int64(c.featureFlags.IntFlag(ctx, featureflags.RootfsReadAheadNodeMaxInflight))
-	nStreams := c.readAheadStreams(ctx)
+	nodeLimit, nStreams := settings.nodeLimit, settings.streams
 
 	ra := &c.readAhead
 	ra.mu.Lock()

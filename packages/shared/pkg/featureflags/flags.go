@@ -1024,30 +1024,71 @@ var (
 
 	MinChunkerReadSizeKB = NewIntFlag("min-chunker-read-size-kb", 16)
 
-	// RootfsReadAheadChunks is how many chunks a sequential cold reader of a
-	// rootfs build file keeps fetching ahead of itself. A reader counts as
-	// sequential once it misses two chunks in a row, or misses a chunk inside or
-	// at the edge of what was read ahead for it. 0 or negative turns read-ahead
-	// off; values above 64 are treated as 64. Evaluated on every cold read.
-	RootfsReadAheadChunks = NewIntFlag("rootfs-read-ahead-chunks", 0)
-	// RootfsReadAheadNodeMaxInflight caps the read-ahead fetches running at once
-	// across all files on the orchestrator. A chunk that finds the cap full is
-	// not fetched ahead then; the reader's next cold read tries it again, or the
-	// reader fetches it on demand. 0 or negative allows none.
-	RootfsReadAheadNodeMaxInflight = NewIntFlag("rootfs-read-ahead-node-max-inflight", 32)
-	// RootfsReadAheadStreams is how many sequential readers of one rootfs build
-	// file are followed at once, for example several sandboxes started from the
-	// same template. A cold read that continues none of them takes over the
-	// slot used least recently, so with more readers than slots they keep
-	// taking each other's slots and none gets read-ahead. The file may have a
-	// window of read-ahead fetches in flight per slot. Values below 1 are
-	// treated as 1, values above 32 as 32. Evaluated on every cold read.
-	RootfsReadAheadStreams = NewIntFlag("rootfs-read-ahead-streams", 4)
-
 	// MaxParallelBuildReadSegments limits concurrent backing reads within one fragmented build read.
 	// 1 or lower keeps the existing serial path.
 	MaxParallelBuildReadSegments = NewIntFlag("max-parallel-build-read-segments", 1)
 )
+
+// RootfsReadAheadFlag configures read-ahead for sandboxes reading their rootfs
+// cold and in order, as one JSON object:
+//
+//	{"chunks": 8, "streams": 16, "nodeMaxInflight": 32}
+//
+// chunks is how many chunks a sequential cold reader of a rootfs build file
+// keeps fetching ahead of itself. A reader counts as sequential once it misses
+// two chunks in a row, or misses a chunk inside or at the edge of what was read
+// ahead for it. 0 or negative turns read-ahead off; above 64 is treated as 64.
+//
+// streams is how many sequential readers of one rootfs build file are followed
+// at once, for example several sandboxes started from the same template. A cold
+// read that continues none of them takes over the slot used least recently, so
+// with more readers than slots they keep taking each other's slots and none
+// gets read-ahead. The file may have chunks fetches in flight per slot. Below 1
+// is treated as 1, above 32 as 32.
+//
+// nodeMaxInflight caps the read-ahead fetches running at once across all files
+// on the orchestrator. A chunk that finds the cap full is not fetched ahead
+// then; the reader's next cold read tries it again, or the reader fetches it on
+// demand. 0 or negative allows none.
+//
+// A missing or non-numeric field takes its default (chunks 0, streams 4,
+// nodeMaxInflight 32), so an unset or malformed value leaves read-ahead off.
+// Evaluated on every cold rootfs read, so a change applies without a restart.
+var RootfsReadAheadFlag = NewJSONFlag("rootfs-read-ahead", ldvalue.Null())
+
+// Defaults of RootfsReadAheadFlag's fields.
+const (
+	RootfsReadAheadDefaultChunks          = 0
+	RootfsReadAheadDefaultStreams         = 4
+	RootfsReadAheadDefaultNodeMaxInflight = 32
+)
+
+// RootfsReadAheadConfig is one evaluation of RootfsReadAheadFlag, before the
+// reader clamps it.
+type RootfsReadAheadConfig struct {
+	Chunks          int
+	Streams         int
+	NodeMaxInflight int
+}
+
+// GetRootfsReadAheadConfig evaluates RootfsReadAheadFlag.
+func GetRootfsReadAheadConfig(ctx context.Context, ff *Client, contexts ...ldcontext.Context) RootfsReadAheadConfig {
+	v := ff.JSONFlag(ctx, RootfsReadAheadFlag, contexts...)
+	num := func(key string, def int) int {
+		f := v.GetByKey(key)
+		if !f.IsNumber() {
+			return def
+		}
+
+		return f.IntValue()
+	}
+
+	return RootfsReadAheadConfig{
+		Chunks:          num("chunks", RootfsReadAheadDefaultChunks),
+		Streams:         num("streams", RootfsReadAheadDefaultStreams),
+		NodeMaxInflight: num("nodeMaxInflight", RootfsReadAheadDefaultNodeMaxInflight),
+	}
+}
 
 // ReclaimConfigFlag holds per-step caps in milliseconds for the pre-pause
 // reclaim chain. Missing/zero/negative values disable the step.
