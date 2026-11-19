@@ -350,9 +350,9 @@ image, which E2B Embed runs on port 3001 against the API alone.
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
   follow the teardown's. `sync_team_cluster_assignment` copies a team's cluster to the
   cluster service, which records it as a project assignment. Every write of a team's cluster
-  enqueues it: an assignment and a detachment in their own transaction, a project deletion in
-  its transaction when a cluster service is configured, and a project upsert that leaves the
-  project on a cluster after its commit, because that row is written through the auth pool. A
+  enqueues it: a project deletion in its transaction when a cluster service is configured, and a
+  project upsert that leaves the project on a cluster or carries a cluster revision after its
+  commit, because that row is written through the auth pool. A
   failed enqueue there fails the upsert, so the caller's retry enqueues it. The job reads the
   team when it runs, under a per-team advisory lock it holds until the cluster service has
   answered, so two jobs for one team cannot write out of order. An attempt whose database
@@ -500,7 +500,7 @@ it leaves a snapshot); and enqueues the teardown again, which is a no-op while o
 
 Afterwards the API's deleted-project middleware, running after authentication, answers 404 to every
 non-GET route under `/unstable/management/` that names `{projectID}`: the upsert, member, limits,
-block, ban and settings writes, and cluster assignment and detachment. The DELETE is exempt so a retry
+block, ban and settings writes. The DELETE is exempt so a retry
 still reaches it. Shared auth refuses a membership or API key still left for the project with 403, and the API leaves the project out of a user's team list. Volumes, builds
 and stored artifacts are not reclaimed.
 
@@ -528,12 +528,11 @@ replaces what they wrote.
 #### Cluster lifecycle (`/unstable/management/clusters`)
 
 The owning management service also drives a replay-safe cluster lifecycle under
-`/unstable/management/clusters/{clusterID}` and
-`/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. Clusters
-are registered with the cluster service, not through the API, and a project is assigned to one by
-the cluster ID its project upsert carries. A caller detaches that exact assignment before provider
-cleanup, and deletes the cluster only after no project references it. An inexact detach, or
-deletion of a referenced cluster, returns a conflict. The assignment does not check the project's
+`/unstable/management/clusters/{clusterID}`, with service JWTs only. Clusters are registered with
+the cluster service, not through the API. A project moves onto a cluster, or back to the local
+cluster, only through the cluster ID and revision its project upsert carries, and deleting the
+project clears its cluster. The caller deletes the cluster only after no project references it;
+deleting a referenced cluster returns a conflict. The assignment does not check the project's
 tier; the caller decides which projects may use a cluster. Deleting a protected cluster or
 checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
 A caller that deletes a cluster's projects before the cluster first lists them with
@@ -557,8 +556,6 @@ requested during the delete waits for it and is then refused. If the cluster ser
 remove the record, the transaction rolls back but the recorded deletion stays, so assignments
 remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
 cluster still releases its templates.
-An unversioned detach from a matching cluster returns `cluster_assignment_revision_required` in
-the shared error response's `error_code` if the placement is versioned.
 
 The operator dashboard reads and edits cluster records at the cluster service, not through the
 API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API

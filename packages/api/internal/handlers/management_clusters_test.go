@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,75 +25,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
-
-// Registration replays are the cluster service's; this covers the routes the
-// API serves from its own tables.
-func TestManagementClusterLifecycleReplaysAndEndsAbsent(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
-	clusterID := uuid.New()
-	insertCluster(t, db, clusterID, false)
-	store, _ := newManagementStore(t, db)
-	putTeamOnCluster(t, db, projectID, clusterID)
-
-	for range 2 {
-		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, projectID, clusterID).Code)
-	}
-	for range 2 {
-		require.Equal(t, http.StatusNoContent, callManagementDeleteCluster(t, store, clusterID).Code)
-	}
-
-	require.False(t, clusterExists(t, db, clusterID))
-}
-
-func TestManagementDetachProjectClusterRefusesADifferentCluster(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	clusterID := uuid.New()
-	store, auth := newManagementStore(t, db)
-	insertCluster(t, db, clusterID, false)
-	projectID := assignTeam(t, db, clusterID)
-
-	response := callManagementDetachProjectCluster(t, store, projectID, uuid.New())
-
-	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	require.Equal(t, clusterID, assignedProjectCluster(t, db, projectID))
-	require.Empty(t, *auth.invalidatedTeamIDs)
-}
-
-func TestManagementDetachProjectClusterAnswersNotFoundForAMissingProject(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	store, auth := newManagementStore(t, db)
-
-	response := callManagementDetachProjectCluster(t, store, uuid.New(), uuid.New())
-
-	require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
-	require.Empty(t, *auth.invalidatedTeamIDs)
-}
-
-// The detachment is stored before the eviction, so a failed eviction answers
-// 500 and the caller's retry, which finds the team detached, evicts again.
-func TestManagementClusterDetachmentReportsAFailedCacheEviction(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	clusterID := uuid.New()
-	insertCluster(t, db, clusterID, false)
-	projectID := assignTeam(t, db, clusterID)
-	store, auth := newManagementStore(t, db)
-	auth.invalidateTeamErr = errors.New("cache unavailable")
-
-	response := callManagementDetachProjectCluster(t, store, projectID, clusterID)
-
-	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
-	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
-	require.Nil(t, teamCluster(t, db, projectID), "the write is kept")
-}
 
 func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t *testing.T) {
 	t.Parallel()
@@ -405,9 +335,8 @@ func TestManagementListClusterProjectsListsLiveAssignments(t *testing.T) {
 	store, _ := newManagementStore(t, db)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	assigned, detached := assignTeam(t, db, clusterID), assignTeam(t, db, clusterID)
+	assigned := assignTeam(t, db, clusterID)
 	testutils.CreateTestTeam(t, db)
-	require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, detached, clusterID).Code)
 
 	require.Equal(t, []uuid.UUID{assigned}, listClusterProjects(t, store, clusterID))
 	absent := listClusterProjects(t, store, uuid.New())
@@ -545,12 +474,6 @@ func callManagementRequestClusterDeletion(t *testing.T, store *APIStore, cluster
 	return callManagement(t, store, http.MethodPut, "/unstable/management/clusters/"+clusterID.String()+"/deletion", "").Code
 }
 
-func callManagementDetachProjectCluster(t *testing.T, store *APIStore, projectID, clusterID uuid.UUID) *httptest.ResponseRecorder {
-	t.Helper()
-
-	return callManagement(t, store, http.MethodDelete, "/unstable/management/projects/"+projectID.String()+"/cluster/"+clusterID.String(), "")
-}
-
 func listClusterProjects(t *testing.T, store *APIStore, clusterID uuid.UUID) []uuid.UUID {
 	t.Helper()
 
@@ -566,30 +489,6 @@ func putTeamOnCluster(t *testing.T, db *testutils.Database, teamID, clusterID uu
 	t.Helper()
 
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, teamID))
-}
-
-func requireClusterErrorCode(t *testing.T, response *httptest.ResponseRecorder, code string) {
-	t.Helper()
-
-	var body api.Error
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	require.NotNil(t, body.ErrorCode)
-	require.Equal(t, code, *body.ErrorCode)
-	require.EqualValues(t, response.Code, body.Code)
-}
-
-func assignedProjectCluster(t *testing.T, db *testutils.Database, projectID uuid.UUID) uuid.UUID {
-	t.Helper()
-
-	var clusterID uuid.UUID
-	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT cluster_id FROM public.teams WHERE id = $1`,
-		func(rows pgx.Rows) error {
-			require.True(t, rows.Next())
-
-			return rows.Scan(&clusterID)
-		}, projectID))
-
-	return clusterID
 }
 
 // waitForBlockedQuery waits until a statement matching the LIKE pattern waits

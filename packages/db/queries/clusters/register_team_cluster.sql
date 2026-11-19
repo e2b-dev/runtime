@@ -63,16 +63,6 @@ SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NOT NULL;
 
--- name: LockTeamCluster :one
-SELECT cluster_id
-FROM public.teams
-WHERE id = sqlc.arg(team_id)::uuid
-FOR UPDATE;
-
--- name: DetachTeamCluster :exec
-UPDATE public.teams SET cluster_id = NULL
-WHERE id = sqlc.arg(team_id)::uuid AND cluster_id = sqlc.arg(cluster_id)::uuid;
-
 -- name: LockTeamClusterSync :exec
 -- Serializes the syncs of one team's cluster to the cluster service, so each
 -- reads the team only after the sync before it has finished.

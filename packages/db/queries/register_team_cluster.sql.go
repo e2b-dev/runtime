@@ -66,21 +66,6 @@ func (q *Queries) DetachDeletedTemplatesFromCluster(ctx context.Context, cluster
 	return err
 }
 
-const detachTeamCluster = `-- name: DetachTeamCluster :exec
-UPDATE public.teams SET cluster_id = NULL
-WHERE id = $1::uuid AND cluster_id = $2::uuid
-`
-
-type DetachTeamClusterParams struct {
-	TeamID    uuid.UUID
-	ClusterID uuid.UUID
-}
-
-func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterParams) error {
-	_, err := q.db.Exec(ctx, detachTeamCluster, arg.TeamID, arg.ClusterID)
-	return err
-}
-
 const getLiveTeamCluster = `-- name: GetLiveTeamCluster :one
 SELECT cluster_id
 FROM public.teams
@@ -163,20 +148,6 @@ func (q *Queries) ListLiveTeamClusters(ctx context.Context, arg ListLiveTeamClus
 		return nil, err
 	}
 	return items, nil
-}
-
-const lockTeamCluster = `-- name: LockTeamCluster :one
-SELECT cluster_id
-FROM public.teams
-WHERE id = $1::uuid
-FOR UPDATE
-`
-
-func (q *Queries) LockTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, lockTeamCluster, teamID)
-	var cluster_id *uuid.UUID
-	err := row.Scan(&cluster_id)
-	return cluster_id, err
 }
 
 const lockTeamClusterSync = `-- name: LockTeamClusterSync :exec

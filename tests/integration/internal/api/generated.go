@@ -1284,7 +1284,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_assignment_revision_required, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -5569,13 +5569,6 @@ type ClientInterface interface {
 	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 	ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ManagementDetachProjectCluster Detach a cluster assignment from a project.
-	//
-	// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-	//
-	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-	ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ManagementUpsertProjectLimitsWithBody Reconcile effective limits for a project.
 	//
 	// Takes any type of body and a specified content type.
@@ -8185,23 +8178,6 @@ func (c *Client) ManagementApplyProjectBlockWithBody(ctx context.Context, projec
 // Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 func (c *Client) ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementApplyProjectBlockRequest(c.Server, projectID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementDetachProjectCluster Detach a cluster assignment from a project.
-//
-// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-//
-// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementDetachProjectClusterRequest(c.Server, projectID, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -13881,47 +13857,6 @@ func NewManagementApplyProjectBlockRequestWithBody(server string, projectID open
 	return req, nil
 }
 
-// NewManagementDetachProjectClusterRequest constructs an http.Request for the ManagementDetachProjectCluster method
-func NewManagementDetachProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewManagementUpsertProjectLimitsRequest calls the generic ManagementUpsertProjectLimits builder with application/json body
 func NewManagementUpsertProjectLimitsRequest(server string, projectID openapi_types.UUID, body ManagementUpsertProjectLimitsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16318,15 +16253,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 	ManagementApplyProjectBlockWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error)
-
-	// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
-	//
-	// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-	ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error)
 
 	// ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
 	//
@@ -24623,68 +24549,6 @@ func (r ManagementApplyProjectBlockResponse) ContentType() string {
 	return ""
 }
 
-type ManagementDetachProjectClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementDetachProjectClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementDetachProjectClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementDetachProjectClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementDetachProjectClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ManagementUpsertProjectLimitsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28584,21 +28448,6 @@ func (c *ClientWithResponses) ManagementApplyProjectBlockWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseManagementApplyProjectBlockResponse(rsp)
-}
-
-// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
-//
-// Detaching a matching versioned assignment returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-func (c *ClientWithResponses) ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error) {
-	rsp, err := c.ManagementDetachProjectCluster(ctx, projectID, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementDetachProjectClusterResponse(rsp)
 }
 
 // ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
@@ -36165,56 +36014,6 @@ func ParseManagementApplyProjectBlockResponse(rsp *http.Response) (*ManagementAp
 			return nil, err
 		}
 		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseManagementDetachProjectClusterResponse parses an HTTP response from a ManagementDetachProjectClusterWithResponse call
-func ParseManagementDetachProjectClusterResponse(rsp *http.Response) (*ManagementDetachProjectClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementDetachProjectClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500

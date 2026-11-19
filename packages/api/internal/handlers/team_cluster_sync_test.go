@@ -34,24 +34,8 @@ func TestEveryWriteOfATeamsClusterEnqueuesItsSync(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	clusterID, otherID := uuid.New(), uuid.New()
+	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	insertCluster(t, db, otherID, false)
-
-	t.Run("a detachment, and not one that detached nothing", func(t *testing.T) {
-		t.Parallel()
-		teamID := assignTeam(t, db, clusterID)
-
-		require.Equal(t, http.StatusConflict, callManagementDetachProjectCluster(t, store, teamID, otherID).Code)
-		assert.Zero(t, teamClusterSyncJobs(t, db, teamID))
-
-		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, teamID, clusterID).Code)
-		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
-		assert.Nil(t, teamCluster(t, db, teamID))
-
-		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, teamID, clusterID).Code)
-		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
-	})
 
 	t.Run("a project deletion", func(t *testing.T) {
 		t.Parallel()

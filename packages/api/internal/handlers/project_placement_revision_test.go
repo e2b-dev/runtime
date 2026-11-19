@@ -41,7 +41,6 @@ func TestProjectPlacementAcknowledgesOnlyTheAppliedTarget(t *testing.T) {
 		assert.Equal(t, cluster, teamCluster(t, db, project.id))
 	}
 	ack(push(1, &target), http.StatusCreated, 1, &target)
-	assert.Equal(t, http.StatusConflict, callManagementDetachProjectCluster(t, store, project.id, target).Code)
 	cache.invalidateTeamErr = errors.New("eviction failed")
 	assert.Equal(t, http.StatusInternalServerError, push(2, nil).Code)
 	assert.Nil(t, teamCluster(t, db, project.id))
@@ -63,55 +62,36 @@ func TestProjectPlacementAcknowledgesOnlyTheAppliedTarget(t *testing.T) {
 	assert.Nil(t, teamCluster(t, db, project.id))
 }
 
-func TestWaitingPlacementWritesObserveThePreviousWritersRevision(t *testing.T) {
+func TestAWaitingPlacementWriteObservesThePreviousWritersRevision(t *testing.T) {
 	t.Parallel()
 
-	for _, operation := range []string{"stale upsert", "unversioned detach"} {
-		t.Run(operation, func(t *testing.T) {
-			t.Parallel()
-			db := testutils.SetupDatabase(t)
-			store, _ := newManagementStore(t, db)
-			project := newProjectFixture()
-			target := createCluster(t, db)
-			require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
-			var committedTarget *uuid.UUID
-			projectPath := "/unstable/management/projects/" + project.id.String()
-			method, path, body := http.MethodDelete, projectPath+"/cluster/"+target.String(), ""
-			wantStatus := http.StatusConflict
-			switch operation {
-			case "stale upsert":
-				request := project.request()
-				request.ClusterId, request.ClusterRevision = &target, new(int64(1))
-				method, path, body, wantStatus = http.MethodPut, projectPath, mustJSON(t, request), http.StatusOK
-			case "unversioned detach":
-				committedTarget = &target
-			}
+	db := testutils.SetupDatabase(t)
+	store, _ := newManagementStore(t, db)
+	project := newProjectFixture()
+	target := createCluster(t, db)
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	stale := project.request()
+	stale.ClusterId, stale.ClusterRevision = &target, new(int64(1))
 
-			tx, err := db.SqlcClient.Pool().Begin(t.Context())
-			require.NoError(t, err)
-			defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
-			_, err = tx.Exec(t.Context(), "UPDATE public.teams SET cluster_id = $2 WHERE id = $1", project.id, committedTarget)
-			require.NoError(t, err)
-			_, err = tx.Exec(t.Context(), "INSERT INTO projection.project_placements (project_id, revision) VALUES ($1, 2)", project.id)
-			require.NoError(t, err)
+	tx, err := db.SqlcClient.Pool().Begin(t.Context())
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	_, err = tx.Exec(t.Context(), "UPDATE public.teams SET cluster_id = NULL WHERE id = $1", project.id)
+	require.NoError(t, err)
+	_, err = tx.Exec(t.Context(), "INSERT INTO projection.project_placements (project_id, revision) VALUES ($1, 2)", project.id)
+	require.NoError(t, err)
 
-			reply := startPlacementWrite(t, store, method, path, body)
-			waitForBlockedBy(t, db, int(tx.Conn().PgConn().PID()))
-			require.NoError(t, tx.Commit(t.Context()))
+	reply := startPlacementWrite(t, store, http.MethodPut, "/unstable/management/projects/"+project.id.String(), mustJSON(t, stale))
+	waitForBlockedBy(t, db, int(tx.Conn().PgConn().PID()))
+	require.NoError(t, tx.Commit(t.Context()))
 
-			res := <-reply
-			require.Equal(t, wantStatus, res.Code, res.Body.String())
-			if wantStatus == http.StatusOK {
-				var stored api.ManagementProject
-				require.NoError(t, json.Unmarshal(res.Body.Bytes(), &stored))
-				assert.Equal(t, new(int64(2)), stored.ClusterRevision)
-				assert.Nil(t, stored.ClusterId)
-			} else {
-				requireClusterErrorCode(t, res, clusterAssignmentRevisionRequiredCode)
-			}
-			assert.Equal(t, committedTarget, teamCluster(t, db, project.id))
-		})
-	}
+	res := <-reply
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+	var stored api.ManagementProject
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &stored))
+	assert.Equal(t, new(int64(2)), stored.ClusterRevision)
+	assert.Nil(t, stored.ClusterId)
+	assert.Nil(t, teamCluster(t, db, project.id))
 }
 
 func TestPlacementTargetIsNotVisibleBeforeItsRevisionCommits(t *testing.T) {

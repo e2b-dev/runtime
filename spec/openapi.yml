@@ -3925,7 +3925,7 @@ components:
             count out of bounds in the stored build; a server error, since no
             request field reaches that check), internal_server_error,
             secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress,
-            idempotency_outcome_unknown, cluster_assignment_revision_required,
+            idempotency_outcome_unknown,
             sandbox_snapshot_guest_agent_unresponsive (a plain resume of a
             snapshot taken while the sandbox guest agent was not responding;
             resume it with memory: false).
@@ -7920,36 +7920,6 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-
-  /unstable/management/projects/{projectID}/cluster/{clusterID}:
-    parameters:
-      - name: projectID
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - $ref: "#/components/parameters/clusterID"
-    delete:
-      operationId: managementDetachProjectCluster
-      summary: Detach a cluster assignment from a project.
-      description: >-
-        Detaching a matching versioned assignment returns cluster_assignment_revision_required.
-        Answers 404 when the project is missing or deleted.
-      tags: [admin]
-      security:
-        - AdminJWTAuth: []
-      responses:
-        "204":
-          description: The matching assignment is absent.
-        "401":
-          $ref: "#/components/responses/401"
-        "404":
-          $ref: "#/components/responses/404"
-        "409":
-          $ref: "#/components/responses/409"
-        "500":
-          $ref: "#/components/responses/500"
 
   /unstable/management/projects/{projectID}:
     parameters:

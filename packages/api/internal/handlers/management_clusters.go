@@ -10,25 +10,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
-	"github.com/e2b-dev/infra/packages/api/internal/management"
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
-
-const clusterAssignmentRevisionRequiredCode = "cluster_assignment_revision_required"
 
 var (
 	errLocalClusterDeletion       = errors.New("the local cluster cannot be deleted")
@@ -318,86 +312,6 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 func (a *APIStore) enqueueTeamClusterSync(ctx context.Context, tx pgx.Tx, teamID uuid.UUID) error {
 	if _, err := a.riverClient.InsertTx(ctx, tx, outbox.SyncTeamClusterAssignment{TeamID: teamID}, nil); err != nil {
 		return fmt.Errorf("enqueue team cluster sync: %w", err)
-	}
-
-	return nil
-}
-
-func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID openapi_types.UUID, clusterID api.ClusterID) {
-	ctx := c.Request.Context()
-	attrs := []attribute.KeyValue{telemetry.WithTeamID(projectID.String()), telemetry.WithClusterID(clusterID)}
-
-	detached, err := a.detachTeamCluster(ctx, projectID, clusterID)
-	if dberrors.IsNotFoundError(err) {
-		a.sendAPIStoreError(c, http.StatusNotFound, "Team not found")
-
-		return
-	}
-	if errors.Is(err, management.ErrPlacementConflict) {
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentRevisionRequiredCode, ClientMsg: "Cluster assignment requires a revision"})
-
-		return
-	}
-	if err != nil {
-		telemetry.ReportCriticalError(ctx, "detach cluster from project failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to detach cluster from team")
-
-		return
-	}
-	if !detached {
-		a.sendAPIStoreError(c, http.StatusConflict, "Team is assigned to a different cluster")
-
-		return
-	}
-
-	if err := a.authService.InvalidateTeamCache(ctx, projectID); err != nil {
-		telemetry.ReportCriticalError(ctx, "invalidate team cache after cluster detachment failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to invalidate team cache after cluster detachment")
-
-		return
-	}
-
-	c.Status(http.StatusNoContent)
-}
-
-// A team already on the local cluster satisfies a repeated detach.
-func (a *APIStore) detachTeamCluster(ctx context.Context, teamID, clusterID uuid.UUID) (bool, error) {
-	txDB, tx, err := a.sqlcDB.WithTx(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin cluster detachment: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-
-	current, err := txDB.LockTeamCluster(ctx, teamID)
-	if err != nil {
-		return false, err
-	}
-	if current == nil || *current != clusterID {
-		return current == nil, nil
-	}
-	if err := requireUnversionedPlacement(ctx, txDB, teamID); err != nil {
-		return false, err
-	}
-	if err := txDB.DetachTeamCluster(ctx, queries.DetachTeamClusterParams{TeamID: teamID, ClusterID: clusterID}); err != nil {
-		return false, err
-	}
-	if err := a.enqueueTeamClusterSync(ctx, tx, teamID); err != nil {
-		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit cluster detachment: %w", err)
-	}
-
-	return true, nil
-}
-
-func requireUnversionedPlacement(ctx context.Context, txDB *sqlcdb.Client, teamID uuid.UUID) error {
-	revision, err := txDB.GetProjectPlacementRevision(ctx, teamID)
-	if err != nil {
-		return fmt.Errorf("read project placement revision: %w", err)
-	}
-	if revision > 0 {
-		return management.ErrPlacementConflict
 	}
 
 	return nil
