@@ -416,7 +416,8 @@ retries.
   target. A different target returns 409 without changing the project, regardless of revision.
   With `cluster_revision` present, omitting `cluster_id` explicitly requests local.
   The API records the highest accepted revision for that target in `projection.project_placements`
-  and returns it after cache eviction, including on metadata-only updates. Scheduling reads only
+  and returns it when present. Every successful upsert includes cache eviction, even on creation
+  or replay without a revision. Scheduling reads only
   `teams.cluster_id`. A changed slug
   renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an

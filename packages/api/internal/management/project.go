@@ -69,14 +69,8 @@ func (s *Service) UpsertProject(ctx context.Context, jobs JobEnqueuer, project P
 	}
 
 	// A placement acknowledgement covers cache eviction, including on replay.
-	if !created || stored.ClusterRevision > 0 {
-		if err := s.cache.InvalidateTeamCache(ctx, project.ID); err != nil {
-			if stored.ClusterRevision > 0 {
-				return Project{}, false, fmt.Errorf("invalidate project placement cache: %w", err)
-			}
-			logger.L().Error(ctx, "invalidating team cache after project reconcile",
-				logger.WithTeamID(project.ID.String()), zap.Error(err))
-		}
+	if err := s.cache.InvalidateTeamCache(ctx, project.ID); err != nil {
+		return Project{}, false, fmt.Errorf("invalidate project placement cache: %w", err)
 	}
 
 	if stored.ClusterID != nil || project.ClusterRevision > 0 && s.clusters != nil {
