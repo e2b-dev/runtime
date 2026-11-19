@@ -1024,6 +1024,26 @@ var (
 
 	MinChunkerReadSizeKB = NewIntFlag("min-chunker-read-size-kb", 16)
 
+	// RootfsReadAheadChunks is how many chunks a sequential cold reader of a
+	// rootfs build file keeps fetching ahead of itself. A reader counts as
+	// sequential once it misses two chunks in a row, or misses a chunk inside or
+	// at the edge of what was read ahead for it. 0 or negative turns read-ahead
+	// off; values above 64 are treated as 64. Evaluated on every cold read.
+	RootfsReadAheadChunks = NewIntFlag("rootfs-read-ahead-chunks", 0)
+	// RootfsReadAheadNodeMaxInflight caps the read-ahead fetches running at once
+	// across all files on the orchestrator. A chunk that finds the cap full is
+	// not fetched ahead then; the reader's next cold read tries it again, or the
+	// reader fetches it on demand. 0 or negative allows none.
+	RootfsReadAheadNodeMaxInflight = NewIntFlag("rootfs-read-ahead-node-max-inflight", 32)
+	// RootfsReadAheadStreams is how many sequential readers of one rootfs build
+	// file are followed at once, for example several sandboxes started from the
+	// same template. A cold read that continues none of them takes over the
+	// slot used least recently, so with more readers than slots they keep
+	// taking each other's slots and none gets read-ahead. The file may have a
+	// window of read-ahead fetches in flight per slot. Values below 1 are
+	// treated as 1, values above 32 as 32. Evaluated on every cold read.
+	RootfsReadAheadStreams = NewIntFlag("rootfs-read-ahead-streams", 4)
+
 	// MaxParallelBuildReadSegments limits concurrent backing reads within one fragmented build read.
 	// 1 or lower keeps the existing serial path.
 	MaxParallelBuildReadSegments = NewIntFlag("max-parallel-build-read-segments", 1)
