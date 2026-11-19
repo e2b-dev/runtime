@@ -3,10 +3,10 @@
 -- branches.
 
 -- Taken first, so the branch is decided by whether the project exists rather
--- than by an insert failing. Returns the slug so a reconcile can tell whether
--- it moves.
+-- than by an insert failing. Returns the slug and the cluster so a reconcile
+-- can tell whether either moves.
 -- name: LockManagedTeam :one
-SELECT slug FROM public.teams
+SELECT slug, cluster_id FROM public.teams
 WHERE id = sqlc.arg(id)::uuid
 FOR UPDATE;
 

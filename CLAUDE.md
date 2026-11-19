@@ -224,7 +224,7 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 - Local stack includes Grafana + Loki + Tempo + Mimir
 - Telemetry setup: `packages/shared/pkg/telemetry/`
 - Logger: `packages/shared/pkg/logger/` (Zap with OTEL)
-- Log field keys are lower snake_case (`transition_id`; dots allowed, as in `sandbox.id`); revive's `string-format` rule enforces it
+- Log field and span attribute keys are lower snake_case (`transition_id`; dots allowed, as in `sandbox.id`); revive's `string-format` rule enforces it
 - Profiling: API exposes pprof on `/debug/pprof/` (see `packages/api/Makefile` profiler target)
 
 ### CI/CD Workflows

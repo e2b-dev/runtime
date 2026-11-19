@@ -1585,58 +1585,104 @@ func (s *Server) admitEnvd(ctx context.Context, sbx *sandbox.Sandbox, rpc string
 
 		return false, nil
 	}
+	refuse := func(cause envdProbeCause, err error) (bool, error) {
+		s.recordAdmission(ctx, sbx.Runtime.TeamID, rpc, outcome, cause, waited)
+
+		return false, err
+	}
 
 	// A guest that powered off while the probe waited is kept with its
 	// disk, not gone: the retryable refusal keeps the record for the
 	// disk-only pause that follows, whatever the caller allows.
 	if sbx.GuestPoweredOff() {
-		s.recordPauseAdmission(ctx, sbx.Runtime.TeamID, rpc, outcome, waited)
-
-		return false, envdUnresponsiveStatus(sbx.Runtime.SandboxID).Err()
+		return refuse(envdProbePoweredOff, envdUnresponsiveStatus(sbx.Runtime.SandboxID).Err())
 	}
 	// An in-place checkpoint keeps the entry listed with the guest frozen,
 	// so its marker is read first. Cleanup keeps the entry until its end,
 	// so the exit is read with the map; only this execution's exit counts.
 	// Neither is a hung agent, so neither is proceeded past.
 	if sbx.CheckpointInFlight() {
-		s.recordPauseAdmission(ctx, sbx.Runtime.TeamID, rpc, outcome, waited)
-
-		return false, held
+		return refuse(envdProbeCheckpointInFlight, held)
 	}
 	cur, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 	if !live || (cur == sbx && sbx.Exited() && !s.exitMayKeepSandbox(ctx, sbx)) {
-		s.recordPauseAdmission(ctx, sbx.Runtime.TeamID, rpc, outcome, waited)
 		// A reboot in place that took the sandbox while the probe waited
 		// is retryable too, with the detail the API restores the record
 		// on whatever its restore flag says.
 		if s.sandboxFactory.Sandboxes.Rebooting(sbx.Runtime.SandboxID) {
-			return false, checkpointInProgressStatus(codes.ResourceExhausted, "sandbox '%s' is rebooting, please retry", sbx.Runtime.SandboxID).Err()
+			return refuse(envdProbeRebooting, checkpointInProgressStatus(codes.ResourceExhausted, "sandbox '%s' is rebooting, please retry", sbx.Runtime.SandboxID).Err())
 		}
 		if s.detachedCheckpointFor(sbx.Runtime.SandboxID) != nil {
-			return false, held
+			return refuse(envdProbeCheckpointInFlight, held)
 		}
 		// The claim can end between the two reads, leaving a live
 		// successor and no claim; a second read tells it from a gone one.
-		if cur, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID); live && (cur != sbx || !sbx.Exited()) {
-			return false, held
+		if cur, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID); live {
+			if cur != sbx {
+				return refuse(envdProbeSuperseded, held)
+			}
+			// This execution, listed again: a checkpoint that captured
+			// nothing put it back, so the checkpoint is the cause unless
+			// the power-off it found has been read by now.
+			if !sbx.Exited() {
+				if sbx.GuestPoweredOff() {
+					return refuse(envdProbePoweredOff, held)
+				}
+
+				return refuse(envdProbeCheckpointInFlight, held)
+			}
+		}
+		if sbx.Exited() {
+			return refuse(envdProbeExited, status.Error(codes.NotFound, "sandbox not found"))
 		}
 
-		return false, status.Error(codes.NotFound, "sandbox not found")
+		return refuse(envdProbeNotFound, status.Error(codes.NotFound, "sandbox not found"))
 	}
 	// Only a live execution that is this one is proceeded past: a successor
 	// under the same ID means the probed one is gone, and the retryable
 	// refusal keeps the API's record of the successor.
 	if strict || cur != sbx || sbx.Exited() {
-		s.recordPauseAdmission(ctx, sbx.Runtime.TeamID, rpc, outcome, waited)
+		cause := envdProbeUnanswered
+		switch {
+		case cur != sbx:
+			cause = envdProbeSuperseded
+		case sbx.Exited():
+			cause = envdProbeExitedHeld
+		}
 		sbxlogger.E(sbx).Warn(ctx, "Refusing "+rpc+": envd is not answering health checks", zap.Duration("probe", waited))
 
-		return false, envdUnresponsiveStatus(sbx.Runtime.SandboxID).Err()
+		return refuse(cause, envdUnresponsiveStatus(sbx.Runtime.SandboxID).Err())
 	}
-	s.recordPauseAdmission(ctx, sbx.Runtime.TeamID, rpc, sandbox.SnapshotAdmissionEnvdUnhealthyProceeded, waited)
+	s.recordAdmission(ctx, sbx.Runtime.TeamID, rpc, sandbox.SnapshotAdmissionEnvdUnhealthyProceeded, envdProbeUnanswered, waited)
 	sbxlogger.E(sbx).Warn(ctx, "Proceeding with "+rpc+" although envd is not answering health checks; the snapshot is recorded as taken over an unresponsive guest agent", zap.Duration("probe", waited))
 
 	return true, nil
 }
+
+// envdProbeCause is why the envd probe did not admit a snapshot: the cause
+// attribute beside the envd_unhealthy outcomes on the admission counter. The
+// meanings here are the vocabulary's one source; the counter description
+// lists the names and the dashboard panel paraphrases them for its reader.
+type envdProbeCause string
+
+const (
+	// envdProbeUnanswered: envd did not answer /health on a live execution that is this one.
+	envdProbeUnanswered envdProbeCause = "unanswered"
+	// envdProbePoweredOff: the guest powered off while the probe waited; the sandbox is kept with its disk.
+	envdProbePoweredOff envdProbeCause = "powered_off"
+	// envdProbeCheckpointInFlight: a checkpoint, in place or detached, holds the guest.
+	envdProbeCheckpointInFlight envdProbeCause = "checkpoint_in_flight"
+	// envdProbeRebooting: a reboot in place took the sandbox while the probe waited.
+	envdProbeRebooting envdProbeCause = "rebooting"
+	// envdProbeSuperseded: a successor execution holds the sandbox ID.
+	envdProbeSuperseded envdProbeCause = "superseded"
+	// envdProbeExited: the probed execution exited and is gone; the caller is answered not found.
+	envdProbeExited envdProbeCause = "exited"
+	// envdProbeExitedHeld: the probed execution exited while the lifecycle may still keep its sandbox listed; the caller is told to retry.
+	envdProbeExitedHeld envdProbeCause = "exited_held"
+	// envdProbeNotFound: the execution left the live map without exiting.
+	envdProbeNotFound envdProbeCause = "not_found"
+)
 
 // exitMayKeepSandbox reports whether an execution's exit can leave its
 // sandbox listed rather than gone: a guest held after it powered off, or
@@ -1651,19 +1697,31 @@ func (s *Server) exitMayKeepSandbox(ctx context.Context, sbx *sandbox.Sandbox) b
 		s.featureFlags.BoolFlag(ctx, featureflags.GuestRebootInPlaceFlag)
 }
 
-// recordPauseAdmission records one admission decision. The wait histogram
-// samples only the outcomes that actually waited or probed; an empty outcome
-// (the caller's context ended mid-wait) records nothing — no decision was made.
+// recordPauseAdmission records one admission decision that names no cause.
 func (s *Server) recordPauseAdmission(ctx context.Context, teamID, rpc string, outcome sandbox.SnapshotAdmissionOutcome, waited time.Duration) {
+	s.recordAdmission(ctx, teamID, rpc, outcome, "", waited)
+}
+
+// recordAdmission records one admission decision; cause is kept only on the
+// probe's not-admitted outcomes, as the counter's description promises, so
+// the sums by outcome and rpc stay what they were. The wait histogram
+// samples only the outcomes that actually waited or probed; an empty outcome
+// (the caller's context ended mid-wait) records nothing — no decision was
+// made.
+func (s *Server) recordAdmission(ctx context.Context, teamID, rpc string, outcome sandbox.SnapshotAdmissionOutcome, cause envdProbeCause, waited time.Duration) {
 	if outcome == "" {
 		return
 	}
 
-	s.pauseAdmissionCounter.Add(ctx, 1, metric.WithAttributes(
+	attrs := []attribute.KeyValue{
 		attribute.String("outcome", string(outcome)),
 		attribute.String("rpc", rpc),
 		telemetry.WithTeamID(teamID),
-	))
+	}
+	if cause != "" && (outcome == sandbox.SnapshotAdmissionEnvdUnhealthy || outcome == sandbox.SnapshotAdmissionEnvdUnhealthyProceeded) {
+		attrs = append(attrs, attribute.String("cause", string(cause)))
+	}
+	s.pauseAdmissionCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 	if outcome == sandbox.SnapshotAdmissionReadyAfterWait || outcome == sandbox.SnapshotAdmissionRefused ||
 		outcome == sandbox.SnapshotAdmissionEnvdHealthy || outcome == sandbox.SnapshotAdmissionEnvdUnhealthy ||

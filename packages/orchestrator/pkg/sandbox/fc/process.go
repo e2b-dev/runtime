@@ -1430,7 +1430,7 @@ func (p *Process) DrainBalloon(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "drain-balloon")
 	outcome := "ok"
 	defer func() {
-		span.SetAttributes(attribute.String("drain-balloon.outcome", outcome))
+		span.SetAttributes(attribute.String("drain_balloon.outcome", outcome))
 		span.End()
 	}()
 

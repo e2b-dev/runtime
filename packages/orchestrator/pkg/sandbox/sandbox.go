@@ -2937,7 +2937,7 @@ func (s *Sandbox) Pause(
 	}
 
 	ctx, span := tracer.Start(ctx, "sandbox-snapshot", trace.WithAttributes(
-		attribute.Bool("fs-only-snapshot", pauseOpts.filesystemSnapshot),
+		attribute.Bool("fs_only_snapshot", pauseOpts.filesystemSnapshot),
 		attribute.String("balloon_mode", s.BalloonMode()),
 	))
 	defer span.End()

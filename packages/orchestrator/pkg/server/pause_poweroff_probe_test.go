@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 )
@@ -37,7 +38,7 @@ func TestPause_PowerOffDuringTheProbeKeepsTheHeldSandbox(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			s, _ := admissionMetricsServer(t, -1)
+			s, reader := admissionMetricsServer(t, -1)
 			s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
 			sbx := envdProbeSandbox(t, "sbx-poweroff-probe-"+name, c.slot)
 			require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
@@ -56,6 +57,11 @@ func TestPause_PowerOffDuringTheProbeKeepsTheHeldSandbox(t *testing.T) {
 			require.True(t, ok, "the held sandbox stays live for the pause that follows")
 			assert.Same(t, sbx, live)
 			assert.True(t, sbx.GuestPoweredOff(), "the hold stays for the timeout action")
+			points := admissionCounterPoints(t, reader)
+			require.Len(t, points, 1)
+			attrs := attrsAsMap(t, points[0].Attributes)
+			assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrs["outcome"])
+			assert.Equal(t, string(envdProbePoweredOff), attrs["cause"], "the power-off, not a hung agent, is the cause")
 		})
 	}
 }
@@ -84,7 +90,7 @@ func envdProbeWithPowerOffHoldFlagClient(t *testing.T) *featureflags.Client {
 func TestPause_ExitDuringTheProbeBeforeTheHoldIsRetryableWithTheHoldFlagOn(t *testing.T) {
 	t.Parallel()
 
-	s, _ := admissionMetricsServer(t, -1)
+	s, reader := admissionMetricsServer(t, -1)
 	s.featureFlags = envdProbeWithPowerOffHoldFlagClient(t)
 	sbx := envdProbeSandbox(t, "sbx-poweroff-exit", 92)
 	require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
@@ -101,6 +107,11 @@ func TestPause_ExitDuringTheProbeBeforeTheHoldIsRetryableWithTheHoldFlagOn(t *te
 	live, ok := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 	require.True(t, ok, "the exited execution stays listed until the lifecycle decides")
 	assert.Same(t, sbx, live)
+	points := admissionCounterPoints(t, reader)
+	require.Len(t, points, 1)
+	attrs := attrsAsMap(t, points[0].Attributes)
+	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrs["outcome"])
+	assert.Equal(t, string(envdProbeExitedHeld), attrs["cause"], "the exit is the cause, named as held while the lifecycle may keep the sandbox")
 }
 
 // A process that took the ACPI power-off device is held by the lifecycle

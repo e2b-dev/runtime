@@ -1,0 +1,108 @@
+From b90e190a95c256d6ef0d7ed5ad42649decfdb6e0 Mon Sep 17 00:00:00 2001
+From: Jack Thomson <jackabt@amazon.com>
+Date: Mon, 19 Jan 2026 15:42:36 +0000
+Subject: [PATCH] virtio_balloon: Support wait on ACK for hinting
+
+This RFC patch adds a new virtio feature for the virtio-balloon driver
+during free page hinting, which will wait on device ack before
+committing the range to the free_page_list. The reason for the change is
+it allows the device to modify this range without it being reclaimed
+from the free_page_list before the ack is sent. As expected, testing
+shows this adds overhead to the hinting run duration, increasing it by
+~30% with our Firecracker setup. Currently free page hinting is used
+mainly for live migration, but this would open it up for a new use-case.
+
+We would like to leverage this with MADV_DONTNEED to reduce RSS of a
+guest. We'd like to use hinting because of the flexibility of control it
+brings compared to reporting, allowing memory to be reclaimed in
+deterministic periods. The traditional balloon device was tested to be
+much slower when compared to hinting for these workloads. Currently,
+without this synchronization, hinted pages may be reclaimed from the
+free list before the device finishes processing them, making hinting
+unsuitable for this use-case.
+
+Signed-off-by: Jack Thomson <jackabt@amazon.com>
+---
+ drivers/virtio/virtio_balloon.c     | 19 ++++++++++++++++---
+ include/uapi/linux/virtio_balloon.h |  1 +
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index fba0d8c5dcdf..856031c14311 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -575,7 +575,8 @@ static int init_vqs(struct virtio_balloon *vb)
+ 
+ 	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_FREE_PAGE_HINT)) {
+ 		names[VIRTIO_BALLOON_VQ_FREE_PAGE] = "free_page_vq";
+-		callbacks[VIRTIO_BALLOON_VQ_FREE_PAGE] = NULL;
++		if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK))
++			callbacks[VIRTIO_BALLOON_VQ_FREE_PAGE] = balloon_ack;
+ 	}
+ 
+ 	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_REPORTING)) {
+@@ -648,8 +649,11 @@ static int send_cmd_id_start(struct virtio_balloon *vb)
+ 					virtio_balloon_cmd_id_received(vb));
+ 	sg_init_one(&sg, &vb->cmd_id_active, sizeof(vb->cmd_id_active));
+ 	err = virtqueue_add_outbuf(vq, &sg, 1, &vb->cmd_id_active, GFP_KERNEL);
+-	if (!err)
++	if (!err) {
+ 		virtqueue_kick(vq);
++		if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK))
++			wait_event(vb->acked, virtqueue_get_buf(vq, &unused));
++	}
+ 	return err;
+ }
+ 
+@@ -665,8 +669,11 @@ static int send_cmd_id_stop(struct virtio_balloon *vb)
+ 
+ 	sg_init_one(&sg, &vb->cmd_id_stop, sizeof(vb->cmd_id_stop));
+ 	err = virtqueue_add_outbuf(vq, &sg, 1, &vb->cmd_id_stop, GFP_KERNEL);
+-	if (!err)
++	if (!err) {
+ 		virtqueue_kick(vq);
++		if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK))
++			wait_event(vb->acked, virtqueue_get_buf(vq, &unused));
++	}
+ 	return err;
+ }
+ 
+@@ -702,6 +709,8 @@ static int get_free_page_and_send(struct virtio_balloon *vb)
+ 			return err;
+ 		}
+ 		virtqueue_kick(vq);
++		if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK))
++			wait_event(vb->acked, virtqueue_get_buf(vq, &unused));
+ 		spin_lock_irq(&vb->free_page_list_lock);
+ 		balloon_page_push(&vb->free_page_list, page);
+ 		vb->num_free_page_blocks++;
+@@ -1155,3 +1164,6 @@ static int virtballoon_validate(struct virtio_device *vdev)
+ 	__virtio_clear_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
++	if (!virtio_has_feature(vdev, VIRTIO_BALLOON_F_FREE_PAGE_HINT))
++		__virtio_clear_bit(vdev, VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK);
++
+ 	return 0;
+ }
+@@ -1163,6 +1175,7 @@ static unsigned int features[] = {
+ 	VIRTIO_BALLOON_F_FREE_PAGE_HINT,
+ 	VIRTIO_BALLOON_F_PAGE_POISON,
+ 	VIRTIO_BALLOON_F_REPORTING,
++	VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK,
+ };
+ 
+ static struct virtio_driver virtio_balloon_driver = {
+diff --git a/include/uapi/linux/virtio_balloon.h b/include/uapi/linux/virtio_balloon.h
+index ddaa45e723c4..1705d9191f7e 100644
+--- a/include/uapi/linux/virtio_balloon.h
++++ b/include/uapi/linux/virtio_balloon.h
+@@ -37,6 +37,7 @@
+ #define VIRTIO_BALLOON_F_FREE_PAGE_HINT	3 /* VQ to report free pages */
+ #define VIRTIO_BALLOON_F_PAGE_POISON	4 /* Guest is using page poisoning */
+ #define VIRTIO_BALLOON_F_REPORTING	5 /* Page reporting virtqueue */
++#define VIRTIO_BALLOON_F_HINT_WAIT_ON_ACK	6 /* Page hinting waits on device ack */
+ 
+ /* Size of a PFN in the balloon interface. */
+ #define VIRTIO_BALLOON_PFN_SHIFT 12
+-- 
+2.51.0
+

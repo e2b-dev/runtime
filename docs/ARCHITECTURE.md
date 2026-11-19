@@ -271,7 +271,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Cluster records**: the API keeps no remote cluster record itself. It reads and writes them
   (endpoint, edge token, sandbox domain, auth organization, deletion protection and request,
   telemetry identity) over a unary gRPC contract (`e2b.clusters.management.v1`) on the cluster
-  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`, which stores them in the `clusters` table. The
+  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`; nothing in the API's database refers to them. The
   `cluster_service` client hop is on unless `E2B_TLS_CLUSTER_SERVICE_CLIENT_MODE` says otherwise,
   and may be off only with `ENVIRONMENT=local` or a loopback address, because the service hands its
   callers every cluster's edge token. Team assignment, template cleanup and the shared-cluster
@@ -509,18 +509,23 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
-request has the cluster service set `clusters.deletion_requested_at`, returns a conflict while
-deletion protection is on, and succeeds for an absent cluster and on repeat. From then on a
-check constraint keeps deletion protection off, and a trigger on `teams` refuses to newly assign a
-team to the cluster (`cluster_assignment_cluster_deleting` from the assignment route, a conflict
-from the project upsert carrying the cluster ID). The trigger takes a key-share lock on the cluster
-row before it checks, so an assignment either commits before the deletion is recorded, where the
+request has the cluster service record the deletion, returns a conflict while deletion
+protection is on, and succeeds for an absent cluster and on repeat. From then on deletion
+protection stays off, and the API refuses to newly assign a team to the cluster
+(`cluster_assignment_cluster_deleting` from the assignment route, a conflict from the project
+upsert carrying the cluster ID); keeping a team's current cluster is not a new assignment. A new
+assignment, by either route, checks the cluster with the cluster service while holding a
+per-cluster advisory lock in the database, and the deletion request takes that lock once the
+deletion is recorded. So an assignment either commits before the request returns, where the
 caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
 The cluster delete then checks deletion protection with the cluster service, and in one
-transaction refuses a cluster a live team still uses, soft-deletes its templates and clears
-it from teams and templates deleted earlier; last, the cluster service removes the record. A team
-assigned between those steps makes that last step return a conflict with the templates
-already deleted, and a retry once the team is detached finishes the delete.
+transaction holding the same lock refuses a cluster a live team still uses, soft-deletes its
+templates and clears it from teams and templates deleted earlier, has the cluster service record
+the deletion and remove the record, and releases any template recorded meanwhile. An assignment
+requested during the delete waits for it and is then refused. If the cluster service does not
+remove the record, the transaction rolls back but the recorded deletion stays, so assignments
+remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
+cluster still releases its templates.
 Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
 `cluster_assignment_*`) in the shared error response; callers use that code rather than the
 human-readable message, and treat uncoded or unknown reasons as generic errors.
