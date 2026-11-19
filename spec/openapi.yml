@@ -1300,6 +1300,13 @@ components:
             Online vCPU target for the sandbox. Defaults to the template's
             cpuCount; at most its maxCpuCount (fixed-size templates accept only
             their cpuCount).
+        memoryMB:
+          allOf:
+            - $ref: "#/components/schemas/MemoryMB"
+          description: >-
+            Memory for the sandbox in MiB. Defaults to the template's memoryMB;
+            at most its maxMemoryMB, in steps of 128 MiB above memoryMB
+            (templates without a maxMemoryMB accept only their memoryMB).
         autoPause:
           type: boolean
           default: false
@@ -1364,6 +1371,13 @@ components:
             Online vCPU target for the sandbox. Defaults to the template's
             cpuCount; at most its maxCpuCount (fixed-size templates accept only
             their cpuCount).
+        memoryMB:
+          allOf:
+            - $ref: "#/components/schemas/MemoryMB"
+          description: >-
+            Memory for the sandbox in MiB. Defaults to the template's memoryMB;
+            at most its maxMemoryMB, in steps of 128 MiB above memoryMB
+            (templates without a maxMemoryMB accept only their memoryMB).
         autoPause:
           type: boolean
           default: false
@@ -1445,6 +1459,13 @@ components:
             Online vCPU target for the resumed sandbox. Defaults to the
             snapshot's cpuCount; at most the template's maxCpuCount
             (fixed-size templates accept only their cpuCount).
+        memoryMB:
+          allOf:
+            - $ref: "#/components/schemas/MemoryMB"
+          description: >-
+            Memory for the resumed sandbox in MiB. Defaults to the memory the
+            sandbox had when it was paused; at least that, and at most the
+            template's maxMemoryMB, in steps of 128 MiB above its memoryMB.
         autoPause:
           type: boolean
           deprecated: true

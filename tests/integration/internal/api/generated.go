@@ -1626,7 +1626,10 @@ type NewSandbox struct {
 	Iam *SandboxIam `json:"iam,omitempty"`
 
 	// Mcp MCP configuration for the sandbox
-	Mcp      *Mcp                  `json:"mcp,omitempty"`
+	Mcp *Mcp `json:"mcp,omitempty"`
+
+	// MemoryMB Memory for the sandbox in MiB. Defaults to the template's memoryMB; at most its maxMemoryMB, in steps of 128 MiB above memoryMB (templates without a maxMemoryMB accept only their memoryMB).
+	MemoryMB *MemoryMB             `json:"memoryMB,omitempty"`
 	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
 	Network  *SandboxNetworkConfig `json:"network,omitempty"`
 
@@ -1664,7 +1667,10 @@ type NewSandboxV2 struct {
 	Iam *SandboxIam `json:"iam,omitempty"`
 
 	// Mcp MCP configuration for the sandbox
-	Mcp      *Mcp                  `json:"mcp,omitempty"`
+	Mcp *Mcp `json:"mcp,omitempty"`
+
+	// MemoryMB Memory for the sandbox in MiB. Defaults to the template's memoryMB; at most its maxMemoryMB, in steps of 128 MiB above memoryMB (templates without a maxMemoryMB accept only their memoryMB).
+	MemoryMB *MemoryMB             `json:"memoryMB,omitempty"`
 	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
 	Network  *SandboxNetworkConfig `json:"network,omitempty"`
 
@@ -1914,6 +1920,9 @@ type ResumedSandbox struct {
 
 	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
+
+	// MemoryMB Memory for the resumed sandbox in MiB. Defaults to the memory the sandbox had when it was paused; at least that, and at most the template's maxMemoryMB, in steps of 128 MiB above its memoryMB.
+	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
 	Timeout *int32 `json:"timeout,omitempty"`

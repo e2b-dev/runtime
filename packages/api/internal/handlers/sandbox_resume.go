@@ -198,6 +198,13 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		return
 	}
 
+	if apiErr := orchestrator.CheckSandboxMemory(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.MemoryMB); apiErr != nil {
+		setMemoryOverrideOutcome(c, body.Memory, apiErr)
+		apierrors.SendAPIError(c, apiErr)
+
+		return
+	}
+
 	sbxlogger.E(&sbxlogger.SandboxMetadata{
 		SandboxID:  sandboxID,
 		TemplateID: lastSnapshot.Snapshot.EnvID,
@@ -215,6 +222,7 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		demandsFilesystemBoot(body.Memory, lastSnapshot.Snapshot),
 		nil, // mcp
 		orchestrator.WithCPUCount(body.CpuCount),
+		orchestrator.WithMemoryMB(body.MemoryMB),
 	)
 	setMemoryOverrideOutcome(c, body.Memory, createErr)
 	setResumeGateOutcome(c, body.Memory, lastSnapshot.EnvBuild, createErr)

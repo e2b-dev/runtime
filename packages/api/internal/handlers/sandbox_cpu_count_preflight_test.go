@@ -127,3 +127,74 @@ func TestResume_CPUCountRefusedBeforeTheStartIsReserved(t *testing.T) {
 		})
 	}
 }
+
+// A resume naming a memoryMB the snapshot cannot take is refused before the
+// start is reserved, as cpuCount is, including a size below the one the
+// sandbox was paused with.
+func TestResume_MemoryRefusedBeforeTheStartIsReserved(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name      string
+		flag      bool
+		maxRAMMB  *int64
+		pausedMB  int64
+		requested api.MemoryMB
+		wantCode  string
+	}{
+		{name: "fixed-size snapshot", flag: true, requested: 4096, wantCode: "sandbox_memory_not_resizable"},
+		{name: "feature off", flag: false, maxRAMMB: new(int64(8192)), requested: 4096, wantCode: "sandbox_memory_disabled"},
+		{name: "shrink below the paused size", flag: true, maxRAMMB: new(int64(8192)), pausedMB: 4096, requested: 3072, wantCode: "sandbox_memory_shrink_unsupported"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := testutils.SetupDatabase(t)
+			teamID := testutils.CreateTestTeam(t, db)
+			sandboxID := "i" + id.Generate()
+			totalDiskSize := int64(1024)
+			envdVersion := "v1.0.0"
+			row, err := db.SqlcClient.UpsertSnapshot(t.Context(), queries.UpsertSnapshotParams{
+				TemplateID:         id.Generate(),
+				TeamID:             teamID,
+				SandboxID:          sandboxID,
+				BaseTemplateID:     testutils.CreateTestTemplate(t, db, teamID),
+				StartedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				Vcpu:               2,
+				RamMb:              2048,
+				TotalDiskSizeMb:    &totalDiskSize,
+				Metadata:           dbtypes.JSONBStringMap{},
+				KernelVersion:      "6.1.0",
+				FirecrackerVersion: "1.4.0",
+				EnvdVersion:        &envdVersion,
+				OriginNodeID:       "test-node",
+				StatusGroup:        dbtypes.BuildStatusGroupReady,
+				Config:             &dbtypes.PausedSandboxConfig{},
+				StartMemoryMb:      startMemoryMB(tt.pausedMB),
+			})
+			require.NoError(t, err)
+			require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
+				"UPDATE public.env_builds SET max_ram_mb = $1 WHERE id = $2", tt.maxRAMMB, row.BuildID))
+
+			store := &APIStore{
+				snapshotCache:         snapshotcache.NewSnapshotCache(db.SqlcClient, redis_utils.SetupInstance(t)),
+				featureFlags:          resizableTemplatesFlags(t, tt.flag),
+				resumeBackendOverride: notFoundResumeBackend{},
+			}
+			recorder, ginCtx := cpuCountRequest(t, teamID, "/sandboxes/"+sandboxID+"/resume",
+				api.PostSandboxesSandboxIDResumeJSONRequestBody{MemoryMB: &tt.requested})
+
+			store.PostSandboxesSandboxIDResume(ginCtx, sandboxID)
+
+			requireCPUCountRefused(t, recorder, tt.wantCode)
+		})
+	}
+}
+
+func startMemoryMB(mb int64) *int64 {
+	if mb == 0 {
+		return nil
+	}
+
+	return &mb
+}

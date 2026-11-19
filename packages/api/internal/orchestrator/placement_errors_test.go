@@ -61,6 +61,7 @@ func TestPlacementAPIError(t *testing.T) {
 		wantErrorCode string
 		wantMsg       string
 		wantRetry     apierrors.Retryability
+		memoryNamed   bool
 	}{
 		{
 			name:          "timeout",
@@ -134,6 +135,26 @@ func TestPlacementAPIError(t *testing.T) {
 			wantCode:      http.StatusInternalServerError,
 			wantErrorCode: "sandbox_create_refused",
 			wantMsg:       "Failed to place sandbox: invalid volume mount path",
+		},
+		{
+			// The node refused the memory_mb the API sent: the caller's size,
+			// answered as theirs with the memory code, not as a stored-data defect.
+			name:          "memory shrink refused by the node",
+			memoryNamed:   true,
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatusWith(t, codes.InvalidArgument, "memory hotplug refused (shrink): the requested memory does not fit the sandbox: a memory resume cannot shrink the sandbox: it asks for 0 MiB above boot RAM and its snapshot had 1024 MiB", http.StatusBadRequest)},
+			wantCode:      http.StatusBadRequest,
+			wantErrorCode: errCodeSandboxMemoryShrinkUnsupported,
+			wantMsg:       "memoryMB does not fit the sandbox: it is below the memory the sandbox's snapshot holds, and a sandbox's memory can only grow",
+		},
+		{
+			name:          "memory size refused by the node",
+			memoryNamed:   true,
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatusWith(t, codes.InvalidArgument, "memory hotplug refused (invalid_request): the requested memory does not fit the sandbox: 1026 MiB above boot RAM is not a whole number of 128 MiB slots", http.StatusBadRequest)},
+			wantCode:      http.StatusBadRequest,
+			wantErrorCode: errCodeSandboxMemoryOutOfRange,
+			wantMsg:       "memoryMB does not fit the sandbox: it is not the template's memoryMB plus whole 128 MiB slots within its maxMemoryMB",
 		},
 		{
 			// The API sent the size from its own record, not from the request:
@@ -294,7 +315,7 @@ func TestPlacementAPIError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			apiErr := placementAPIError(tt.err)
+			apiErr := placementAPIError(tt.err, tt.memoryNamed)
 
 			require.NotNil(t, apiErr)
 			assert.Equal(t, tt.wantCode, apiErr.Code)
