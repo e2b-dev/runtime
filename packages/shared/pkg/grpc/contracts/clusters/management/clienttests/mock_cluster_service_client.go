@@ -131,6 +131,89 @@ func (_c *MockClusterServiceClient_AssignProject_Call) RunAndReturn(run func(ctx
 	return _c
 }
 
+// CheckProjectCreation provides a mock function for the type MockClusterServiceClient
+func (_mock *MockClusterServiceClient) CheckProjectCreation(ctx context.Context, in *management.CheckProjectCreationRequest, opts ...grpc.CallOption) (*management.CheckProjectCreationResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for CheckProjectCreation")
+	}
+
+	var r0 *management.CheckProjectCreationResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.CheckProjectCreationRequest, ...grpc.CallOption) (*management.CheckProjectCreationResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.CheckProjectCreationRequest, ...grpc.CallOption) *management.CheckProjectCreationResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*management.CheckProjectCreationResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *management.CheckProjectCreationRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClusterServiceClient_CheckProjectCreation_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CheckProjectCreation'
+type MockClusterServiceClient_CheckProjectCreation_Call struct {
+	*mock.Call
+}
+
+// CheckProjectCreation is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *management.CheckProjectCreationRequest
+//   - opts ...grpc.CallOption
+func (_e *MockClusterServiceClient_Expecter) CheckProjectCreation(ctx any, in any, opts ...any) *MockClusterServiceClient_CheckProjectCreation_Call {
+	return &MockClusterServiceClient_CheckProjectCreation_Call{Call: _e.mock.On("CheckProjectCreation",
+		append([]any{ctx, in}, opts...)...)}
+}
+
+func (_c *MockClusterServiceClient_CheckProjectCreation_Call) Run(run func(ctx context.Context, in *management.CheckProjectCreationRequest, opts ...grpc.CallOption)) *MockClusterServiceClient_CheckProjectCreation_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *management.CheckProjectCreationRequest
+		if args[1] != nil {
+			arg1 = args[1].(*management.CheckProjectCreationRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClusterServiceClient_CheckProjectCreation_Call) Return(checkProjectCreationResponse *management.CheckProjectCreationResponse, err error) *MockClusterServiceClient_CheckProjectCreation_Call {
+	_c.Call.Return(checkProjectCreationResponse, err)
+	return _c
+}
+
+func (_c *MockClusterServiceClient_CheckProjectCreation_Call) RunAndReturn(run func(ctx context.Context, in *management.CheckProjectCreationRequest, opts ...grpc.CallOption) (*management.CheckProjectCreationResponse, error)) *MockClusterServiceClient_CheckProjectCreation_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // CreateCluster provides a mock function for the type MockClusterServiceClient
 func (_mock *MockClusterServiceClient) CreateCluster(ctx context.Context, in *management.CreateClusterRequest, opts ...grpc.CallOption) (*management.CreateClusterResponse, error) {
 	var tmpRet mock.Arguments

@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	ClusterService_CreateCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/CreateCluster"
 	ClusterService_GetCluster_FullMethodName               = "/e2b.clusters.management.v1.ClusterService/GetCluster"
+	ClusterService_CheckProjectCreation_FullMethodName     = "/e2b.clusters.management.v1.ClusterService/CheckProjectCreation"
 	ClusterService_ListClusters_FullMethodName             = "/e2b.clusters.management.v1.ClusterService/ListClusters"
 	ClusterService_UpdateCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/UpdateCluster"
 	ClusterService_DeleteCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/DeleteCluster"
@@ -39,6 +40,8 @@ const (
 type ClusterServiceClient interface {
 	CreateCluster(ctx context.Context, in *CreateClusterRequest, opts ...grpc.CallOption) (*CreateClusterResponse, error)
 	GetCluster(ctx context.Context, in *GetClusterRequest, opts ...grpc.CallOption) (*GetClusterResponse, error)
+	// Checks admission to a remote cluster without reserving a placement or returning credentials.
+	CheckProjectCreation(ctx context.Context, in *CheckProjectCreationRequest, opts ...grpc.CallOption) (*CheckProjectCreationResponse, error)
 	ListClusters(ctx context.Context, in *ListClustersRequest, opts ...grpc.CallOption) (*ListClustersResponse, error)
 	UpdateCluster(ctx context.Context, in *UpdateClusterRequest, opts ...grpc.CallOption) (*UpdateClusterResponse, error)
 	DeleteCluster(ctx context.Context, in *DeleteClusterRequest, opts ...grpc.CallOption) (*DeleteClusterResponse, error)
@@ -69,6 +72,16 @@ func (c *clusterServiceClient) GetCluster(ctx context.Context, in *GetClusterReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetClusterResponse)
 	err := c.cc.Invoke(ctx, ClusterService_GetCluster_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *clusterServiceClient) CheckProjectCreation(ctx context.Context, in *CheckProjectCreationRequest, opts ...grpc.CallOption) (*CheckProjectCreationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckProjectCreationResponse)
+	err := c.cc.Invoke(ctx, ClusterService_CheckProjectCreation_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +158,8 @@ func (c *clusterServiceClient) LookupProjectAssignments(ctx context.Context, in 
 type ClusterServiceServer interface {
 	CreateCluster(context.Context, *CreateClusterRequest) (*CreateClusterResponse, error)
 	GetCluster(context.Context, *GetClusterRequest) (*GetClusterResponse, error)
+	// Checks admission to a remote cluster without reserving a placement or returning credentials.
+	CheckProjectCreation(context.Context, *CheckProjectCreationRequest) (*CheckProjectCreationResponse, error)
 	ListClusters(context.Context, *ListClustersRequest) (*ListClustersResponse, error)
 	UpdateCluster(context.Context, *UpdateClusterRequest) (*UpdateClusterResponse, error)
 	DeleteCluster(context.Context, *DeleteClusterRequest) (*DeleteClusterResponse, error)
@@ -166,6 +181,9 @@ func (UnimplementedClusterServiceServer) CreateCluster(context.Context, *CreateC
 }
 func (UnimplementedClusterServiceServer) GetCluster(context.Context, *GetClusterRequest) (*GetClusterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCluster not implemented")
+}
+func (UnimplementedClusterServiceServer) CheckProjectCreation(context.Context, *CheckProjectCreationRequest) (*CheckProjectCreationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckProjectCreation not implemented")
 }
 func (UnimplementedClusterServiceServer) ListClusters(context.Context, *ListClustersRequest) (*ListClustersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListClusters not implemented")
@@ -238,6 +256,24 @@ func _ClusterService_GetCluster_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ClusterServiceServer).GetCluster(ctx, req.(*GetClusterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ClusterService_CheckProjectCreation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckProjectCreationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).CheckProjectCreation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_CheckProjectCreation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).CheckProjectCreation(ctx, req.(*CheckProjectCreationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -364,6 +400,10 @@ var ClusterService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCluster",
 			Handler:    _ClusterService_GetCluster_Handler,
+		},
+		{
+			MethodName: "CheckProjectCreation",
+			Handler:    _ClusterService_CheckProjectCreation_Handler,
 		},
 		{
 			MethodName: "ListClusters",
