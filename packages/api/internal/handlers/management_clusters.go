@@ -28,14 +28,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-const (
-	clusterAssignmentInvalidCode          = "cluster_assignment_invalid"
-	clusterAssignmentProjectNotFoundCode  = "cluster_assignment_project_not_found"
-	clusterAssignmentClusterNotFoundCode  = "cluster_assignment_cluster_not_found"
-	clusterAssignmentAlreadyAssignedCode  = "cluster_assignment_already_assigned"
-	clusterAssignmentClusterDeletingCode  = "cluster_assignment_cluster_deleting"
-	clusterAssignmentRevisionRequiredCode = "cluster_assignment_revision_required"
-)
+const clusterAssignmentRevisionRequiredCode = "cluster_assignment_revision_required"
 
 var (
 	errLocalClusterDeletion       = errors.New("the local cluster cannot be deleted")
@@ -318,111 +311,6 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 	}
 
 	c.Status(http.StatusNoContent)
-}
-
-func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID openapi_types.UUID, clusterID api.ClusterID) {
-	ctx := c.Request.Context()
-	attrs := []attribute.KeyValue{telemetry.WithTeamID(projectID.String()), telemetry.WithClusterID(clusterID)}
-
-	if clusterID == uuid.Nil {
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusBadRequest, ErrorCode: clusterAssignmentInvalidCode, ClientMsg: "cluster_id is required"})
-
-		return
-	}
-	// Without a cluster service the pool never loads a remote cluster.
-	if !a.requireClusterService(c) {
-		return
-	}
-
-	assigned, err := a.assignTeamCluster(ctx, projectID, clusterID)
-	switch {
-	case dberrors.IsNotFoundError(err):
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusNotFound, ErrorCode: clusterAssignmentProjectNotFoundCode, ClientMsg: "Team not found"})
-
-		return
-	case errors.Is(err, clusterassign.ErrNotFound):
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusNotFound, ErrorCode: clusterAssignmentClusterNotFoundCode, ClientMsg: "Cluster not found"})
-
-		return
-	case errors.Is(err, clusterassign.ErrDeleting):
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentClusterDeletingCode, ClientMsg: "Cluster is being deleted"})
-
-		return
-	case errors.Is(err, management.ErrPlacementConflict):
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentRevisionRequiredCode, ClientMsg: "Cluster assignment requires a revision"})
-
-		return
-	case err != nil:
-		telemetry.ReportCriticalError(ctx, "assign cluster to project failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to assign cluster to team")
-
-		return
-	}
-	if !assigned {
-		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentAlreadyAssignedCode, ClientMsg: "Team is already assigned to a different cluster"})
-
-		return
-	}
-
-	// Sandbox placement reads the cluster from the cached team. A failed
-	// eviction is reported so the caller retries; the replay is idempotent.
-	if err := a.authService.InvalidateTeamCache(ctx, projectID); err != nil {
-		telemetry.ReportCriticalError(ctx, "invalidate team cache after cluster assignment failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusInternalServerError, "Failed to invalidate team cache after cluster assignment")
-
-		return
-	}
-
-	c.Status(http.StatusNoContent)
-}
-
-// assignTeamCluster assigns the team to the cluster and reports false when it
-// is on a different one. A new assignment needs a cluster the cluster service
-// knows and is not deleting; keeping the team's current cluster is not one.
-func (a *APIStore) assignTeamCluster(ctx context.Context, teamID, clusterID uuid.UUID) (bool, error) {
-	txDB, tx, err := a.sqlcDB.WithTx(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin cluster assignment: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-
-	if err := clusterassign.Lock(ctx, tx, clusterID); err != nil {
-		return false, err
-	}
-	current, err := txDB.LockTeamCluster(ctx, teamID)
-	if err != nil {
-		return false, err
-	}
-	if current != nil && *current != clusterID {
-		return false, nil
-	}
-	if current == nil {
-		if err := requireUnversionedPlacement(ctx, txDB, teamID); err != nil {
-			return false, err
-		}
-		if err := clusterassign.Check(ctx, a.clusterService, clusterID); err != nil {
-			return false, err
-		}
-	}
-
-	result, err := txDB.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{
-		ClusterID:        clusterID,
-		TeamID:           teamID,
-		PreserveExisting: true,
-	})
-	if err != nil {
-		return false, err
-	}
-	if result.Assigned {
-		if err := a.enqueueTeamClusterSync(ctx, tx, teamID); err != nil {
-			return false, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit cluster assignment: %w", err)
-	}
-
-	return result.Assigned, nil
 }
 
 // enqueueTeamClusterSync has the outbox copy the team's cluster to the cluster

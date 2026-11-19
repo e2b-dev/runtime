@@ -69,29 +69,6 @@ FROM public.teams
 WHERE id = sqlc.arg(team_id)::uuid
 FOR UPDATE;
 
--- name: AssignTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = sqlc.arg(team_id)::uuid
-    FOR UPDATE
-),
-assigned AS (
-    UPDATE public.teams AS team
-    SET cluster_id = sqlc.arg(cluster_id)::uuid
-    FROM locked_team
-    WHERE team.id = sqlc.arg(team_id)::uuid
-      AND (
-          NOT sqlc.arg(preserve_existing)::boolean
-          OR locked_team.cluster_id IS NULL
-          OR locked_team.cluster_id = sqlc.arg(cluster_id)::uuid
-      )
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM assigned) AS assigned
-FROM locked_team;
-
 -- name: DetachTeamCluster :exec
 UPDATE public.teams SET cluster_id = NULL
 WHERE id = sqlc.arg(team_id)::uuid AND cluster_id = sqlc.arg(cluster_id)::uuid;

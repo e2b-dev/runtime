@@ -86,47 +86,13 @@ func (s *singleClusterService) set(state clusterState) {
 	s.state = state
 }
 
-// withClusterService points both the assignment route and the project upsert
-// at clusterService.
+// withClusterService points both the cluster routes and the project upsert at
+// clusterService.
 func withClusterService(t *testing.T, db *testutils.Database, store *APIStore, clusterService clustersgrpc.ClusterServiceClient) {
 	t.Helper()
 
 	store.clusterService = clusterService
 	store.managementService = management.NewService(db.AuthDB, db.SqlcClient, store.authService, clusterService, noop.NewMeterProvider())
-}
-
-func TestANewAssignmentChecksTheClusterService(t *testing.T) {
-	t.Parallel()
-
-	for name, tc := range map[string]struct {
-		state   clusterState
-		current bool
-		want    int
-		code    string
-	}{
-		"a cluster the service does not know":                             {state: clusterAbsent, want: http.StatusNotFound, code: clusterAssignmentClusterNotFoundCode},
-		"a cluster being deleted":                                         {state: clusterDeleting, want: http.StatusConflict, code: clusterAssignmentClusterDeletingCode},
-		"the team's current cluster, being deleted, is no new assignment": {state: clusterDeleting, current: true, want: http.StatusNoContent},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			db := testutils.SetupDatabase(t)
-			store, _ := newManagementStore(t, db)
-			clusterID, team := uuid.New(), testutils.CreateTestTeam(t, db)
-			if tc.current {
-				require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, team))
-			}
-			withClusterService(t, db, store, newSingleClusterService(t, clusterID, tc.state))
-
-			response := callManagementAssignProjectCluster(t, store, team, clusterID)
-			require.Equal(t, tc.want, response.Code, response.Body.String())
-			if tc.code != "" {
-				requireClusterErrorCode(t, response, tc.code)
-				require.Nil(t, teamCluster(t, db, team))
-			}
-		})
-	}
 }
 
 func TestUpsertProjectChecksANewClusterWithTheClusterService(t *testing.T) {
@@ -215,7 +181,10 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	clusterID, team := uuid.New(), testutils.CreateTestTeam(t, db)
+	clusterID, project := uuid.New(), newProjectFixture()
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	onCluster := project.request()
+	onCluster.ClusterId = &clusterID
 	clusterService := newSingleClusterService(t, clusterID, clusterPresent)
 	entered, release := make(chan struct{}), make(chan struct{})
 	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
@@ -232,7 +201,10 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 	go func() { deleted <- callManagementDeleteCluster(t, store, clusterID).Code }()
 	<-entered
 	assigned := make(chan int, 1)
-	go func() { assigned <- callManagementAssignProjectCluster(t, store, team, clusterID).Code }()
+	body := mustJSON(t, onCluster)
+	go func() {
+		assigned <- callManagement(t, store, http.MethodPut, "/unstable/management/projects/"+project.id.String(), body).Code
+	}()
 	require.Eventually(t, func() bool {
 		var waiting bool
 		err := db.SqlcClient.TestsRawSQLQuery(t.Context(), `
@@ -254,7 +226,7 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, <-deleted)
 	require.Equal(t, http.StatusNotFound, <-assigned)
-	require.Nil(t, teamCluster(t, db, team))
+	require.Nil(t, teamCluster(t, db, project.id))
 }
 
 // An assignment that read the cluster before the delete took the lock

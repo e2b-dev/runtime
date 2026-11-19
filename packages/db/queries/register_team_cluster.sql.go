@@ -11,48 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const assignTeamCluster = `-- name: AssignTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = $1::uuid
-    FOR UPDATE
-),
-assigned AS (
-    UPDATE public.teams AS team
-    SET cluster_id = $2::uuid
-    FROM locked_team
-    WHERE team.id = $1::uuid
-      AND (
-          NOT $3::boolean
-          OR locked_team.cluster_id IS NULL
-          OR locked_team.cluster_id = $2::uuid
-      )
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM assigned) AS assigned
-FROM locked_team
-`
-
-type AssignTeamClusterParams struct {
-	TeamID           uuid.UUID
-	ClusterID        uuid.UUID
-	PreserveExisting bool
-}
-
-type AssignTeamClusterRow struct {
-	ClusterID *uuid.UUID
-	Assigned  bool
-}
-
-func (q *Queries) AssignTeamCluster(ctx context.Context, arg AssignTeamClusterParams) (AssignTeamClusterRow, error) {
-	row := q.db.QueryRow(ctx, assignTeamCluster, arg.TeamID, arg.ClusterID, arg.PreserveExisting)
-	var i AssignTeamClusterRow
-	err := row.Scan(&i.ClusterID, &i.Assigned)
-	return i, err
-}
-
 const clusterUsedByMultipleTeams = `-- name: ClusterUsedByMultipleTeams :one
 SELECT COUNT(DISTINCT team_id) > 1
 FROM (

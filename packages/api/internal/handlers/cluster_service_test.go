@@ -241,15 +241,11 @@ func TestRemoteClusterAssignmentsAnswer503WithoutAClusterService(t *testing.T) {
 	store.clusterService = nil
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	projectID := testutils.CreateTestTeam(t, db)
 	project := newProjectFixture()
 	upsert := project.request()
 	upsert.ClusterId = &clusterID
 
-	assigned := callManagementAssignProjectCluster(t, store, projectID, clusterID)
 	upserted := callUpsertProject(t, store, project.id, upsert)
 
-	require.Equal(t, http.StatusServiceUnavailable, assigned.Code, assigned.Body.String())
 	require.Equal(t, http.StatusServiceUnavailable, upserted.Code, upserted.Body.String())
-	require.Nil(t, teamCluster(t, db, projectID))
 }

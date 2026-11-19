@@ -530,13 +530,12 @@ replaces what they wrote.
 The owning management service also drives a replay-safe cluster lifecycle under
 `/unstable/management/clusters/{clusterID}` and
 `/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. Clusters
-are registered with the cluster service, not through the API. A caller assigns a registered
-cluster only to the named project, detaches that exact assignment before provider cleanup, and
-deletes the cluster only after no project references it. Replaying the same assignment succeeds.
-A different assignment, an inexact detach, or deletion of a referenced cluster returns a
-conflict. The assignment does not check the project's tier; the caller decides which projects may
-use a cluster. Deleting a protected cluster or checking its destroy readiness
-(`GET .../destroy-readiness`) returns a conflict.
+are registered with the cluster service, not through the API, and a project is assigned to one by
+the cluster ID its project upsert carries. A caller detaches that exact assignment before provider
+cleanup, and deletes the cluster only after no project references it. An inexact detach, or
+deletion of a referenced cluster, returns a conflict. The assignment does not check the project's
+tier; the caller decides which projects may use a cluster. Deleting a protected cluster or
+checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
 A caller that deletes a cluster's projects before the cluster first lists them with
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
@@ -544,11 +543,9 @@ with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting an
 request has the cluster service record the deletion, returns a conflict while deletion
 protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
 temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
-with `Should-Retry: true`. Once deletion is recorded,
-protection stays off, and the API refuses to newly assign a team to the cluster
-(`cluster_assignment_cluster_deleting` from the assignment route, a conflict from the project
-upsert carrying the cluster ID); keeping a team's current cluster is not a new assignment. A new
-assignment, by either route, checks the cluster with the cluster service while holding a
+with `Should-Retry: true`. Once deletion is recorded, protection stays off, and the project upsert
+refuses to newly assign a team to the cluster with a conflict; keeping a team's current cluster is
+not a new assignment. A new assignment checks the cluster with the cluster service while holding a
 per-cluster advisory lock in the database, and the deletion request takes that lock once the
 deletion is recorded. So an assignment either commits before the request returns, where the
 caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
@@ -560,11 +557,8 @@ requested during the delete waits for it and is then refused. If the cluster ser
 remove the record, the transaction rolls back but the recorded deletion stays, so assignments
 remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
 cluster still releases its templates.
-Assignment rejections carry a stable `error_code` (`cluster_assignment_*`) in the shared error
-response; callers use that code rather than the human-readable message, and treat uncoded or
-unknown reasons as generic errors. Assigning a project already on a different cluster returns
-`cluster_assignment_already_assigned`. An unversioned assign from local or detach from its
-matching cluster returns `cluster_assignment_revision_required` if the placement is versioned.
+An unversioned detach from a matching cluster returns `cluster_assignment_revision_required` in
+the shared error response's `error_code` if the placement is versioned.
 
 The operator dashboard reads and edits cluster records at the cluster service, not through the
 API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API

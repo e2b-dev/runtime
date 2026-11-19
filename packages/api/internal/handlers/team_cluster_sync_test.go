@@ -38,31 +38,19 @@ func TestEveryWriteOfATeamsClusterEnqueuesItsSync(t *testing.T) {
 	insertCluster(t, db, clusterID, false)
 	insertCluster(t, db, otherID, false)
 
-	t.Run("an assignment, and not one refused", func(t *testing.T) {
-		t.Parallel()
-		teamID := testutils.CreateTestTeam(t, db)
-
-		require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, teamID, clusterID).Code)
-		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
-
-		require.Equal(t, http.StatusConflict, callManagementAssignProjectCluster(t, store, teamID, otherID).Code)
-		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
-	})
-
 	t.Run("a detachment, and not one that detached nothing", func(t *testing.T) {
 		t.Parallel()
-		teamID := testutils.CreateTestTeam(t, db)
-		require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, teamID, clusterID).Code)
+		teamID := assignTeam(t, db, clusterID)
 
 		require.Equal(t, http.StatusConflict, callManagementDetachProjectCluster(t, store, teamID, otherID).Code)
-		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
+		assert.Zero(t, teamClusterSyncJobs(t, db, teamID))
 
 		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, teamID, clusterID).Code)
-		assert.Equal(t, 2, teamClusterSyncJobs(t, db, teamID))
+		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
 		assert.Nil(t, teamCluster(t, db, teamID))
 
 		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, teamID, clusterID).Code)
-		assert.Equal(t, 2, teamClusterSyncJobs(t, db, teamID))
+		assert.Equal(t, 1, teamClusterSyncJobs(t, db, teamID))
 	})
 
 	t.Run("a project deletion", func(t *testing.T) {

@@ -1284,7 +1284,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, cluster_assignment_revision_required, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_assignment_revision_required, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -5488,7 +5488,7 @@ type ClientInterface interface {
 
 	// ManagementRequestClusterDeletion Record that a cluster is being deleted.
 	//
-	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 	//
 	// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
 	ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5506,6 +5506,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
@@ -5570,13 +5575,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
 	ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementAssignProjectCluster Assign a cluster to a project.
-	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-	//
-	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-	ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementUpsertProjectLimitsWithBody Reconcile effective limits for a project.
 	//
@@ -8006,7 +8004,7 @@ func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterI
 
 // ManagementRequestClusterDeletion Record that a cluster is being deleted.
 //
-// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 //
 // Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
 func (c *Client) ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8045,6 +8043,21 @@ func (c *Client) ManagementClusterDestroyReadiness(ctx context.Context, clusterI
 // Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementListClusterProjectsRequest(c.Server, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *Client) ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRemoveClusterRegistrationRequest(c.Server, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -8189,23 +8202,6 @@ func (c *Client) ManagementApplyProjectBlock(ctx context.Context, projectID open
 // Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
 func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementDetachProjectClusterRequest(c.Server, projectID, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementAssignProjectCluster Assign a cluster to a project.
-//
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-//
-// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-func (c *Client) ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementAssignProjectClusterRequest(c.Server, projectID, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -13676,6 +13672,40 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	return req, nil
 }
 
+// NewManagementRemoveClusterRegistrationRequest constructs an http.Request for the ManagementRemoveClusterRegistration method
+func NewManagementRemoveClusterRegistrationRequest(server string, clusterID ClusterID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/registration", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewManagementDeleteProjectRequest constructs an http.Request for the ManagementDeleteProject method
 func NewManagementDeleteProjectRequest(server string, projectID openapi_types.UUID) (*http.Request, error) {
 	var err error
@@ -13885,47 +13915,6 @@ func NewManagementDetachProjectClusterRequest(server string, projectID openapi_t
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewManagementAssignProjectClusterRequest constructs an http.Request for the ManagementAssignProjectCluster method
-func NewManagementAssignProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -16239,7 +16228,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 	//
-	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -16263,6 +16252,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
+
+	// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -16331,15 +16327,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
 	ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error)
-
-	// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
-	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-	ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error)
 
 	// ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
 	//
@@ -24312,6 +24299,54 @@ func (r ManagementListClusterProjectsResponse) ContentType() string {
 	return ""
 }
 
+type ManagementRemoveClusterRegistrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ManagementRemoveClusterRegistrationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ManagementRemoveClusterRegistrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ManagementRemoveClusterRegistrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ManagementRemoveClusterRegistrationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ManagementDeleteProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24644,82 +24679,6 @@ func (r ManagementDetachProjectClusterResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ManagementDetachProjectClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ManagementAssignProjectClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementAssignProjectClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementAssignProjectClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementAssignProjectClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementAssignProjectClusterResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28470,7 +28429,7 @@ func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Co
 
 // ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 //
-// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -28511,6 +28470,19 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseManagementListClusterProjectsResponse(rsp)
+}
+
+// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *ClientWithResponses) ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error) {
+	rsp, err := c.ManagementRemoveClusterRegistration(ctx, clusterID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseManagementRemoveClusterRegistrationResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -28627,21 +28599,6 @@ func (c *ClientWithResponses) ManagementDetachProjectClusterWithResponse(ctx con
 		return nil, err
 	}
 	return ParseManagementDetachProjectClusterResponse(rsp)
-}
-
-// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
-//
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns cluster_assignment_already_assigned. Assigning a project with versioned local placement returns cluster_assignment_revision_required. Answers 404 when the project is missing or deleted.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-func (c *ClientWithResponses) ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error) {
-	rsp, err := c.ManagementAssignProjectCluster(ctx, projectID, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementAssignProjectClusterResponse(rsp)
 }
 
 // ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
@@ -35960,6 +35917,42 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 	return response, nil
 }
 
+// ParseManagementRemoveClusterRegistrationResponse parses an HTTP response from a ManagementRemoveClusterRegistrationWithResponse call
+func ParseManagementRemoveClusterRegistrationResponse(rsp *http.Response) (*ManagementRemoveClusterRegistrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ManagementRemoveClusterRegistrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseManagementDeleteProjectResponse parses an HTTP response from a ManagementDeleteProjectWithResponse call
 func ParseManagementDeleteProjectResponse(rsp *http.Response) (*ManagementDeleteProjectResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36229,70 +36222,6 @@ func ParseManagementDetachProjectClusterResponse(rsp *http.Response) (*Managemen
 			return nil, err
 		}
 		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseManagementAssignProjectClusterResponse parses an HTTP response from a ManagementAssignProjectClusterWithResponse call
-func ParseManagementAssignProjectClusterResponse(rsp *http.Response) (*ManagementAssignProjectClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementAssignProjectClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 

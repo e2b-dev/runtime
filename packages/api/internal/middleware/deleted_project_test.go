@@ -32,7 +32,6 @@ func TestRefuseDeletedProjectGuardsExactlyTheProjectWrites(t *testing.T) {
 		"PUT /unstable/management/projects/:projectID/settings":              {},
 		"PUT /unstable/management/projects/:projectID/block":                 {},
 		"PUT /unstable/management/projects/:projectID/ban":                   {},
-		"PUT /unstable/management/projects/:projectID/cluster/:clusterID":    {},
 		"DELETE /unstable/management/projects/:projectID/cluster/:clusterID": {},
 	}, guarded)
 	require.False(t, guardsDeletedProject(http.MethodDelete, "/unstable/management/projects/:projectID"),

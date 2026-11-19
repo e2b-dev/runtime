@@ -54,7 +54,6 @@ func TestProjectPlacementAcknowledgesOnlyTheAppliedTarget(t *testing.T) {
 	ack(push(2, nil), http.StatusOK, 2, nil)
 	ack(push(1, &target), http.StatusOK, 2, nil)
 	assert.Equal(t, http.StatusConflict, push(2, &target).Code)
-	assert.Equal(t, http.StatusConflict, callManagementAssignProjectCluster(t, store, project.id, target).Code)
 	old := project.request()
 	old.ClusterId = &target
 	assert.Equal(t, http.StatusConflict, callUpsertProject(t, store, project.id, old).Code)
@@ -67,7 +66,7 @@ func TestProjectPlacementAcknowledgesOnlyTheAppliedTarget(t *testing.T) {
 func TestWaitingPlacementWritesObserveThePreviousWritersRevision(t *testing.T) {
 	t.Parallel()
 
-	for _, operation := range []string{"stale upsert", "unversioned assign", "unversioned detach"} {
+	for _, operation := range []string{"stale upsert", "unversioned detach"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
 			db := testutils.SetupDatabase(t)
@@ -77,15 +76,14 @@ func TestWaitingPlacementWritesObserveThePreviousWritersRevision(t *testing.T) {
 			require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
 			var committedTarget *uuid.UUID
 			projectPath := "/unstable/management/projects/" + project.id.String()
-			method, path, body := http.MethodPut, projectPath+"/cluster/"+target.String(), ""
+			method, path, body := http.MethodDelete, projectPath+"/cluster/"+target.String(), ""
 			wantStatus := http.StatusConflict
 			switch operation {
 			case "stale upsert":
 				request := project.request()
 				request.ClusterId, request.ClusterRevision = &target, new(int64(1))
-				path, body, wantStatus = projectPath, mustJSON(t, request), http.StatusOK
+				method, path, body, wantStatus = http.MethodPut, projectPath, mustJSON(t, request), http.StatusOK
 			case "unversioned detach":
-				method = http.MethodDelete
 				committedTarget = &target
 			}
 

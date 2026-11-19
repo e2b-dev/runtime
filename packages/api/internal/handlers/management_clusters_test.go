@@ -37,10 +37,8 @@ func TestManagementClusterLifecycleReplaysAndEndsAbsent(t *testing.T) {
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
 	store, _ := newManagementStore(t, db)
+	putTeamOnCluster(t, db, projectID, clusterID)
 
-	for range 2 {
-		require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, projectID, clusterID).Code)
-	}
 	for range 2 {
 		require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, projectID, clusterID).Code)
 	}
@@ -51,101 +49,20 @@ func TestManagementClusterLifecycleReplaysAndEndsAbsent(t *testing.T) {
 	require.False(t, clusterExists(t, db, clusterID))
 }
 
-func TestManagementAssignProjectClusterRejectsTheLocalCluster(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
-	store, auth := newManagementStore(t, db)
-
-	response := callManagementAssignProjectCluster(t, store, projectID, uuid.Nil)
-
-	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	requireClusterErrorCode(t, response, clusterAssignmentInvalidCode)
-	require.Empty(t, *auth.invalidatedTeamIDs)
-}
-
-func TestManagementAssignProjectClusterRejectsDifferentAssignment(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
-	firstID, secondID := uuid.New(), uuid.New()
-	store, auth := newManagementStore(t, db)
-	insertCluster(t, db, firstID, false)
-	insertCluster(t, db, secondID, false)
-	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, projectID, firstID).Code)
-
-	response := callManagementAssignProjectCluster(t, store, projectID, secondID)
-
-	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	requireClusterErrorCode(t, response, clusterAssignmentAlreadyAssignedCode)
-	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
-	require.Equal(t, firstID, assignedProjectCluster(t, db, projectID))
-
-	versioned := newProjectFixture().request()
-	versioned.ClusterId, versioned.ClusterRevision = &firstID, new(int64(1))
-	require.Equal(t, http.StatusOK, callUpsertProject(t, store, projectID, versioned).Code)
-	response = callManagementAssignProjectCluster(t, store, projectID, secondID)
-	require.Equal(t, http.StatusConflict, response.Code)
-	requireClusterErrorCode(t, response, clusterAssignmentAlreadyAssignedCode)
-}
-
-func TestManagementAssignProjectClusterAssignsAndEvictsTheProject(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
-	clusterID := uuid.New()
-	store, auth := newManagementStore(t, db)
-	insertCluster(t, db, clusterID, false)
-
-	response := callManagementAssignProjectCluster(t, store, projectID, clusterID)
-
-	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
-	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
-	require.Equal(t, clusterID, assignedProjectCluster(t, db, projectID))
-}
-
-func TestManagementAssignmentMissingResourcesHaveStableCodes(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
-	store, _ := newManagementStore(t, db)
-
-	for name, tc := range map[string]struct {
-		projectID uuid.UUID
-		code      string
-	}{
-		"project": {uuid.New(), clusterAssignmentProjectNotFoundCode},
-		"cluster": {projectID, clusterAssignmentClusterNotFoundCode},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			response := callManagementAssignProjectCluster(t, store, tc.projectID, uuid.New())
-			require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
-			requireClusterErrorCode(t, response, tc.code)
-		})
-	}
-}
-
 func TestManagementDetachProjectClusterRefusesADifferentCluster(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	projectID := testutils.CreateTestTeam(t, db)
 	clusterID := uuid.New()
 	store, auth := newManagementStore(t, db)
 	insertCluster(t, db, clusterID, false)
-	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, projectID, clusterID).Code)
+	projectID := assignTeam(t, db, clusterID)
 
 	response := callManagementDetachProjectCluster(t, store, projectID, uuid.New())
 
 	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	require.Equal(t, clusterID, assignedProjectCluster(t, db, projectID))
-	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs, "only the assignment evicted the team")
+	require.Empty(t, *auth.invalidatedTeamIDs)
 }
 
 func TestManagementDetachProjectClusterAnswersNotFoundForAMissingProject(t *testing.T) {
@@ -160,45 +77,23 @@ func TestManagementDetachProjectClusterAnswersNotFoundForAMissingProject(t *test
 	require.Empty(t, *auth.invalidatedTeamIDs)
 }
 
-// The assignment is stored before the eviction, so a failed eviction answers
-// 500 and the caller's retry, which replays the identical write, evicts again.
-func TestManagementClusterAssignmentReportsAFailedCacheEviction(t *testing.T) {
+// The detachment is stored before the eviction, so a failed eviction answers
+// 500 and the caller's retry, which finds the team detached, evicts again.
+func TestManagementClusterDetachmentReportsAFailedCacheEviction(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
+	projectID := assignTeam(t, db, clusterID)
+	store, auth := newManagementStore(t, db)
+	auth.invalidateTeamErr = errors.New("cache unavailable")
 
-	for name, tc := range map[string]struct {
-		call         func(*testing.T, *APIStore, uuid.UUID, uuid.UUID) *httptest.ResponseRecorder
-		wantAssigned bool
-	}{
-		"assignment": {callManagementAssignProjectCluster, true},
-		"detachment": {callManagementDetachProjectCluster, false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
+	response := callManagementDetachProjectCluster(t, store, projectID, clusterID)
 
-			projectID := testutils.CreateTestTeam(t, db)
-			require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2 AND $3`,
-				clusterID, projectID, !tc.wantAssigned))
-			store, auth := newManagementStore(t, db)
-			auth.invalidateTeamErr = errors.New("cache unavailable")
-
-			response := tc.call(t, store, projectID, clusterID)
-
-			require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
-			require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
-			var assigned *uuid.UUID
-			require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT cluster_id FROM public.teams WHERE id = $1`,
-				func(rows pgx.Rows) error {
-					require.True(t, rows.Next())
-
-					return rows.Scan(&assigned)
-				}, projectID))
-			require.Equal(t, tc.wantAssigned, assigned != nil, "the write is kept")
-		})
-	}
+	require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+	require.Equal(t, []uuid.UUID{projectID}, *auth.invalidatedTeamIDs)
+	require.Nil(t, teamCluster(t, db, projectID), "the write is kept")
 }
 
 func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t *testing.T) {
@@ -232,8 +127,7 @@ func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t
 			_, err := db.SqlcClient.SoftDeleteTemplate(ctx, queries.SoftDeleteTemplateParams{TemplateID: deletedID, TeamID: teamID})
 			require.NoError(t, err)
 			if teamAssigned {
-				_, err := db.SqlcClient.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{TeamID: teamID, ClusterID: clusterID})
-				require.NoError(t, err)
+				putTeamOnCluster(t, db, teamID, clusterID)
 			}
 			store, _ := newManagementStore(t, db)
 
@@ -297,7 +191,7 @@ func TestAClusterDeleteTheServiceRefusesKeepsTheTemplatesAndTheRecordedDeletion(
 
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	teamID, late := testutils.CreateTestTeam(t, db), testutils.CreateTestTeam(t, db)
+	teamID := testutils.CreateTestTeam(t, db)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
 	templateID := testutils.CreateTestTemplate(t, db, teamID)
@@ -320,9 +214,12 @@ func TestAClusterDeleteTheServiceRefusesKeepsTheTemplatesAndTheRecordedDeletion(
 			return rows.Scan(&deleted)
 		}, templateID))
 	require.False(t, deleted)
-	refused := callManagementAssignProjectCluster(t, store, late, clusterID)
+	late := newProjectFixture()
+	onCluster := late.request()
+	onCluster.ClusterId = &clusterID
+	refused := callUpsertProject(t, store, late.id, onCluster)
 	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
-	requireClusterErrorCode(t, refused, clusterAssignmentClusterDeletingCode)
+	require.Contains(t, refused.Body.String(), "Cluster is being deleted")
 }
 
 func TestManagementDeleteClusterReleasesRowsARacingRegistrationCommits(t *testing.T) {
@@ -508,35 +405,14 @@ func TestManagementListClusterProjectsListsLiveAssignments(t *testing.T) {
 	store, _ := newManagementStore(t, db)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	assigned, detached := testutils.CreateTestTeam(t, db), testutils.CreateTestTeam(t, db)
+	assigned, detached := assignTeam(t, db, clusterID), assignTeam(t, db, clusterID)
 	testutils.CreateTestTeam(t, db)
-	for _, projectID := range []uuid.UUID{assigned, detached} {
-		require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, projectID, clusterID).Code)
-	}
 	require.Equal(t, http.StatusNoContent, callManagementDetachProjectCluster(t, store, detached, clusterID).Code)
 
 	require.Equal(t, []uuid.UUID{assigned}, listClusterProjects(t, store, clusterID))
 	absent := listClusterProjects(t, store, uuid.New())
 	require.NotNil(t, absent, "an absent cluster lists no projects, not null")
 	require.Empty(t, absent)
-}
-
-func TestNoTeamIsNewlyAssignedToAClusterBeingDeleted(t *testing.T) {
-	t.Parallel()
-
-	db := testutils.SetupDatabase(t)
-	store, _ := newManagementStore(t, db)
-	clusterID := uuid.New()
-	insertCluster(t, db, clusterID, false)
-	assigned, late := testutils.CreateTestTeam(t, db), testutils.CreateTestTeam(t, db)
-	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, assigned, clusterID).Code)
-	markClusterDeleting(t, db, clusterID)
-
-	refused := callManagementAssignProjectCluster(t, store, late, clusterID)
-	require.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
-	requireClusterErrorCode(t, refused, clusterAssignmentClusterDeletingCode)
-	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, assigned, clusterID).Code, "an existing assignment is not a new one")
-	require.Equal(t, []uuid.UUID{assigned}, listClusterProjects(t, store, clusterID))
 }
 
 func TestATeamDeletedBeforeDeletionClearedItsClusterNeitherListsNorBlocks(t *testing.T) {
@@ -547,8 +423,7 @@ func TestATeamDeletedBeforeDeletionClearedItsClusterNeitherListsNorBlocks(t *tes
 	ctx := t.Context()
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	deleted := testutils.CreateTestTeam(t, db)
-	require.Equal(t, http.StatusNoContent, callManagementAssignProjectCluster(t, store, deleted, clusterID).Code)
+	deleted := assignTeam(t, db, clusterID)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
 		`UPDATE public.teams SET deleted_at = now(), is_blocked = true, blocked_reason = 'Project deletion' WHERE id = $1`, deleted))
 
@@ -670,12 +545,6 @@ func callManagementRequestClusterDeletion(t *testing.T, store *APIStore, cluster
 	return callManagement(t, store, http.MethodPut, "/unstable/management/clusters/"+clusterID.String()+"/deletion", "").Code
 }
 
-func callManagementAssignProjectCluster(t *testing.T, store *APIStore, projectID, clusterID uuid.UUID) *httptest.ResponseRecorder {
-	t.Helper()
-
-	return callManagement(t, store, http.MethodPut, "/unstable/management/projects/"+projectID.String()+"/cluster/"+clusterID.String(), "")
-}
-
 func callManagementDetachProjectCluster(t *testing.T, store *APIStore, projectID, clusterID uuid.UUID) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -691,6 +560,12 @@ func listClusterProjects(t *testing.T, store *APIStore, clusterID uuid.UUID) []u
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &projects))
 
 	return projects.ProjectIds
+}
+
+func putTeamOnCluster(t *testing.T, db *testutils.Database, teamID, clusterID uuid.UUID) {
+	t.Helper()
+
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, teamID))
 }
 
 func requireClusterErrorCode(t *testing.T, response *httptest.ResponseRecorder, code string) {

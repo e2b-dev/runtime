@@ -3925,10 +3925,7 @@ components:
             count out of bounds in the stored build; a server error, since no
             request field reaches that check), internal_server_error,
             secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress,
-            idempotency_outcome_unknown, cluster_assignment_invalid,
-            cluster_assignment_project_not_found, cluster_assignment_cluster_not_found,
-            cluster_assignment_already_assigned, cluster_assignment_cluster_deleting,
-            cluster_assignment_revision_required,
+            idempotency_outcome_unknown, cluster_assignment_revision_required,
             sandbox_snapshot_guest_agent_unresponsive (a plain resume of a
             snapshot taken while the sandbox guest agent was not responding;
             resume it with memory: false).
@@ -7874,7 +7871,7 @@ paths:
     put:
       operationId: managementRequestClusterDeletion
       summary: Record that a cluster is being deleted.
-      description: Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+      description: Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
       tags: [admin]
       security:
         - AdminJWTAuth: []
@@ -7933,33 +7930,6 @@ paths:
           type: string
           format: uuid
       - $ref: "#/components/parameters/clusterID"
-    put:
-      operationId: managementAssignProjectCluster
-      summary: Assign a cluster to a project.
-      description: >-
-        Assigns the cluster when the project has no cluster assigned. Replaying the identical
-        assignment succeeds; replacing a different assigned cluster returns
-        cluster_assignment_already_assigned. Assigning a project with versioned local
-        placement returns cluster_assignment_revision_required.
-        Answers 404 when the project is missing or deleted.
-      tags: [admin]
-      security:
-        - AdminJWTAuth: []
-      responses:
-        "204":
-          description: Cluster is assigned to the project.
-        "400":
-          $ref: "#/components/responses/400"
-        "401":
-          $ref: "#/components/responses/401"
-        "404":
-          $ref: "#/components/responses/404"
-        "409":
-          $ref: "#/components/responses/409"
-        "500":
-          $ref: "#/components/responses/500"
-        "503":
-          $ref: "#/components/responses/503"
     delete:
       operationId: managementDetachProjectCluster
       summary: Detach a cluster assignment from a project.
