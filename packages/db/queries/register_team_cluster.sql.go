@@ -90,7 +90,7 @@ WHERE cluster_id = $1::uuid
 `
 
 // Deleting a project clears its team's cluster, but a team deleted before that
-// still holds it and would block the cluster delete.
+// still holds it. Clearing it leaves no row pointing at a deleted cluster.
 func (q *Queries) DetachDeletedTeamsFromCluster(ctx context.Context, clusterID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, detachDeletedTeamsFromCluster, clusterID)
 	return err
@@ -171,6 +171,20 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTeamCluster = `-- name: LockTeamCluster :one
+SELECT cluster_id
+FROM public.teams
+WHERE id = $1::uuid
+FOR UPDATE
+`
+
+func (q *Queries) LockTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockTeamCluster, teamID)
+	var cluster_id *uuid.UUID
+	err := row.Scan(&cluster_id)
+	return cluster_id, err
 }
 
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec

@@ -18,18 +18,14 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management/clienttests"
 )
 
-// The pool connects to the stored clusters a team references; a cluster no
-// team uses has nothing to schedule.
+// The pool connects to the clusters a team references; a cluster no team uses
+// has nothing to schedule.
 func TestAssignedRemoteClustersAreTheStoredClustersATeamUses(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
 	assigned, unassigned := uuid.New(), uuid.New()
-	for _, id := range []uuid.UUID{assigned, unassigned} {
-		require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-			`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1::uuid, $1::uuid::text, $1::uuid::text, true, 'token')`, id))
-	}
 	teamID := testutils.CreateTestTeam(t, db)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx, `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, teamID, assigned))
 	domain := "sandbox.example.test"
@@ -51,8 +47,6 @@ func TestAssignedRemoteClustersMarksAFailedClusterList(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token) VALUES ($1::uuid, $1::uuid::text, $1::uuid::text, true, 'token')`, clusterID))
 	teamID := testutils.CreateTestTeam(t, db)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, teamID, clusterID))
 	clusterService := clienttests.NewMockClusterServiceClient(t)

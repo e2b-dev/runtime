@@ -18,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
 
 func TestSandboxRecordIsTheTeamsLatestRunWithItsSnapshotBaseTemplate(t *testing.T) {
@@ -27,9 +28,9 @@ func TestSandboxRecordIsTheTeamsLatestRunWithItsSnapshotBaseTemplate(t *testing.
 	createSandboxLogTable(t, db)
 	teamID := testutils.CreateTestTeam(t, db)
 	clusterID := uuid.New()
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		`INSERT INTO public.clusters (id, name, endpoint, endpoint_tls, token, sandbox_proxy_domain)
-		 VALUES ($1, 'record-cluster', 'api.example.test:5008', true, 'token', 'sandbox.example.test')`, clusterID))
+	recordsOf(db).put(clustersgrpc.Cluster_builder{
+		ClusterId: clusterID.String(), Name: "record-cluster", Endpoint: "api.example.test:5008", EndpointTls: true, Token: "token", SandboxProxyDomain: new("sandbox.example.test"),
+	}.Build())
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $2 WHERE id = $1`, teamID, clusterID))
 
 	baseTemplateID := testutils.CreateTestTemplate(t, db, teamID)
@@ -228,7 +229,7 @@ func insertSandboxLog(t *testing.T, db *testutils.Database, teamID uuid.UUID, sa
 func getSandboxRecord(t *testing.T, db *testutils.Database, team *types.Team, sandboxID string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return getSandboxRecordFrom(t, &APIStore{sqlcDB: db.SqlcClient, clusters: clusters.NewTestPool(), clusterService: clusterServiceFromDB(t, db)}, team, sandboxID)
+	return getSandboxRecordFrom(t, &APIStore{sqlcDB: db.SqlcClient, clusters: clusters.NewTestPool(), clusterService: clusterServiceFor(t, db)}, team, sandboxID)
 }
 
 func getSandboxRecordFrom(t *testing.T, store *APIStore, team *types.Team, sandboxID string) *httptest.ResponseRecorder {

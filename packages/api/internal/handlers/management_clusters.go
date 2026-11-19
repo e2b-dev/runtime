@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -15,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
+	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
@@ -268,10 +271,16 @@ func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.Cluster
 	}
 }
 
-// deleteCluster refuses a protected cluster, soft-deletes the cluster's
-// templates, then removes the cluster from the cluster service. A team
-// assigned between the two steps makes the service refuse the delete with the
-// templates already gone; a retry finishes it.
+// clusterDeleteTimeout bounds a cluster delete, which runs detached from the
+// request: a caller that leaves must not end it after the cluster service has
+// removed the record but before the templates are released.
+const clusterDeleteTimeout = time.Minute
+
+// deleteCluster refuses a protected cluster. Then, in one transaction holding
+// the cluster's assignment lock, it refuses a cluster a live team uses,
+// releases the cluster's templates and has the cluster service remove the
+// record. An assignment requested meanwhile waits and is then refused. An
+// absent cluster still has its templates released.
 func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error {
 	// The local cluster's teams and environments store a NULL cluster_id. The
 	// queries below match by equality, which never selects NULL, and its nil ID
@@ -284,19 +293,57 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 	if err != nil {
 		return fmt.Errorf("read cluster: %w", err)
 	}
-	// Nothing references an absent cluster: the foreign keys refuse it.
-	if cluster == nil {
-		return nil
-	}
 	if cluster.GetDeletionProtection() {
 		return errProtectedClusterDeletion
 	}
 
-	if err := a.releaseClusterTemplates(ctx, clusterID); err != nil {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), clusterDeleteTimeout)
+	defer cancel()
+	txDB, tx, err := a.sqlcDB.WithTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin cluster delete: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := clusterassign.Lock(ctx, tx, clusterID); err != nil {
+		return err
+	}
+	teamIDs, err := txDB.ListClusterTeamIDs(ctx, clusterID)
+	if err != nil {
+		return fmt.Errorf("list cluster teams: %w", err)
+	}
+	if len(teamIDs) > 0 {
+		return errClusterInUse
+	}
+	if err := releaseClusterTemplates(ctx, txDB, clusterID); err != nil {
+		return err
+	}
+	if cluster != nil {
+		if err := a.removeCluster(ctx, clusterID); err != nil {
+			return err
+		}
+		// A sandbox still running on the cluster may have recorded a template
+		// while the cluster service worked.
+		if err := releaseClusterTemplates(ctx, txDB, clusterID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit cluster delete: %w", err)
+	}
+
+	return nil
+}
+
+// removeCluster records the cluster's deletion with the cluster service before
+// having it remove the record, so a removal that fails, or that completes
+// after the caller gave up on it, still leaves every later assignment refused.
+func (a *APIStore) removeCluster(ctx context.Context, clusterID uuid.UUID) error {
+	if err := a.recordClusterDeletion(ctx, clusterID); err != nil {
 		return err
 	}
 
-	_, err = a.clusterService.DeleteCluster(ctx, clustersgrpc.DeleteClusterRequest_builder{ClusterId: clusterID.String()}.Build())
+	_, err := a.clusterService.DeleteCluster(ctx, clustersgrpc.DeleteClusterRequest_builder{ClusterId: clusterID.String()}.Build())
 	switch clusterErrorReason(err) {
 	case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED:
 		return errProtectedClusterDeletion
@@ -310,25 +357,10 @@ func (a *APIStore) deleteCluster(ctx context.Context, clusterID uuid.UUID) error
 	return nil
 }
 
-// releaseClusterTemplates soft-deletes the cluster's templates and
-// clears the references of deleted teams and templates, which would otherwise
-// block the cluster delete. It refuses, before changing anything, a cluster a
-// live team is still assigned to.
-func (a *APIStore) releaseClusterTemplates(ctx context.Context, clusterID uuid.UUID) error {
-	txDB, tx, err := a.sqlcDB.WithTx(ctx)
-	if err != nil {
-		return fmt.Errorf("begin cluster template cleanup: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-
-	teamIDs, err := txDB.ListClusterTeamIDs(ctx, clusterID)
-	if err != nil {
-		return fmt.Errorf("list cluster teams: %w", err)
-	}
-	if len(teamIDs) > 0 {
-		return errClusterInUse
-	}
-
+// releaseClusterTemplates soft-deletes the cluster's live templates and clears
+// the cluster from deleted teams and templates, so no row points at it once it
+// is deleted.
+func releaseClusterTemplates(ctx context.Context, txDB *sqlcdb.Client, clusterID uuid.UUID) error {
 	envIDs, err := txDB.SoftDeleteClusterEnvironments(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("soft delete cluster templates: %w", err)
@@ -346,9 +378,6 @@ func (a *APIStore) releaseClusterTemplates(ctx context.Context, clusterID uuid.U
 	}
 	if err := txDB.DetachDeletedTeamsFromCluster(ctx, clusterID); err != nil {
 		return fmt.Errorf("detach deleted teams: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit cluster template cleanup: %w", err)
 	}
 
 	return nil
@@ -395,14 +424,24 @@ func (a *APIStore) ManagementRequestClusterDeletion(c *gin.Context, clusterID ap
 	}
 }
 
-// requestClusterDeletion records that the cluster is being deleted. The
-// cluster service refuses a protected cluster, and afterwards refuses turning
-// protection on; a team can no longer be assigned to the cluster.
+// requestClusterDeletion records that the cluster is being deleted. Once it
+// returns, no team is newly assigned to the cluster: an assignment in flight
+// has committed, and every later one is refused.
 func (a *APIStore) requestClusterDeletion(ctx context.Context, clusterID uuid.UUID) error {
 	if clusterID == consts.LocalClusterID {
 		return errLocalClusterDeletion
 	}
+	if err := a.recordClusterDeletion(ctx, clusterID); err != nil {
+		return err
+	}
 
+	return clusterassign.Settle(ctx, a.sqlcDB, clusterID)
+}
+
+// recordClusterDeletion has the cluster service record the deletion. It
+// refuses a protected cluster, and afterwards refuses turning protection on.
+// An absent cluster has nothing to record.
+func (a *APIStore) recordClusterDeletion(ctx context.Context, clusterID uuid.UUID) error {
 	_, err := a.clusterService.UpdateCluster(ctx, clustersgrpc.UpdateClusterRequest_builder{
 		ClusterId:       clusterID.String(),
 		RequestDeletion: true,
@@ -472,21 +511,17 @@ func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID open
 		return
 	}
 
-	result, err := a.sqlcDB.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{
-		ClusterID:        clusterID,
-		TeamID:           projectID,
-		PreserveExisting: true,
-	})
+	assigned, err := a.assignTeamCluster(ctx, projectID, clusterID)
 	switch {
 	case dberrors.IsNotFoundError(err):
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusNotFound, ErrorCode: clusterAssignmentProjectNotFoundCode, ClientMsg: "Team not found"})
 
 		return
-	case dberrors.IsForeignKeyViolation(err):
+	case errors.Is(err, clusterassign.ErrNotFound):
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusNotFound, ErrorCode: clusterAssignmentClusterNotFoundCode, ClientMsg: "Cluster not found"})
 
 		return
-	case dberrors.ConstraintName(err) == clusterDeletingConstraint:
+	case errors.Is(err, clusterassign.ErrDeleting):
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentClusterDeletingCode, ClientMsg: "Cluster is being deleted"})
 
 		return
@@ -496,7 +531,7 @@ func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID open
 
 		return
 	}
-	if !result.Assigned {
+	if !assigned {
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusConflict, ErrorCode: clusterAssignmentAlreadyAssignedCode, ClientMsg: "Team is already assigned to a different cluster"})
 
 		return
@@ -512,6 +547,47 @@ func (a *APIStore) ManagementAssignProjectCluster(c *gin.Context, projectID open
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// assignTeamCluster assigns the team to the cluster and reports false when it
+// is on a different one. A new assignment needs a cluster the cluster service
+// knows and is not deleting; keeping the team's current cluster is not one.
+func (a *APIStore) assignTeamCluster(ctx context.Context, teamID, clusterID uuid.UUID) (bool, error) {
+	txDB, tx, err := a.sqlcDB.WithTx(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin cluster assignment: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	if err := clusterassign.Lock(ctx, tx, clusterID); err != nil {
+		return false, err
+	}
+	current, err := txDB.LockTeamCluster(ctx, teamID)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case current == nil:
+		if err := clusterassign.Check(ctx, a.clusterService, clusterID); err != nil {
+			return false, err
+		}
+	case *current != clusterID:
+		return false, nil
+	}
+
+	result, err := txDB.AssignTeamCluster(ctx, queries.AssignTeamClusterParams{
+		ClusterID:        clusterID,
+		TeamID:           teamID,
+		PreserveExisting: true,
+	})
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit cluster assignment: %w", err)
+	}
+
+	return result.Assigned, nil
 }
 
 func (a *APIStore) ManagementDetachProjectCluster(c *gin.Context, projectID openapi_types.UUID, clusterID api.ClusterID) {

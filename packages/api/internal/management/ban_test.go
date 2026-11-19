@@ -106,7 +106,7 @@ func TestApplyProjectBanRetriesFailedCacheInvalidation(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	cache := &failingBlockCache{err: errors.New("cache unavailable")}
-	service := NewService(db.AuthDB, db.SqlcClient, cache, noop.NewMeterProvider())
+	service := NewService(db.AuthDB, db.SqlcClient, cache, nil, noop.NewMeterProvider())
 	jobs := newJobInserter(t, db)
 	teamID := testutils.CreateTestTeam(t, db)
 	projection := ProjectBanProjection{ProjectID: teamID, Revision: 1, Banned: true}

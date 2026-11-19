@@ -19,7 +19,7 @@ func TestApplyProjectBlockRetriesFailedCacheInvalidation(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	cache := &failingBlockCache{err: errors.New("cache unavailable")}
-	service := NewService(db.AuthDB, db.SqlcClient, cache, noop.NewMeterProvider())
+	service := NewService(db.AuthDB, db.SqlcClient, cache, nil, noop.NewMeterProvider())
 	teamID := testutils.CreateTestTeam(t, db)
 	projection := ProjectBlockProjection{ProjectID: teamID, Revision: 1, Blocked: true, Reason: "credit_exhausted"}
 

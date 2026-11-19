@@ -80,6 +80,7 @@ func TestCheckpoint_EnvdUnresponsiveRefusesBeforeAnyRoute(t *testing.T) {
 	attrs := attrsAsMap(t, points[0].Attributes)
 	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrs["outcome"])
 	assert.Equal(t, "checkpoint", attrs["rpc"])
+	assert.Equal(t, string(envdProbeUnanswered), attrs["cause"])
 	waits := admissionWaitPoints(t, reader)
 	require.Len(t, waits, 1)
 	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrsAsMap(t, waits[0].Attributes)["outcome"])
@@ -111,6 +112,7 @@ func TestCheckpoint_EnvdHealthyAdmits(t *testing.T) {
 	attrs := attrsAsMap(t, points[0].Attributes)
 	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdHealthy), attrs["outcome"])
 	assert.Equal(t, "checkpoint", attrs["rpc"])
+	assert.NotContains(t, attrs, "cause", "an admitted probe names no cause")
 }
 
 // A filesystem-only checkpoint is probed like a memory one: its capture asks
@@ -138,6 +140,7 @@ func TestCheckpoint_FilesystemOnlyIsProbed(t *testing.T) {
 	attrs := attrsAsMap(t, points[0].Attributes)
 	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrs["outcome"])
 	assert.Equal(t, "checkpoint", attrs["rpc"])
+	assert.Equal(t, string(envdProbeUnanswered), attrs["cause"])
 }
 
 // Flag absent, negative or zero means no probe: with envd unreachable the
@@ -201,7 +204,11 @@ func TestCheckpoint_EnvdProbeMissDuringAnInPlaceCheckpointAnswersInProgress(t *t
 
 	_, live := s.sandboxFactory.Sandboxes.Get("sbx-envd-ckpt-inplace")
 	assert.True(t, live, "the sandbox is untouched")
-	require.Len(t, admissionCounterPoints(t, reader), 1, "the probe decision is still counted")
+	points := admissionCounterPoints(t, reader)
+	require.Len(t, points, 1, "the probe decision is still counted")
+	attrs := attrsAsMap(t, points[0].Attributes)
+	assert.Equal(t, string(sandbox.SnapshotAdmissionEnvdUnhealthy), attrs["outcome"])
+	assert.Equal(t, string(envdProbeCheckpointInFlight), attrs["cause"])
 }
 
 // The probe runs after the start gate, so its answer is current when the

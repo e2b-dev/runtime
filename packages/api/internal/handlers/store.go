@@ -503,7 +503,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 		templateBuildsCache:   templateBuildsCache,
 		snapshotCache:         snapshotCache,
 		authService:           authService,
-		managementService:     management.NewService(authDB, sqlcDB, authService, tel.MeterProvider),
+		managementService:     management.NewService(authDB, sqlcDB, authService, clusterService, tel.MeterProvider),
 		teamService:           team.NewService(sqlcDB, authService, orch, templateManager, banRequestBudget),
 		templateSpawnCounter:  templateSpawnCounter,
 		clickhouseStore:       clickhouseStore,

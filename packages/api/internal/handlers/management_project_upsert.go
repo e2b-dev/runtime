@@ -10,8 +10,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -67,14 +67,16 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 
 		return
 	}
+	if errors.Is(err, clusterassign.ErrNotFound) {
+		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "upsert project failed", err, attrs...)
+		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
+
+		return
+	}
 
 	telemetry.ReportCriticalError(ctx, "upsert project failed", err, attrs...)
 	a.sendAPIStoreError(c, http.StatusInternalServerError, "Error upserting project")
 }
-
-// clusterDeletingConstraint is raised by the teams trigger that refuses a new
-// assignment to a cluster whose deletion is recorded.
-const clusterDeletingConstraint = "teams_cluster_not_deleting"
 
 // projectConflictMessage names the conflict an upsert lost to, or "" when the
 // failure is not one the caller can resolve by changing the request.
@@ -84,7 +86,7 @@ func projectConflictMessage(err error) string {
 		return "Slug is already taken on this control plane"
 	case errors.Is(err, management.ErrProjectRaced):
 		return "Project was created concurrently, retry"
-	case dberrors.ConstraintName(err) == clusterDeletingConstraint:
+	case errors.Is(err, clusterassign.ErrDeleting):
 		return "Cluster is being deleted"
 	}
 

@@ -15,9 +15,22 @@ CONFIGS = [
     for arch in ("x86_64", "arm64")
     for version in VERSIONS
 ] + sorted((ROOT / "configs").glob("*.config"))
+IPVS_SINCE = (6, 1, 189)
 
 
-@pytest.mark.parametrize("config", [p for p in CONFIGS if p.stem == "6.1.189"], ids=lambda p: str(p.relative_to(ROOT)))
+def kernel_version(config):
+    return tuple(int(part) for part in config.stem.partition("-")[0].split("."))
+
+
+IPVS_CONFIGS = [p for p in CONFIGS if kernel_version(p) >= IPVS_SINCE]
+PRE_IPVS_CONFIGS = [p for p in CONFIGS if kernel_version(p) < IPVS_SINCE]
+
+
+def config_id(config):
+    return str(config.relative_to(ROOT))
+
+
+@pytest.mark.parametrize("config", IPVS_CONFIGS, ids=config_id)
 def test_service_ipvs_is_built_in(config):
     lines = config.read_text(encoding="utf-8").splitlines()
     for symbol in (
@@ -75,13 +88,13 @@ def test_service_ipvs_is_built_in(config):
         assert f"{symbol}=y" in lines, f"{config}: Service IPVS requires built-in {symbol}"
 
 
-@pytest.mark.parametrize("config", [p for p in CONFIGS if p.stem != "6.1.189"], ids=lambda p: str(p.relative_to(ROOT)))
+@pytest.mark.parametrize("config", PRE_IPVS_CONFIGS, ids=config_id)
 def test_older_kernels_do_not_enable_ipvs(config):
     text = config.read_text(encoding="utf-8")
     assert not re.search(r"^CONFIG_IP_VS(?:_[A-Z0-9_]+)?=[ym]$", text, re.MULTILINE), f"{config}: IPVS requires Linux 6.1.189"
 
 
-@pytest.mark.parametrize("config", [p for p in CONFIGS if p.stem == "6.1.189"], ids=lambda p: str(p.relative_to(ROOT)))
+@pytest.mark.parametrize("config", IPVS_CONFIGS, ids=config_id)
 def test_excluded_protocol_and_schedulers_stay_disabled(config):
     text = config.read_text(encoding="utf-8")
     assert not re.search(r"^CONFIG_\w*SCTP\w*=[ym]$", text, re.MULTILINE), f"{config}: SCTP is excluded"

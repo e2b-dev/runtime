@@ -208,13 +208,15 @@ func newManagementStore(t *testing.T, db *testutils.Database) (*APIStore, *fakeA
 	riverClient, err := river.NewClient(riverpgxv5.New(db.SqlcClient.Pool()), &river.Config{Schema: dbmodule.RiverSchema})
 	require.NoError(t, err)
 
+	clusterService := clusterServiceFor(t, db)
+
 	return &APIStore{
 		sqlcDB:            db.SqlcClient,
 		authDB:            db.AuthDB,
 		authService:       auth,
 		riverClient:       riverClient,
-		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, noop.NewMeterProvider()),
-		clusterService:    clusterServiceFromDB(t, db),
+		managementService: management.NewService(db.AuthDB, db.SqlcClient, auth, clusterService, noop.NewMeterProvider()),
+		clusterService:    clusterService,
 	}, auth
 }
 
@@ -285,8 +287,7 @@ func TestUpsertProjectRefusesAClusterBeingDeleted(t *testing.T) {
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
 	clusterID := createCluster(t, db)
-	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		"UPDATE public.clusters SET deletion_requested_at = now() WHERE id = $1", clusterID))
+	markClusterDeleting(t, db, clusterID)
 	project := newProjectFixture()
 	request := project.request()
 	request.ClusterId = &clusterID
