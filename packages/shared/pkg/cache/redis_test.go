@@ -377,6 +377,25 @@ func TestRedisCache_RedisRefresh_UpdatesRedis(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 }
 
+func TestRedisCache_RefreshDoesNotRecreateEvictedEntry(t *testing.T) {
+	t.Parallel()
+	client := redis_utils.SetupInstance(t)
+	rc := newTestRedisCache(t, client)
+	ctx := t.Context()
+	key := "key"
+	rc.Set(ctx, key, testValue{Name: "cached"})
+
+	rc.refreshRedis(ctx, key, func(ctx context.Context, key string) (testValue, error) {
+		deleted, err := client.Del(ctx, rc.RedisKey(key)).Result()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), deleted)
+
+		return testValue{Name: "refreshed"}, nil
+	})
+
+	assert.ErrorIs(t, client.Get(ctx, rc.RedisKey(key)).Err(), redis.Nil)
+}
+
 func TestRedisCache_RedisRefresh_ErrorKeepsStaleValue(t *testing.T) {
 	t.Parallel()
 	redisClient := redis_utils.SetupInstance(t)

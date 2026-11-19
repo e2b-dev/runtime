@@ -147,7 +147,7 @@ func (rc *RedisCache[V]) GetOrSet(ctx context.Context, key string, dataCallback 
 			return result{value: v}, nil
 		}
 
-		rc.setInRedis(ctx, storeKey, v)
+		rc.Set(ctx, storeKey, v)
 
 		return result{value: v}, nil
 	})
@@ -185,7 +185,7 @@ func (rc *RedisCache[V]) GetOrSetFresh(ctx context.Context, key string, dataCall
 
 // Set stores a value in Redis.
 func (rc *RedisCache[V]) Set(ctx context.Context, key string, value V) {
-	rc.setInRedis(ctx, key, value)
+	rc.setInRedis(ctx, key, value, false)
 }
 
 // Delete removes a value from Redis.
@@ -391,7 +391,8 @@ func (rc *RedisCache[V]) refreshRedis(ctx context.Context, key string, dataCallb
 			storeKey = rc.config.ExtractKeyFunc(value)
 		}
 
-		rc.setInRedis(ctx, storeKey, value)
+		// A prefix eviction can remove the entry while the refresh holds its lock.
+		rc.setInRedis(ctx, storeKey, value, true)
 
 		return nil, nil
 	})
@@ -428,7 +429,7 @@ func (rc *RedisCache[V]) acquireLock(ctx context.Context, key string, retry redi
 	return lock, nil
 }
 
-func (rc *RedisCache[V]) setInRedis(ctx context.Context, key string, value V) {
+func (rc *RedisCache[V]) setInRedis(ctx context.Context, key string, value V, onlyIfExists bool) {
 	ctx, cancel := context.WithTimeout(ctx, rc.config.RedisTimeout)
 	defer cancel()
 
@@ -442,7 +443,12 @@ func (rc *RedisCache[V]) setInRedis(ctx context.Context, key string, value V) {
 	}
 
 	redisKey := rc.RedisKey(key)
-	if err := rc.config.RedisClient.Set(ctx, redisKey, data, rc.config.TTL).Err(); err != nil {
+	if onlyIfExists {
+		err = rc.config.RedisClient.SetXX(ctx, redisKey, data, rc.config.TTL).Err()
+	} else {
+		err = rc.config.RedisClient.Set(ctx, redisKey, data, rc.config.TTL).Err()
+	}
+	if err != nil {
 		logger.L().Warn(ctx, "RedisCache: Redis SET error",
 			zap.String("key", redisKey),
 			zap.Error(err))
