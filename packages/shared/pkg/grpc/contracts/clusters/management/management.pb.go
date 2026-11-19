@@ -28,9 +28,10 @@ const (
 	ClusterErrorReason_CLUSTER_ERROR_REASON_UNSPECIFIED        ClusterErrorReason = 0
 	ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED ClusterErrorReason = 1
 	// A team or template still references the cluster.
-	ClusterErrorReason_CLUSTER_ERROR_REASON_IN_USE                    ClusterErrorReason = 2
-	ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED        ClusterErrorReason = 3
-	ClusterErrorReason_CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED ClusterErrorReason = 4
+	ClusterErrorReason_CLUSTER_ERROR_REASON_IN_USE                     ClusterErrorReason = 2
+	ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED         ClusterErrorReason = 3
+	ClusterErrorReason_CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED  ClusterErrorReason = 4
+	ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT ClusterErrorReason = 5
 )
 
 // Enum value maps for ClusterErrorReason.
@@ -41,13 +42,15 @@ var (
 		2: "CLUSTER_ERROR_REASON_IN_USE",
 		3: "CLUSTER_ERROR_REASON_DELETION_REQUESTED",
 		4: "CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED",
+		5: "CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT",
 	}
 	ClusterErrorReason_value = map[string]int32{
-		"CLUSTER_ERROR_REASON_UNSPECIFIED":               0,
-		"CLUSTER_ERROR_REASON_DELETION_PROTECTED":        1,
-		"CLUSTER_ERROR_REASON_IN_USE":                    2,
-		"CLUSTER_ERROR_REASON_DELETION_REQUESTED":        3,
-		"CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED": 4,
+		"CLUSTER_ERROR_REASON_UNSPECIFIED":                0,
+		"CLUSTER_ERROR_REASON_DELETION_PROTECTED":         1,
+		"CLUSTER_ERROR_REASON_IN_USE":                     2,
+		"CLUSTER_ERROR_REASON_DELETION_REQUESTED":         3,
+		"CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED":  4,
+		"CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT": 5,
 	}
 )
 
@@ -2109,13 +2112,14 @@ const file_e2b_clusters_management_v1_management_proto_rawDesc = "" +
 	"\n" +
 	"cluster_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tclusterId\"\\\n" +
 	"\x12ClusterErrorDetail\x12F\n" +
-	"\x06reason\x18\x01 \x01(\x0e2..e2b.clusters.management.v1.ClusterErrorReasonR\x06reason*\xe9\x01\n" +
+	"\x06reason\x18\x01 \x01(\x0e2..e2b.clusters.management.v1.ClusterErrorReasonR\x06reason*\x9e\x02\n" +
 	"\x12ClusterErrorReason\x12$\n" +
 	" CLUSTER_ERROR_REASON_UNSPECIFIED\x10\x00\x12+\n" +
 	"'CLUSTER_ERROR_REASON_DELETION_PROTECTED\x10\x01\x12\x1f\n" +
 	"\x1bCLUSTER_ERROR_REASON_IN_USE\x10\x02\x12+\n" +
 	"'CLUSTER_ERROR_REASON_DELETION_REQUESTED\x10\x03\x122\n" +
-	".CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED\x10\x042\xd6\a\n" +
+	".CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED\x10\x04\x123\n" +
+	"/CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT\x10\x052\xd6\a\n" +
 	"\x0eClusterService\x12t\n" +
 	"\rCreateCluster\x120.e2b.clusters.management.v1.CreateClusterRequest\x1a1.e2b.clusters.management.v1.CreateClusterResponse\x12k\n" +
 	"\n" +

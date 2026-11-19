@@ -146,8 +146,13 @@ func clusterTakesNoTeam(err error) string {
 	}
 	for _, detail := range st.Details() {
 		reason, ok := detail.(*clustersgrpc.ClusterErrorDetail)
-		if ok && reason.GetReason() == clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED {
-			return "the cluster is being deleted"
+		if ok {
+			switch reason.GetReason() {
+			case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED:
+				return "the cluster is being deleted"
+			case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT:
+				return "the project has no claim on this cluster"
+			}
 		}
 	}
 

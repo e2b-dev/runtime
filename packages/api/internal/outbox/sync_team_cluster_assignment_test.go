@@ -211,6 +211,7 @@ func TestSyncTeamClusterAssignmentWhenTheClusterServiceDoesNotRecordTheTeam(t *t
 	// A day of retries would not change either answer, and the discarded job
 	// would be kept for good.
 	for name, refusal := range map[string]error{
+		"a released project cannot be mirrored again":                       clusterRefusal(t, clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT),
 		"a cluster being deleted takes no new team and the sync ends":       clusterRefusal(t, clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED),
 		"a cluster the cluster service does not know ends the sync as well": status.Error(codes.NotFound, "cluster not found"),
 	} {

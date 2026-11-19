@@ -412,9 +412,9 @@ retries.
 - `PUT /unstable/management/projects/{projectID}` creates or reconciles a project and answers 201
   or 200 to say which. A project is a `public.teams` row created from a caller-supplied UUID, with
   no tier. Creation fixes the project's cluster: omit `cluster_id` for local or supply its remote
-  cluster ID. An update may omit `cluster_id` to preserve the original home. Naming a different
+  cluster ID. An update may omit `cluster_id` to preserve the original placement. Naming a different
   cluster returns 409 without changing the project. Every success returns the stored project ID
-  and home after cache eviction, including on replay. Scheduling reads `teams.cluster_id`. A changed slug
+  and cluster after cache eviction, including on replay. Scheduling reads `teams.cluster_id`. A changed slug
   renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the
