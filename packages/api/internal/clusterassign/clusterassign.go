@@ -22,6 +22,7 @@ import (
 )
 
 var (
+	ErrUnavailable = errors.New("cluster management is not available")
 	// ErrNotFound reports a cluster the cluster service has no record of.
 	ErrNotFound = errors.New("cluster not found")
 	// ErrDeleting reports a cluster whose deletion is recorded.
@@ -41,10 +42,12 @@ func Lock(ctx context.Context, tx pgx.Tx, clusterID uuid.UUID) error {
 // Check returns ErrNotFound or ErrDeleting for a cluster no team may be newly
 // assigned to. Call it holding Lock.
 func Check(ctx context.Context, service clustersgrpc.ClusterServiceClient, clusterID uuid.UUID) error {
-	// The local cluster has no record, and the cluster service refuses its nil
-	// ID outright. Without a cluster service there are no remote clusters.
-	if clusterID == consts.LocalClusterID || service == nil {
+	// The local cluster has no record, and the cluster service refuses its nil ID.
+	if clusterID == consts.LocalClusterID {
 		return ErrNotFound
+	}
+	if service == nil {
+		return ErrUnavailable
 	}
 
 	resp, err := service.GetCluster(ctx, clustersgrpc.GetClusterRequest_builder{ClusterId: clusterID.String()}.Build())

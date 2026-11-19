@@ -40,11 +40,6 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 			return
 		}
 	}
-	// Without a cluster service the pool never loads a remote cluster.
-	if body.ClusterId != nil && *body.ClusterId != uuid.Nil && !a.requireClusterService(c) {
-		return
-	}
-
 	stored, created, err := a.managementService.UpsertProject(ctx, a.riverClient, management.Project{
 		ClusterID:       body.ClusterId,
 		ClusterRevision: revision,
@@ -87,6 +82,11 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 
 		return
 	}
+	if errors.Is(err, clusterassign.ErrUnavailable) {
+		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Cluster management is not available")
+
+		return
+	}
 	if errors.Is(err, clusterassign.ErrNotFound) {
 		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "upsert project failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
@@ -102,8 +102,8 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 // failure is not one the caller can resolve by changing the request.
 func projectConflictMessage(err error) string {
 	switch {
-	case errors.Is(err, management.ErrPlacementConflict):
-		return "Cluster assignment conflicts with the stored revision"
+	case errors.Is(err, management.ErrProjectClusterFixed):
+		return "The project's cluster cannot be changed"
 	case errors.Is(err, management.ErrProjectSlugTaken):
 		return "Slug is already taken on this control plane"
 	case errors.Is(err, management.ErrProjectRaced):

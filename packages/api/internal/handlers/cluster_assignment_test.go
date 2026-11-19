@@ -182,7 +182,6 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
 	clusterID, project := uuid.New(), newProjectFixture()
-	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
 	onCluster := project.request()
 	onCluster.ClusterId = &clusterID
 	clusterService := newSingleClusterService(t, clusterID, clusterPresent)
@@ -226,7 +225,9 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, <-deleted)
 	require.Equal(t, http.StatusNotFound, <-assigned)
-	require.Nil(t, teamCluster(t, db, project.id))
+	var exists bool
+	queryRow(t, db, `SELECT EXISTS (SELECT FROM public.teams WHERE id = $1)`, []any{project.id}, &exists)
+	require.False(t, exists)
 }
 
 // An assignment that read the cluster before the delete took the lock

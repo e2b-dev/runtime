@@ -4495,8 +4495,7 @@ components:
       type: object
       description: >-
         The properties of a project this side stores. Name, slug and email are
-        synchronized on every push. Without a cluster revision, omitting the
-        cluster preserves its assignment.
+        synchronized on every accepted push. The cluster is fixed at creation.
 
 
         A project's tier is not among them, and this side assigns none. Limits
@@ -4506,15 +4505,15 @@ components:
         cluster_id:
           type: string
           format: uuid
-          description: Remote cluster to use. With a revision, omission selects the local cluster.
+          description: Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
         cluster_revision:
           type: integer
           format: int64
           minimum: 1
           description: >-
-            Revision of the cluster assignment.
-            Older revisions preserve the current target; the same revision with a different target is a conflict.
-            The response reports the stored revision once the assignment is versioned.
+            With a revision, an omitted cluster_id means local. A different target returns 409
+            regardless of revision. For the original target the response reports the highest
+            accepted revision.
         name:
           type: string
           minLength: 1
@@ -7860,7 +7859,7 @@ paths:
         - AdminJWTAuth: []
       responses:
         "204":
-          description: The cluster is unavailable. Its projects retain their placement until reassigned.
+          description: Surviving projects keep their original cluster and lose runtime access. To run on another cluster, create a project with a new ID. Deleting the old project releases its slug but does not transfer its templates or API keys.
         "409":
           $ref: "#/components/responses/409"
         "500":
@@ -7936,7 +7935,7 @@ paths:
         "401":
           $ref: "#/components/responses/401"
         "409":
-          description: The cluster has deletion protection turned on, or more than one team uses it and the other teams and their templates must move off it before destroying the cluster.
+          description: The cluster has deletion protection turned on, or more than one team still uses it.
           content:
             application/json:
               schema:

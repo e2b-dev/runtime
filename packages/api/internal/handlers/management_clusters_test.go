@@ -26,6 +26,31 @@ import (
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
 
+func TestProjectReplacementAfterClusterRegistrationRemoval(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	store, _ := newManagementStore(t, db)
+	original, other := createCluster(t, db), createCluster(t, db)
+	project := newProjectFixture()
+	request := project.request()
+	request.ClusterId, request.ClusterRevision = &original, new(int64(1))
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, request).Code)
+
+	removed := callManagement(t, store, http.MethodDelete, "/unstable/management/clusters/"+original.String()+"/registration", "")
+	require.Equal(t, http.StatusNoContent, removed.Code, removed.Body.String())
+	require.False(t, clusterExists(t, db, original))
+	request.ClusterId, request.ClusterRevision = &other, new(int64(2))
+	require.Equal(t, http.StatusConflict, callUpsertProject(t, store, project.id, request).Code)
+	require.Equal(t, &original, teamCluster(t, db, project.id))
+
+	require.Equal(t, http.StatusNoContent, callDeleteProject(t, store, project.id).Code)
+	require.Equal(t, http.StatusNotFound, callUpsertProject(t, store, project.id, request).Code)
+	replacement := uuid.New()
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, replacement, request).Code)
+	require.Equal(t, &other, teamCluster(t, db, replacement))
+}
+
 func TestManagementDeleteClusterSoftDeletesItsEnvironmentsWhenNoTeamIsAssigned(t *testing.T) {
 	t.Parallel()
 
@@ -429,7 +454,7 @@ func TestClusterDestroyReadinessRefusesOnlySharedClustersWithoutMutation(t *test
 	}
 	before := readState(t)
 	store, _ := newManagementStore(t, db)
-	const sharedClusterMessage = "Cluster is used by more than one team. Move the other teams and their templates off it before destroying the deployment."
+	const sharedClusterMessage = "Cluster is used by more than one team and cannot be destroyed."
 
 	for name, tc := range map[string]struct {
 		clusterID uuid.UUID

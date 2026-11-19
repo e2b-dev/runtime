@@ -299,7 +299,7 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 		return
 	}
 	if shared {
-		a.sendAPIStoreError(c, http.StatusConflict, "Cluster is used by more than one team. Move the other teams and their templates off it before destroying the deployment.")
+		a.sendAPIStoreError(c, http.StatusConflict, "Cluster is used by more than one team and cannot be destroyed.")
 
 		return
 	}

@@ -59,12 +59,13 @@ func TestEveryWriteOfATeamsClusterEnqueuesItsSync(t *testing.T) {
 		t.Parallel()
 		project := newProjectFixture()
 
-		require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
-		assert.Zero(t, teamClusterSyncJobs(t, db, project.id), "a project on the local cluster has nothing to copy")
+		local := newProjectFixture()
+		require.Equal(t, http.StatusCreated, callUpsertProject(t, store, local.id, local.request()).Code)
+		assert.Zero(t, teamClusterSyncJobs(t, db, local.id), "a project on the local cluster has nothing to copy")
 
 		onCluster := project.request()
 		onCluster.ClusterId = &clusterID
-		require.Equal(t, http.StatusOK, callUpsertProject(t, store, project.id, onCluster).Code)
+		require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, onCluster).Code)
 		assert.Equal(t, 1, teamClusterSyncJobs(t, db, project.id))
 
 		// A retry cannot tell whether the first attempt's job was enqueued.

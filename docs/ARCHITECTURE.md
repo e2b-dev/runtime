@@ -411,15 +411,13 @@ retries.
 
 - `PUT /unstable/management/projects/{projectID}` creates or reconciles a project and answers 201
   or 200 to say which. A project is a `public.teams` row created from a caller-supplied UUID, with
-  no tier. An unversioned write that omits the cluster ID preserves the assignment. The writer
-  may send `cluster_revision` with the target (omit `cluster_id` for local).
-  The API records the applied revision in `projection.project_placements` in the same
-  transaction as `teams.cluster_id`, including on first creation. A detach keeps the revision;
-  a project that has never received a versioned placement has no projection row.
-  Scheduling reads only the team’s cluster ID. The response returns the stored target and revision after cache
-  eviction, even for a metadata-only upsert that preserves a versioned placement. An older revision
-  cannot restore its target, and an equal revision naming a different
-  target returns 409. An unversioned write cannot change a versioned target. A changed slug
+  no tier. Creation fixes the project's cluster: omit `cluster_id` for local or supply its remote
+  cluster ID. An update may omit both cluster fields to change metadata, or repeat the original
+  target. A different target returns 409 without changing the project, regardless of revision.
+  With `cluster_revision` present, omitting `cluster_id` explicitly requests local.
+  The API records the highest accepted revision for that target in `projection.project_placements`
+  and returns it after cache eviction, including on metadata-only updates. Scheduling reads only
+  `teams.cluster_id`. A changed slug
   renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the
@@ -529,9 +527,8 @@ replaces what they wrote.
 
 The owning management service also drives a replay-safe cluster lifecycle under
 `/unstable/management/clusters/{clusterID}`, with service JWTs only. Clusters are registered with
-the cluster service, not through the API. A project moves onto a cluster, or back to the local
-cluster, only through the cluster ID and revision its project upsert carries, and deleting the
-project clears its cluster. The caller deletes the cluster only after no project references it;
+the cluster service, not through the API. A project stays on its original cluster until project
+deletion clears the reference. The caller deletes the cluster only after no project references it;
 deleting a referenced cluster returns a conflict. The assignment does not check the project's
 tier; the caller decides which projects may use a cluster. Deleting a protected cluster or
 checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
@@ -556,6 +553,12 @@ requested during the delete waits for it and is then refused. If the cluster ser
 remove the record, the transaction rolls back but the recorded deletion stays, so assignments
 remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
 cluster still releases its templates.
+
+`DELETE /unstable/management/clusters/{clusterID}/registration` removes the registration even
+when live projects still reference the cluster. Those projects keep their cluster ID and lose
+runtime access. If the cluster is permanently unavailable, running on another cluster requires
+a new project ID. Deleting the old project releases its slug for reuse, but its API keys and
+templates do not transfer to the new project.
 
 The operator dashboard reads and edits cluster records at the cluster service, not through the
 API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API

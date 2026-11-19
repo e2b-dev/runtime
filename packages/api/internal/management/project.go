@@ -27,8 +27,8 @@ var (
 
 	// ErrProjectRaced reports an id inserted between the existence check and
 	// this request's own insert.
-	ErrProjectRaced      = errors.New("project was created concurrently")
-	ErrPlacementConflict = errors.New("cluster assignment conflicts with the stored revision")
+	ErrProjectRaced        = errors.New("project was created concurrently")
+	ErrProjectClusterFixed = errors.New("the project's cluster cannot be changed")
 )
 
 // JobEnqueuer enqueues a job outside any transaction.
@@ -36,9 +36,7 @@ type JobEnqueuer interface {
 	Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error)
 }
 
-// Project is the set of properties the caller synchronizes. It sends all of
-// them on every push, so a reconcile is a complete statement rather than a
-// patch.
+// Project carries synchronized metadata and the cluster selected at creation.
 //
 // Slug moves like the others, and the project's template aliases follow it in
 // the same transaction: each one held under an earlier slug is also given under
@@ -118,21 +116,22 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 		if current.DeletedAt != nil {
 			return Project{}, false, ErrProjectNotFound
 		}
+		if !project.matchesCluster(current.ClusterID) {
+			return Project{}, false, ErrProjectClusterFixed
+		}
 		appliedRevision, err = placements.GetProjectPlacementRevision(ctx, project.ID)
 		if err != nil {
 			return Project{}, false, fmt.Errorf("read project placement revision: %w", err)
 		}
-		if err := project.resolvePlacement(current.ClusterID, appliedRevision); err != nil {
-			return Project{}, false, err
-		}
-		if err = s.checkNewAssignment(ctx, project.ClusterID, current.ClusterID); err == nil {
-			stored, err = reconcileProject(ctx, txDB, project, current.Slug)
-		}
+		stored, err = reconcileProject(ctx, txDB, project, current.Slug)
 	case dberrors.IsNotFoundError(err):
-		if err = s.checkNewAssignment(ctx, project.ClusterID, nil); err == nil {
-			stored, err = createProject(ctx, txDB, project)
-			created = true
+		if project.ClusterID != nil {
+			if err := clusterassign.Check(ctx, s.clusters, *project.ClusterID); err != nil {
+				return Project{}, false, err
+			}
 		}
+		stored, err = createProject(ctx, txDB, project)
+		created = true
 	default:
 		return Project{}, false, fmt.Errorf("look up project: %w", err)
 	}
@@ -147,7 +146,7 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 			return Project{}, false, fmt.Errorf("record project placement revision: %w", err)
 		}
 	}
-	stored.ClusterRevision = project.ClusterRevision
+	stored.ClusterRevision = max(appliedRevision, project.ClusterRevision)
 
 	if err := tx.Commit(ctx); err != nil {
 		return Project{}, false, fmt.Errorf("commit project upsert: %w", err)
@@ -156,30 +155,13 @@ func (s *Service) writeProject(ctx context.Context, project Project) (stored Pro
 	return stored, created, nil
 }
 
-func (p *Project) resolvePlacement(current *uuid.UUID, appliedRevision int64) error {
-	switch {
-	case p.ClusterRevision == 0 && p.ClusterID == nil,
-		p.ClusterRevision > 0 && p.ClusterRevision < appliedRevision:
-		p.ClusterID, p.ClusterRevision = current, appliedRevision
-	case appliedRevision > 0 && p.ClusterRevision <= appliedRevision:
-		if (p.ClusterID == nil) != (current == nil) || p.ClusterID != nil && *p.ClusterID != *current {
-			return ErrPlacementConflict
-		}
-		p.ClusterRevision = appliedRevision
+func (p Project) matchesCluster(stored *uuid.UUID) bool {
+	if p.ClusterID == nil {
+		// Without a revision an omitted cluster is a metadata-only update.
+		return p.ClusterRevision == 0 || stored == nil
 	}
 
-	return nil
-}
-
-// checkNewAssignment refuses moving a team to a cluster no team may be newly
-// assigned to, returning clusterassign's errors. Keeping the team's current
-// cluster, or giving none, is not a new assignment.
-func (s *Service) checkNewAssignment(ctx context.Context, requested, current *uuid.UUID) error {
-	if requested == nil || (current != nil && *current == *requested) {
-		return nil
-	}
-
-	return clusterassign.Check(ctx, s.clusters, *requested)
+	return stored != nil && *p.ClusterID == *stored
 }
 
 func createProject(ctx context.Context, txDB *authqueries.Queries, project Project) (Project, error) {
@@ -207,11 +189,10 @@ func createProject(ctx context.Context, txDB *authqueries.Queries, project Proje
 
 func reconcileProject(ctx context.Context, txDB *authqueries.Queries, project Project, currentSlug string) (Project, error) {
 	updated, err := txDB.UpdateManagedTeam(ctx, authqueries.UpdateManagedTeamParams{
-		ClusterID: project.ClusterID,
-		ID:        project.ID,
-		Name:      project.Name,
-		Slug:      project.Slug,
-		Email:     project.Email,
+		ID:    project.ID,
+		Name:  project.Name,
+		Slug:  project.Slug,
+		Email: project.Email,
 	})
 
 	switch {

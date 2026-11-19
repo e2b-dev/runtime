@@ -233,12 +233,12 @@ func TestLocalOnlyIsRefusedWhileATeamIsAssignedToARemoteCluster(t *testing.T) {
 
 // Without a cluster service the pool never loads a remote cluster, so an
 // assignment to one would leave the team unable to run sandboxes.
-func TestRemoteClusterAssignmentsAnswer503WithoutAClusterService(t *testing.T) {
+func TestLocalOnlyProjectCannotBeCreatedOnOrMovedToARemoteCluster(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	store.clusterService = nil
+	withClusterService(t, db, store, nil)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
 	project := newProjectFixture()
@@ -248,4 +248,6 @@ func TestRemoteClusterAssignmentsAnswer503WithoutAClusterService(t *testing.T) {
 	upserted := callUpsertProject(t, store, project.id, upsert)
 
 	require.Equal(t, http.StatusServiceUnavailable, upserted.Code, upserted.Body.String())
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	require.Equal(t, http.StatusConflict, callUpsertProject(t, store, project.id, upsert).Code)
 }

@@ -1450,10 +1450,10 @@ type ManagementDecidedAt = time.Time
 
 // ManagementProject defines model for ManagementProject.
 type ManagementProject struct {
-	// ClusterId Remote cluster to use. With a revision, omission selects the local cluster.
+	// ClusterId Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
 
-	// ClusterRevision Revision of the cluster assignment. Older revisions preserve the current target; the same revision with a different target is a conflict. The response reports the stored revision once the assignment is versioned.
+	// ClusterRevision With a revision, an omitted cluster_id means local. A different target returns 409 regardless of revision. For the original target the response reports the highest accepted revision.
 	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
@@ -1570,14 +1570,14 @@ type ManagementProjectSettingsRequest struct {
 	Settings ProjectSettings `json:"settings"`
 }
 
-// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every push. Without a cluster revision, omitting the cluster preserves its assignment.
+// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every accepted push. The cluster is fixed at creation.
 //
 // A project's tier is not among them, and this side assigns none. Limits arrive separately and in full through managementUpsertProjectLimits.
 type ManagementProjectUpsertRequest struct {
-	// ClusterId Remote cluster to use. With a revision, omission selects the local cluster.
+	// ClusterId Remote cluster for this project. Omit on creation for local. On update, omitting both cluster fields preserves the original cluster.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
 
-	// ClusterRevision Revision of the cluster assignment. Older revisions preserve the current target; the same revision with a different target is a conflict. The response reports the stored revision once the assignment is versioned.
+	// ClusterRevision With a revision, an omitted cluster_id means local. A different target returns 409 regardless of revision. For the original target the response reports the highest accepted revision.
 	ClusterRevision *int64 `json:"cluster_revision,omitempty"`
 
 	// Email Contact address recorded on the project.
