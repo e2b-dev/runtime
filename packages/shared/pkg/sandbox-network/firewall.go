@@ -27,6 +27,9 @@ var DeniedSandboxCIDRs = []string{
 	"169.254.0.0/16", // RFC 3927 link-local (incl. cloud metadata 169.254.169.254).
 	"172.16.0.0/12",  // RFC 1918 private.
 	"192.168.0.0/16", // RFC 1918 private.
+
+	"168.63.129.16/32", // Azure host endpoint: VM agent (WireServer, host plugin), platform DNS, health probes.
+
 	// IPv6 local ranges
 	"::1/128",   // RFC 4291 loopback.
 	"fc00::/7",  // RFC 4193 unique local.
