@@ -52,6 +52,14 @@ const (
 	// node.id and reason: no_capacity (the orchestrator reports no pool
 	// ceiling) | no_page_size. The limit was a no-op for that placement.
 	ApiOrchestratorPlacementsWithoutHugepageCeiling CounterType = "api.orchestrator.placements_without_hugepage_ceiling"
+	// ApiOrchestratorTemplateAffinityPlacements counts same-build placements by
+	// whether the chosen node already ran an in-flight same-build sibling, so
+	// same-template colocation can be measured before node-local base sharing
+	// (pmem+DAX) is built. Recorded whether or not the affinity weight is on,
+	// so the weight-0 baseline and the lift once it is raised are both visible.
+	// effect: colocated (>=1 sibling) | spread (none). Only same-build creates
+	// (non-empty build_id) are counted; resumes are not.
+	ApiOrchestratorTemplateAffinityPlacements CounterType = "api.orchestrator.template_affinity_placements"
 	// ApiSandboxListReads counts sandbox list requests by team and by how the
 	// team's store read was served: disabled (no lag allowed, own read) | read
 	// (started the shared read) | shared (joined one in flight) | hit (a live
@@ -539,7 +547,11 @@ const (
 	NetworkEgressRetirementDurationName HistogramType = "orchestrator.network.egress.retirement.duration"
 
 	OrchestratorBlockCachePunchDuration HistogramType = "orchestrator.block.cache.punch.duration"
-	OrchestratorBlockCacheCloseDuration HistogramType = "orchestrator.block.cache.close.duration"
+	// ApiOrchestratorTemplateAffinitySiblings records, per placement, how many
+	// in-flight same-build siblings the chosen node already had: the base-page
+	// copies a node-local shared read-only base (pmem+DAX) could collapse there.
+	ApiOrchestratorTemplateAffinitySiblings HistogramType = "api.orchestrator.template_affinity_siblings"
+	OrchestratorBlockCacheCloseDuration     HistogramType = "orchestrator.block.cache.close.duration"
 
 	// Sandbox timing histograms
 	OrchestratorSandboxCreateDurationName HistogramType = "orchestrator.sandbox.create.duration"

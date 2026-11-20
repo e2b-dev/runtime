@@ -24,6 +24,21 @@ var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchest
 
 var createRefusals = sharedutils.Must(telemetry.GetCounter(otel.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"), telemetry.ApiOrchestratorCreateRefusals))
 
+// placementMeter is shared by this package's placement-decision metrics.
+var placementMeter = otel.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement")
+
+// templateAffinityPlacements counts same-build creates by whether the chosen
+// node already ran an in-flight same-build sibling (effect: colocated |
+// spread). It measures same-template colocation whether or not the affinity
+// weight is on, so the weight-0 baseline is visible before node-local base
+// sharing (pmem+DAX) is built and the lift is visible once it is raised.
+var templateAffinityPlacements = sharedutils.Must(telemetry.GetCounter(placementMeter, telemetry.ApiOrchestratorTemplateAffinityPlacements))
+
+// templateAffinitySiblings records, per placement, the in-flight same-build
+// sibling count on the chosen node: the base-page copies a shared read-only
+// base could collapse on that node (N siblings => N-1 redundant copies).
+var templateAffinitySiblings = sharedutils.Must(telemetry.GetHistogram(placementMeter, telemetry.ApiOrchestratorTemplateAffinitySiblings))
+
 // PlacementResult carries the outcome of a placement attempt alongside the error.
 type PlacementResult struct {
 	// Node is the node the sandbox was placed on, or nil on failure.
@@ -128,6 +143,7 @@ func placeSandbox(
 		CPUs:      sbxRequest.GetSandbox().GetVcpu(),
 		MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
 		HugePages: true,
+		BuildID:   sbxRequest.GetSandbox().GetBuildId(),
 	}
 
 	var node *nodemanager.Node
@@ -247,6 +263,9 @@ func placeSandbox(
 		}
 
 		chosen := node
+		// Measured before this sandbox inserts itself into the node's in-flight
+		// set, so a sandbox never counts itself as its own sibling.
+		sameBuildSiblings := node.PlacementMetrics.SameBuildInProgress(resources.BuildID)
 		var missingCeiling string
 		if !node.PlacementMetrics.StartPlacingIf(sbxRequest.GetSandbox().GetSandboxId(), resources, func() bool {
 			ok, missing := MemoryAdmission(chosen, resources, requirements.Memory)
@@ -283,6 +302,8 @@ func placeSandbox(
 			// Moved from in flight in one step, so a concurrent memory check
 			// counts this sandbox exactly once.
 			node.CompletePlacement(sbxRequest.GetSandbox().GetSandboxId(), resources)
+
+			recordTemplateAffinity(ctx, chosen, resources.BuildID, sameBuildSiblings)
 
 			return PlacementResult{Node: node, Response: resp, MissingHugepageCeiling: missingCeiling}, nil
 		}
@@ -358,6 +379,36 @@ func placeSandbox(
 	}
 
 	return failed(SandboxCreateError{Attempts: attempt, LastErr: lastCreateErr})
+}
+
+// recordTemplateAffinity reports, for a same-build create, how same-template
+// colocation turned out on the node that took it: a counter split
+// colocated/spread and a histogram of the in-flight same-build siblings the
+// node already held. siblings is the base-page copies a node-local shared
+// read-only base (pmem+DAX) could collapse on that node (N siblings => N-1
+// redundant copies), so this is the go/no-go data for building that sharing
+// and, once the affinity weight is on, the evidence it is colocating.
+// Resumes and builds without a build_id are not same-template fan-out and are
+// skipped, so the series is not diluted by placements sharing cannot help.
+func recordTemplateAffinity(ctx context.Context, node *nodemanager.Node, buildID string, siblings int) {
+	if buildID == "" {
+		return
+	}
+
+	effect := "spread"
+	if siblings > 0 {
+		effect = "colocated"
+	}
+
+	templateAffinityPlacements.Add(ctx, 1, metric.WithAttributes(attribute.String("effect", effect)))
+	templateAffinitySiblings.Record(ctx, int64(siblings), metric.WithAttributes(telemetry.WithNodeID(node.ID)))
+
+	logger.L().Debug(ctx, "Placed sandbox with template affinity",
+		logger.WithBuildID(buildID),
+		logger.WithNodeID(node.ID),
+		zap.Int("same_build_siblings", siblings),
+		zap.String("effect", effect),
+	)
 }
 
 // createRefusedForGood reports a create the node refused with the typed

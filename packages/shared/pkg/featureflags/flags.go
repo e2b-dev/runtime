@@ -706,9 +706,13 @@ var (
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)
-	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)                           // Default K=3
-	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400)                      // Default R=4 (stored as percentage, max over-commit ratio)
-	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)                                // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
+	BestOfKSampleSize             = NewIntFlag("best-of-k-sample-size", 3)      // Default K=3
+	BestOfKMaxOvercommit          = NewIntFlag("best-of-k-max-overcommit", 400) // Default R=4 (stored as percentage, max over-commit ratio)
+	BestOfKAlpha                  = NewIntFlag("best-of-k-alpha", 50)           // Default Alpha=0.5 (stored as percentage for int flag, current usage weight)
+	// BestOfKTemplateAffinityWeight biases placement toward nodes already running same-build sandboxes, so a future node-local shared read-only base (pmem+DAX) has siblings to share with. Stored as a percentage; the load score is multiplied by (1 - weight*min(sameBuild,cap)/cap), so it only reorders nodes that already pass admission. 0 (default) disables it: zero behaviour change.
+	BestOfKTemplateAffinityWeight = NewIntFlag("best-of-k-template-affinity-weight", 0)
+	// BestOfKTemplateAffinityCap caps how many same-build sandboxes on a node count toward the affinity discount, so affinity cannot pull an unbounded pile onto one node. Ignored when the weight is 0.
+	BestOfKTemplateAffinityCap    = NewIntFlag("best-of-k-template-affinity-cap", 8)
 	PlacementHugepageLimitPercent = NewIntFlag("placement-hugepage-limit-percent", 0)                // Share of a node's hugepage pool ceiling placement may commit (of its memory outside the pool, for a sandbox without hugepages); 0 disables the check
 	PlacementMemoryMaxOvercommit  = NewIntFlag("placement-memory-max-overcommit", 0)                 // Template RAM of a node's sandboxes as a percentage of its base hugepage pool (its total memory, for a sandbox without hugepages), past which placement refuses; 0 disables the check
 	EnvdInitTimeoutMilliseconds   = NewIntFlag("envd-init-request-timeout-milliseconds", 50)         // Timeout for envd init request in milliseconds
