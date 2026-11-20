@@ -134,7 +134,7 @@ type rootfsTemplate struct {
 	rootfs block.ReadonlyDevice
 }
 
-func (t rootfsTemplate) Rootfs() (block.ReadonlyDevice, error) { return t.rootfs, nil }
+func (t rootfsTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error) { return t.rootfs, nil }
 
 // A pause of a powered-off sandbox touches neither envd nor Firecracker: it
 // exports the disk, closing the sandbox, and produces a filesystem-only

@@ -92,7 +92,10 @@ func (f *layerTestTemplate) Close(context.Context) error {
 func (f *layerTestTemplate) Memfile(context.Context) (block.ReadonlyDevice, error) {
 	return f.memfile.Wait()
 }
-func (f *layerTestTemplate) Rootfs() (block.ReadonlyDevice, error)  { return f.rootfs.Wait() }
+
+func (f *layerTestTemplate) Rootfs(ctx context.Context) (block.ReadonlyDevice, error) {
+	return f.rootfs.WaitWithContext(ctx)
+}
 func (f *layerTestTemplate) Snapfile() (File, error)                { return f.snapfile.Wait() }
 func (f *layerTestTemplate) Metadata() (metadata.Template, error)   { return metadata.Template{}, nil }
 func (f *layerTestTemplate) UpdateMetadata(metadata.Template) error { return nil }

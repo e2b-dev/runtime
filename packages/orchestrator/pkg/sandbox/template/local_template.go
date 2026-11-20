@@ -45,7 +45,7 @@ func (t *LocalTemplate) Memfile(ctx context.Context) (block.ReadonlyDevice, erro
 	return t.memfile, nil
 }
 
-func (t *LocalTemplate) Rootfs() (block.ReadonlyDevice, error) {
+func (t *LocalTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error) {
 	return t.rootfs, nil
 }
 

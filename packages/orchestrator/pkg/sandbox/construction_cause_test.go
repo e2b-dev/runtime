@@ -47,7 +47,7 @@ func (t canceledConstructionTemplate) Metadata() (metadata.Template, error) {
 
 func (canceledConstructionTemplate) Files() storage.CachePaths { return storage.CachePaths{} }
 
-func (t canceledConstructionTemplate) Rootfs() (block.ReadonlyDevice, error) {
+func (t canceledConstructionTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error) {
 	return nil, t.err
 }
 
@@ -152,7 +152,7 @@ type bootTemplate struct {
 
 func (bootTemplate) Files() storage.CachePaths { return storage.CachePaths{} }
 
-func (bootTemplate) Rootfs() (block.ReadonlyDevice, error) {
+func (bootTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error) {
 	return testutils.NewZeroDevice(1<<20, header.RootfsBlockSize)
 }
 
@@ -360,6 +360,122 @@ func TestStartInPlaceHandsOverTheDiskVersionAndTheExecutionStart(t *testing.T) {
 	assert.Equal(t, installed, seen, "the hook sees the envd installed on the handed-over overlay")
 	assert.True(t, seenStart.Equal(started), "the hook sees the execution started, at %s not %s", started, seenStart)
 	assert.True(t, rootfsClosed, "a start that fails at the hook closes the handed-over overlay")
+}
+
+// A reboot in place moves the data plane with the disk it serves: the next
+// lifecycle closes it after the handed-over overlay, and the lifecycle that
+// handed it over no longer does.
+func TestStartInPlaceHandsOverTheDataPlaneWithTheDisk(t *testing.T) {
+	t.Parallel()
+	builder := cfg.BuilderConfig{
+		FirecrackerVersionsDir: t.TempDir(), HostKernelsDir: t.TempDir(),
+		StorageConfig: storage.Config{SandboxCacheDir: t.TempDir()},
+	}
+	versions := fc.Config{KernelVersion: "kernel", FirecrackerVersion: "firecracker"}
+	for _, path := range []string{versions.FirecrackerPath(builder), versions.HostKernelPath(builder)} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, nil, 0o755))
+	}
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
+
+	from := testMapSandbox(t, "served-by-a-plane")
+	from.Config = NewConfig(Config{Vcpu: 1, RamMB: 1, Network: &orchestrator.SandboxNetworkConfig{}, FirecrackerConfig: versions, Envd: EnvdMetadata{Version: "0.9.0"}})
+	from.Runtime = sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), ExecutionID: uuid.NewString(), SandboxType: sandboxtypes.SandboxTypeSandbox}
+	from.Template = rebootHookTemplate{bootTemplate: bootTemplate{snapfile: filepath.Join(t.TempDir(), "snapfile")}, buildID: uuid.NewString()}
+	from.rootfs = &handedOverRootfs{path: filepath.Join(t.TempDir(), "rootfs")}
+	from.process = &fc.Process{Exit: utils.NewErrorOnce()}
+	require.NoError(t, from.process.Exit.SetError(nil))
+	from.sandboxes = NewSandboxesMap()
+	from.slotRelease = newHandover(func(context.Context) error { return nil })
+	log := &eventLog{}
+	from.rootfsRelease = newHandover(func(context.Context) error {
+		log.add("provider.close")
+
+		return nil
+	})
+	from.planeRelease = newHandover(func(context.Context) error {
+		log.add("plane.close")
+
+		return nil
+	})
+	from.networkRelease = func(context.Context, string) error { return nil }
+
+	pool := &factoryNetworkPool{slot: from.Slot}
+	hookFailure := errors.New("stop at the hook")
+	hook := networkAssignHookFunc(func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+		return nil, hookFailure
+	})
+	factory := NewFactory(t.Context(), builder, pool, nil, flags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), hook, from.sandboxes)
+
+	next, err := factory.startInPlace(t.Context(), from, time.Now().Add(time.Hour))
+	require.Nil(t, next)
+	require.ErrorIs(t, err, hookFailure)
+
+	assert.Equal(t, []string{"provider.close", "plane.close"}, log.list(), "the next lifecycle closes the overlay, then the plane that served it")
+	require.NoError(t, from.planeRelease.run(t.Context()))
+	require.NoError(t, from.rootfsRelease.run(t.Context()))
+	assert.Equal(t, []string{"provider.close", "plane.close"}, log.list(), "the lifecycle that handed them over releases neither again")
+}
+
+// A lifecycle whose data plane was already closed cannot reboot on the disk
+// it served: the take fails like the slot and overlay takes do, and both go
+// back to their owner.
+func TestStartInPlaceFailsWhenTheDataPlaneWasAlreadyClosed(t *testing.T) {
+	t.Parallel()
+	builder := cfg.BuilderConfig{
+		FirecrackerVersionsDir: t.TempDir(), HostKernelsDir: t.TempDir(),
+		StorageConfig: storage.Config{SandboxCacheDir: t.TempDir()},
+	}
+	versions := fc.Config{KernelVersion: "kernel", FirecrackerVersion: "firecracker"}
+	for _, path := range []string{versions.FirecrackerPath(builder), versions.HostKernelPath(builder)} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, nil, 0o755))
+	}
+	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = flags.Close(context.WithoutCancel(t.Context())) })
+
+	from := testMapSandbox(t, "served-by-a-closed-plane")
+	from.Config = NewConfig(Config{Vcpu: 1, RamMB: 1, Network: &orchestrator.SandboxNetworkConfig{}, FirecrackerConfig: versions, Envd: EnvdMetadata{Version: "0.9.0"}})
+	from.Runtime = sandboxtypes.RuntimeMetadata{SandboxID: uuid.NewString(), ExecutionID: uuid.NewString(), SandboxType: sandboxtypes.SandboxTypeSandbox}
+	from.Template = rebootHookTemplate{bootTemplate: bootTemplate{snapfile: filepath.Join(t.TempDir(), "snapfile")}, buildID: uuid.NewString()}
+	from.rootfs = &handedOverRootfs{path: filepath.Join(t.TempDir(), "rootfs")}
+	from.process = &fc.Process{Exit: utils.NewErrorOnce()}
+	require.NoError(t, from.process.Exit.SetError(nil))
+	from.sandboxes = NewSandboxesMap()
+	log := &eventLog{}
+	from.slotRelease = newHandover(func(context.Context) error {
+		log.add("slot.release")
+
+		return nil
+	})
+	from.rootfsRelease = newHandover(func(context.Context) error {
+		log.add("provider.close")
+
+		return nil
+	})
+	from.planeRelease = newHandover(func(context.Context) error {
+		log.add("plane.close")
+
+		return nil
+	})
+	from.networkRelease = func(context.Context, string) error { return nil }
+	require.NoError(t, from.planeRelease.run(t.Context()))
+
+	pool := &factoryNetworkPool{slot: from.Slot}
+	hook := networkAssignHookFunc(func(context.Context, *Sandbox, NetworkAssignReason) (*orchestrator.SandboxNetworkPlacement, error) {
+		require.Fail(t, "the reboot must not reach the network hook")
+
+		return nil, nil
+	})
+	factory := NewFactory(t.Context(), builder, pool, nil, flags, hoststats.NewNoopDelivery(), cgroup.NewNoopManager(), network.NewNoopEgressProxy(), hook, from.sandboxes)
+
+	next, err := factory.startInPlace(t.Context(), from, time.Now().Add(time.Hour))
+	require.Nil(t, next)
+	require.ErrorContains(t, err, "the data plane was already closed")
+	assert.Equal(t, []string{"plane.close", "slot.release", "provider.close"}, log.list(), "the slot and the overlay go back to their owner")
 }
 
 // handedOverRootfs is a started overlay a reboot in place hands over; only its path is read.

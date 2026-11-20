@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/build"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 )
@@ -60,7 +59,7 @@ func ResolveBlob(ctx context.Context, cache Cache, buildID, fileName string) (Bl
 		return &headerSource{getDevice: t.Memfile}, release, nil
 
 	case storage.RootfsName + storage.HeaderSuffix:
-		return &headerSource{getDevice: func(_ context.Context) (block.ReadonlyDevice, error) { return t.Rootfs() }}, release, nil
+		return &headerSource{getDevice: t.Rootfs}, release, nil
 
 	default:
 		release()
