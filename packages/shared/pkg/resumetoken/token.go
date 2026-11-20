@@ -2,6 +2,7 @@
 package resumetoken
 
 import (
+	"crypto"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	gojwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -33,16 +35,26 @@ func NewSigner(raw string) (jose.Signer, error) {
 	return jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: priv}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", key.KeyID))
 }
 
-func Issue(signer jose.Signer, clusterID string, expiry time.Time) (string, error) {
-	claims := jwt.Claims{
-		Issuer: issuer, Subject: clusterID, Audience: jwt.Audience{audience},
-		IssuedAt: jwt.NewNumericDate(time.Now()), Expiry: jwt.NewNumericDate(expiry),
+func claims(clusterID string, expiry time.Time) map[string]any {
+	return map[string]any{
+		"iss": issuer, "sub": clusterID, "aud": audience,
+		"iat": time.Now().Unix(), "exp": expiry.Unix(),
 	}
-
-	return jwt.Signed(signer).Claims(claims).Serialize()
 }
 
-type Verifier map[string]ed25519.PublicKey
+func Issue(signer jose.Signer, clusterID string, expiry time.Time) (string, error) {
+	return jwt.Signed(signer).Claims(claims(clusterID, expiry)).Serialize()
+}
+
+// ES256SigningInput returns the encoded header and claims for an external signer.
+func ES256SigningInput(keyID, clusterID string, expiry time.Time) (string, error) {
+	token := gojwt.NewWithClaims(gojwt.SigningMethodES256, gojwt.MapClaims(claims(clusterID, expiry)))
+	token.Header["kid"] = keyID
+
+	return token.SigningString()
+}
+
+type Verifier map[string]crypto.PublicKey
 
 func NewVerifier(raw string) (Verifier, error) {
 	var set jose.JSONWebKeySet
@@ -64,7 +76,7 @@ func NewVerifier(raw string) (Verifier, error) {
 // Verify distinguishes regional tokens from legacy tokens using the untrusted issuer
 // solely for routing. Only verified claims identify a cluster.
 func (v Verifier) Verify(raw string) (string, bool, error) {
-	t, err := jwt.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA})
+	t, err := jwt.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
 	if err != nil {
 		// Other token formats still go through the legacy verifier.
 		return "", false, nil //nolint:nilerr

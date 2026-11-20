@@ -543,8 +543,8 @@ func run() int {
 	if !oauth.Configured(config.ClientProxyOIDCIssuerURL) && config.ClusterServiceGrpcAddress == "" {
 		l.Warn(ctx, "client proxy authentication is not configured; edge proxy gRPC requests will be rejected")
 	}
-	if config.ResumeVerificationJWKS != "" {
-		clientProxyOAuthVerifier, err = handlers.NewRegionalResumeVerifier(config.ResumeVerificationJWKS, clientProxyOAuthVerifier)
+	if len(config.ResumeVerificationKMSVersions) > 0 || config.ResumeVerificationJWKS != "" {
+		clientProxyOAuthVerifier, err = handlers.NewRegionalResumeVerifier(ctx, config.ResumeVerificationKMSVersions, config.ResumeVerificationJWKS, clientProxyOAuthVerifier)
 		if err != nil {
 			l.Fatal(ctx, "invalid regional resume verification keys", zap.Error(err))
 		}

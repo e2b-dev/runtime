@@ -32,6 +32,7 @@ require (
 	github.com/go-openapi/swag/jsonutils v0.29.2
 	github.com/go-openapi/swag/typeutils v0.29.2
 	github.com/go-openapi/validate v1.0.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/uuid v1.6.0
 	github.com/googleapis/gax-go/v2 v2.27.0
@@ -223,7 +224,6 @@ require (
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/gogo/status v1.1.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/btree v1.1.3 // indirect

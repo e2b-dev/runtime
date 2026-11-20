@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"errors"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -43,13 +46,35 @@ type regionalVerifier struct {
 	legacy oauth.Verifier
 }
 
-func NewRegionalResumeVerifier(keys string, legacy oauth.Verifier) (oauth.Verifier, error) {
-	verifier, err := resumetoken.NewVerifier(keys)
-	if err != nil {
+func NewRegionalResumeVerifier(ctx context.Context, versions []string, keys string, legacy oauth.Verifier) (oauth.Verifier, error) {
+	verifier := make(resumetoken.Verifier)
+	if keys != "" {
+		var err error
+		verifier, err = resumetoken.NewVerifier(keys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := addKMSResumeKeys(ctx, verifier, versions, loadResumePublicKey); err != nil {
 		return nil, err
 	}
 
 	return &regionalVerifier{keys: verifier, legacy: legacy}, nil
+}
+
+func addKMSResumeKeys(ctx context.Context, verifier resumetoken.Verifier, versions []string, load func(context.Context, string) (*ecdsa.PublicKey, string, error)) error {
+	for _, version := range versions {
+		pub, kid, err := load(ctx, strings.TrimSpace(version))
+		if err != nil {
+			return err
+		}
+		if _, exists := verifier[kid]; exists {
+			return errors.New("duplicate resume key ID")
+		}
+		verifier[kid] = pub
+	}
+
+	return nil
 }
 
 func (v *regionalVerifier) VerifyClaims(ctx context.Context, raw string) (oauth.Claims, error) {

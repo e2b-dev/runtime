@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
 	"testing"
@@ -34,7 +36,7 @@ func TestResumeVerifierKeepsLegacyAndClusterClaimsSeparate(t *testing.T) {
 
 		return oauth.Claims{OrgID: "test-org"}, nil
 	})
-	verify, err := NewRegionalResumeVerifier(string(public), legacy)
+	verify, err := NewRegionalResumeVerifier(t.Context(), nil, string(public), legacy)
 	require.NoError(t, err)
 	claims, err := verify.VerifyClaims(t.Context(), "legacy")
 	require.NoError(t, err)
@@ -55,4 +57,29 @@ func TestResumeVerifierKeepsLegacyAndClusterClaimsSeparate(t *testing.T) {
 	other := uuid.New()
 	require.True(t, service.orgOwnsCluster(claims, &cluster))
 	require.False(t, service.orgOwnsCluster(claims, &other))
+}
+
+func TestKMSResumeKeyOverlap(t *testing.T) {
+	t.Parallel()
+	keys := resumetoken.Verifier{}
+	tokens := make(map[string]string)
+	cluster := uuid.NewString()
+	load := func(_ context.Context, version string) (*ecdsa.PublicKey, string, error) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", version))
+		require.NoError(t, err)
+		tokens[version], err = resumetoken.Issue(signer, cluster, time.Now().Add(resumetoken.Lifetime))
+		require.NoError(t, err)
+
+		return &key.PublicKey, version, nil
+	}
+	require.NoError(t, addKMSResumeKeys(t.Context(), keys, []string{"old", "new"}, load))
+	for _, version := range []string{"old", "new"} {
+		id, regional, err := keys.Verify(tokens[version])
+		require.NoError(t, err)
+		require.True(t, regional)
+		require.Equal(t, cluster, id)
+	}
+	require.Error(t, addKMSResumeKeys(t.Context(), keys, []string{"old"}, load))
 }
