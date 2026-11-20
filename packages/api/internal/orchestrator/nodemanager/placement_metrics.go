@@ -13,6 +13,9 @@ type SandboxResources struct {
 	// HugePages reports whether the sandbox's RAM comes from the node's
 	// hugepage pool rather than ordinary pages.
 	HugePages bool
+	// BuildID identifies the template build this sandbox starts from. Used by
+	// the placement score for optional same-build affinity; empty when unknown.
+	BuildID string
 }
 
 type PlacementMetrics struct {
@@ -53,6 +56,25 @@ func (p *PlacementMetrics) InProgress() map[string]SandboxResources {
 
 func (p *PlacementMetrics) InProgressCount() uint32 {
 	return uint32(p.sandboxesInProgress.Count())
+}
+
+// SameBuildInProgress counts the in-flight placements on this node that start
+// from buildID. It is the node-local sibling count a same-template read-only
+// base (pmem+DAX) could share with: N siblings make N-1 base copies
+// redundant. Empty buildID counts nothing.
+func (p *PlacementMetrics) SameBuildInProgress(buildID string) int {
+	if buildID == "" {
+		return 0
+	}
+
+	n := 0
+	for _, res := range p.sandboxesInProgress.Items() {
+		if res.BuildID == buildID {
+			n++
+		}
+	}
+
+	return n
 }
 
 // StartPlacingIf records the placement only if fits holds, checking and

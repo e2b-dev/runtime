@@ -21,6 +21,16 @@ type BestOfKConfig struct {
 	K int
 	// ScoreHugepages includes hugepage-pool load in the score (max of CPU and memory).
 	ScoreHugepages bool
+	// TemplateAffinityWeight biases placement toward nodes already running
+	// sandboxes off the same build, so a future shared read-only base can be
+	// exercised (the sharing is node-local). 0 disables it: the score is then
+	// byte-for-byte the load-only score. The final score is multiplied by
+	// (1 - weight*min(sameBuild,cap)/cap), so affinity only reorders nodes that
+	// already pass admission and never outweighs real load. Keep it small.
+	TemplateAffinityWeight float64
+	// TemplateAffinityCap caps how many same-build sandboxes count toward the
+	// discount. Ignored when TemplateAffinityWeight is 0.
+	TemplateAffinityCap int
 }
 
 // DefaultBestOfKConfig returns the default placement configuration
@@ -30,6 +40,9 @@ func DefaultBestOfKConfig() BestOfKConfig {
 		K:              3,
 		Alpha:          0.5,
 		ScoreHugepages: true,
+		// Affinity off by default: zero behavior change until an operator opts in.
+		TemplateAffinityWeight: 0,
+		TemplateAffinityCap:    8,
 	}
 }
 
@@ -42,10 +55,14 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 	// Get locally recorded resources that haven't been reported yet.
 	pendingCPUs := int64(0)
 	pendingMiB := int64(0)
+	sameBuild := 0
 	for _, res := range node.PlacementMetrics.InProgress() {
 		pendingCPUs += res.CPUs
 		if res.HugePages {
 			pendingMiB += res.MiBMemory
+		}
+		if resources.BuildID != "" && res.BuildID == resources.BuildID {
+			sameBuild++
 		}
 	}
 
@@ -67,10 +84,16 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 
 	cpuScore := (cpuRequested + float64(reserved) + config.Alpha*busyCPUs) / totalCapacity
 
-	score := cpuScore
+	loadScore := cpuScore
 	if config.ScoreHugepages {
-		score = max(score, memoryScore(metrics, resources, pendingMiB, config))
+		loadScore = max(cpuScore, memoryScore(metrics, resources, pendingMiB, config))
 	}
+
+	// Template affinity reorders equally-loaded candidates toward same-build
+	// nodes; it only discounts real load, so it is applied before the refusal
+	// penalty below, which must stay at its full unit.
+	score := applyTemplateAffinity(loadScore, sameBuild, config)
+
 	// One full unit of load penalizes a recent refusal without making the
 	// node ineligible. Equally penalized candidates retain their load ordering.
 	if resources.HugePages && metrics.RecentHugePageRefusal {
@@ -78,6 +101,26 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 	}
 
 	return score
+}
+
+// applyTemplateAffinity lowers the load score for nodes already running
+// same-build sandboxes, so equally-loaded candidates that can share a
+// read-only base are preferred. It is a no-op when the weight is 0 (the score
+// is returned unchanged), and multiplicative so it reorders without ever
+// overriding real load: a busy node's high base score stays high. The count
+// is capped so affinity cannot pull an unbounded pile onto one node.
+func applyTemplateAffinity(loadScore float64, sameBuild int, config BestOfKConfig) float64 {
+	if config.TemplateAffinityWeight <= 0 || sameBuild <= 0 {
+		return loadScore
+	}
+	cap := config.TemplateAffinityCap
+	if cap <= 0 {
+		return loadScore
+	}
+	if sameBuild > cap {
+		sameBuild = cap
+	}
+	return loadScore * (1 - config.TemplateAffinityWeight*float64(sameBuild)/float64(cap))
 }
 
 // memoryScore is the CPU score's shape over the hugepage pool, where sandbox
