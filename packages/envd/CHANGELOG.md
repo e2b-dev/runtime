@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0 (2026-11-20)
+
+
+### Features
+
+* **envd:** keep the user and PTY memory limit in step with hotplugged memory (b1bd7be)
+
+
+### Bug Fixes
+
+* **envd:** carry user env vars across live upgrade (a345880)
+* **envd:** log client-cancelled calls at debug level (050577c)
+
+
+### Miscellaneous Chores
+
+* **envd:** stop generating the handover proto into the shared package (7fc1e1e)
+
 ## 0.10.2 (2026-10-23)
 
 
