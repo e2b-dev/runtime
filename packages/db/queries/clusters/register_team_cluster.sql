@@ -110,3 +110,15 @@ detached AS (
 SELECT locked_team.cluster_id,
        EXISTS (SELECT FROM detached) AS detached
 FROM locked_team;
+
+-- name: LockTeamClusterSync :exec
+-- Serializes the syncs of one team's cluster to the cluster service, so each
+-- reads the team only after the sync before it has finished.
+SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || sqlc.arg(team_id)::uuid::text, 0));
+
+-- name: GetLiveTeamCluster :one
+-- A deleted team holds no cluster, whatever its row still says.
+SELECT cluster_id
+FROM public.teams
+WHERE id = sqlc.arg(team_id)::uuid
+  AND deleted_at IS NULL;

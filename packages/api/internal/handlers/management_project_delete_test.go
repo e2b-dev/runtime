@@ -115,7 +115,7 @@ func TestDeleteProjectRetryRepairsWhatRacedTheDeletion(t *testing.T) {
 	insertCluster(t, db, clusterID, false)
 	// An upsert that passed its deleted-project check before the deletion
 	// committed reaches the service and assigns its cluster.
-	_, _, err := store.managementService.UpsertProject(ctx, management.Project{
+	_, _, err := store.managementService.UpsertProject(ctx, store.riverClient, management.Project{
 		ClusterID: &clusterID, ID: projectID, Name: "raced", Slug: "raced-" + projectID.String()[:8], Email: "raced@example.test",
 	})
 	require.NoError(t, err)

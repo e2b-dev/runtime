@@ -512,8 +512,9 @@ func TestAClusterDeleteTheServiceRefusesKeepsTheTemplatesAndTheRecordedDeletion(
 
 	response := callManagementDeleteCluster(t, store, clusterID)
 
-	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	require.JSONEq(t, `{"code":409,"message":"Cluster is still referenced by a team or environment"}`, response.Body.String())
+	// The API found no live team on the cluster, so the refusal means the
+	// cluster service's copy is behind, and the caller is told to retry.
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	var deleted bool
 	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx, `SELECT deleted_at IS NOT NULL FROM public.envs WHERE id = $1`,
 		func(rows pgx.Rows) error {
