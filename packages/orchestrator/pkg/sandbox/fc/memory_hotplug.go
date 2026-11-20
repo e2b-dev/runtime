@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/client/operations"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fc/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 )
 
@@ -33,7 +36,24 @@ var (
 	ErrMemoryHotplugUnsupported = errors.New("this boot cannot carry a memory hotplug region")
 	ErrMemoryHotplugFirecracker = fmt.Errorf("%w: the firecracker release does not report the full memory layout", ErrMemoryHotplugUnsupported)
 	ErrMemoryHotplugKernel      = fmt.Errorf("%w: the guest kernel is older than virtio-mem hotplug needs", ErrMemoryHotplugUnsupported)
+	// ErrMemoryRequestInvalid is a requested memory size the sandbox cannot take: below its boot
+	// RAM, not a whole number of hotplug blocks, or beyond its region. It is the caller's error,
+	// unlike the platform refusals above.
+	ErrMemoryRequestInvalid error = &memoryRequestError{"the requested memory does not fit the sandbox"}
+	// ErrMemoryHotplugShrink is a memory resume asked to run with less memory than its snapshot
+	// had asked for. Hotplug only grows a sandbox for now: unplugging needs the guest to empty
+	// the memory first and can stall or kill processes, so a smaller size takes a cold boot.
+	ErrMemoryHotplugShrink = fmt.Errorf("%w: a memory resume cannot shrink the sandbox", ErrMemoryRequestInvalid)
 )
+
+// memoryRequestError is a caller's request the sandbox cannot take. It unwraps to
+// ErrMemoryHotplugUnsupported so a start refuses it before taking resources, but its message
+// names only the request, since nothing is wrong with the boot.
+type memoryRequestError struct{ msg string }
+
+func (e *memoryRequestError) Error() string { return e.msg }
+
+func (e *memoryRequestError) Unwrap() error { return ErrMemoryHotplugUnsupported }
 
 // The oldest guest kernels whose virtio-mem driver works with Firecracker's hotplug region:
 // upstream Firecracker documents 5.16 on x86 (VIRTIO_MEM_F_UNPLUGGED_INACCESSIBLE) and 5.18 on
@@ -148,26 +168,193 @@ func (t Config) RefuseMemoryHotplugRestore(regionMB int64) error {
 }
 
 // MemoryHotplugRefusalReason names why a region was refused, for counters and logs: firecracker
-// (a release without the full memory layout), kernel (a guest kernel below the floor), or invalid
-// (the region's size or the guest's boot).
+// (a release without the full memory layout), kernel (a guest kernel below the floor), shrink (a
+// memory resume asked for less memory than its snapshot had), invalid_request (a requested memory
+// size the sandbox cannot take), or invalid (the region's size or the guest's boot).
 func MemoryHotplugRefusalReason(err error) string {
 	switch {
 	case errors.Is(err, ErrMemoryHotplugFirecracker):
 		return "firecracker"
 	case errors.Is(err, ErrMemoryHotplugKernel):
 		return "kernel"
+	case errors.Is(err, ErrMemoryHotplugShrink):
+		return "shrink"
+	case errors.Is(err, ErrMemoryRequestInvalid):
+		return "invalid_request"
 	default:
 		return "invalid"
 	}
 }
 
+// MemoryHotplugUsableMB is how much of the hotplug region the guest may plug while Firecracker
+// asks for requestedMB: Firecracker refuses plugs past the request rounded up to a slot of slotMB
+// (MemoryHotplugSlotMiB when slotMB is 0).
+func MemoryHotplugUsableMB(requestedMB, slotMB int64) int64 {
+	if slotMB <= 0 {
+		slotMB = MemoryHotplugSlotMiB
+	}
+	if requestedMB <= 0 {
+		return 0
+	}
+
+	return (requestedMB + slotMB - 1) / slotMB * slotMB
+}
+
+// MemoryHotplugStatus is the hotplug region's state as Firecracker reports it, in MiB: what the
+// guest has plugged, the size it was asked to reach, and the region's size and slot size.
+type MemoryHotplugStatus struct {
+	PluggedMB   int64
+	RequestedMB int64
+	TotalMB     int64
+	SlotMB      int64
+}
+
+// MemoryHotplugStatus reads the hotplug region's state from Firecracker now.
+func (p *Process) MemoryHotplugStatus(ctx context.Context) (MemoryHotplugStatus, error) {
+	status, err := p.client.getMemoryHotplug(ctx)
+	if err != nil {
+		return MemoryHotplugStatus{}, err
+	}
+
+	return MemoryHotplugStatus{
+		PluggedMB:   status.PluggedSizeMib,
+		RequestedMB: status.RequestedSizeMib,
+		TotalMB:     status.TotalSizeMib,
+		SlotMB:      status.SlotSizeMib,
+	}, nil
+}
+
 // PluggedMemoryMB is the memory the guest has plugged into the hotplug region, as Firecracker
 // reports it now.
 func (p *Process) PluggedMemoryMB(ctx context.Context) (int64, error) {
-	status, err := p.client.getMemoryHotplug(ctx)
+	status, err := p.MemoryHotplugStatus(ctx)
 	if err != nil {
 		return 0, err
 	}
 
-	return status.PluggedSizeMib, nil
+	return status.PluggedMB, nil
+}
+
+// RequestMemoryHotplug asks the guest to plug requestedMB of the hotplug region. It returns once
+// Firecracker took the target, before the guest plugged anything. Firecracker refuses it until the
+// guest driver has activated the device, so a cold boot sends it after the guest is up.
+func (p *Process) RequestMemoryHotplug(ctx context.Context, requestedMB int64) error {
+	return p.client.requestMemoryHotplug(ctx, requestedMB)
+}
+
+// memoryHotplugTarget is the hotplug target a restore asks the guest to plug, in MiB, and whether
+// the start named it (explicit) or kept the size its snapshot recorded.
+type memoryHotplugTarget struct {
+	requestedMB int64
+	explicit    bool
+}
+
+// SetMemoryHotplugTarget sets how much of the hotplug region a following restore asks the guest
+// to plug, in MiB. An explicit target is a size the start named, and a restored device that asks
+// for more refuses it. A kept one is the size the snapshot's metadata recorded: the restore plugs
+// up to it, and leaves a device that already asks for more as it is. Without a target the restore
+// keeps the device's request and reads nothing.
+func (p *Process) SetMemoryHotplugTarget(requestedMB int64, explicit bool) {
+	p.memoryHotplugTarget = &memoryHotplugTarget{requestedMB: requestedMB, explicit: explicit}
+}
+
+// MemoryHotplugResized reports whether the restore sent a hotplug target that differs from the
+// snapshot's, so the guest has memory to plug or unplug after it runs.
+func (p *Process) MemoryHotplugResized() bool {
+	return p.memoryHotplugResized
+}
+
+// applyMemoryHotplugTarget sends the restore's hotplug target when it is above the one the snapshot
+// restored, and only then; an explicit target below the restored one is refused.
+func (p *Process) applyMemoryHotplugTarget(ctx context.Context) error {
+	target := p.memoryHotplugTarget
+	if target == nil && p.memoryHotplugRestored == nil {
+		return nil
+	}
+	status, err := p.MemoryHotplugStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errMemoryHotplugStatusUnread, err)
+	}
+	if target != nil && target.requestedMB != status.RequestedMB {
+		// The restored device is the truth: a target below its request would unplug memory under
+		// running processes, whatever the snapshot's metadata recorded.
+		if target.requestedMB < status.RequestedMB {
+			if target.explicit {
+				return fmt.Errorf("%w: it asks for %d MiB above boot RAM and the restored device had %d MiB",
+					ErrMemoryHotplugShrink, target.requestedMB, status.RequestedMB)
+			}
+		} else {
+			if err := p.RequestMemoryHotplug(ctx, target.requestedMB); err != nil {
+				return err
+			}
+			p.memoryHotplugResized = true
+			status.RequestedMB = target.requestedMB
+		}
+	}
+	if p.memoryHotplugRestored != nil {
+		return p.memoryHotplugRestored(status)
+	}
+
+	return nil
+}
+
+// errMemoryHotplugStatusUnread is the restore failing to read the restored hotplug device.
+var errMemoryHotplugStatusUnread = errors.New("error reading the restored memory hotplug status")
+
+// OnMemoryHotplugRestored registers fn to be told, before the vCPUs resume, the restored device's
+// state, with RequestedMB the size the guest is asked to plug after any new target was sent.
+func (p *Process) OnMemoryHotplugRestored(fn func(MemoryHotplugStatus) error) {
+	p.memoryHotplugRestored = fn
+}
+
+// memoryHotplugAPIError is a hotplug call Firecracker answered with an error: its HTTP status and
+// fault message.
+type memoryHotplugAPIError interface {
+	Code() int
+	GetPayload() *models.Error
+}
+
+func memoryHotplugFault(err error) (int, string, bool) {
+	if patch, ok := errors.AsType[*operations.PatchMemoryHotplugDefault](err); ok {
+		return memoryHotplugFaultOf(patch)
+	}
+	if get, ok := errors.AsType[*operations.GetMemoryHotplugDefault](err); ok {
+		return memoryHotplugFaultOf(get)
+	}
+
+	return 0, "", false
+}
+
+func memoryHotplugFaultOf(e memoryHotplugAPIError) (int, string, bool) {
+	message := ""
+	if payload := e.GetPayload(); payload != nil {
+		message = payload.FaultMessage
+	}
+
+	return e.Code(), message, true
+}
+
+// MemoryHotplugFaultMessage is the fault message Firecracker answered a failed hotplug call with,
+// "" for a failure it did not answer.
+func MemoryHotplugFaultMessage(err error) string {
+	_, message, _ := memoryHotplugFault(err)
+
+	return message
+}
+
+// MemoryHotplugDeviceNotActive reports whether Firecracker refused a hotplug call because the guest
+// driver has not activated the device yet, which passes once the guest is up.
+func MemoryHotplugDeviceNotActive(err error) bool {
+	_, message, ok := memoryHotplugFault(err)
+
+	return ok && strings.Contains(strings.ToLower(message), "not active")
+}
+
+// MemoryHotplugErrorPermanent reports whether Firecracker answered a hotplug call with a client
+// error retrying cannot change: any 4xx but an inactive device. A transport failure or a 5xx may
+// pass and is not permanent.
+func MemoryHotplugErrorPermanent(err error) bool {
+	code, _, ok := memoryHotplugFault(err)
+
+	return ok && code >= 400 && code < 500 && !MemoryHotplugDeviceNotActive(err)
 }

@@ -122,6 +122,15 @@ func TestMemoryHotplugRefusalIsNamedAndCounted(t *testing.T) {
 	assert.Contains(t, st.Message(), "memory hotplug refused (firecracker)")
 	createRefusalDetail(t, st)
 
+	// A requested size the sandbox cannot take is the caller's error: InvalidArgument, a 400.
+	for reason, cause := range map[string]error{"shrink": fc.ErrMemoryHotplugShrink, "invalid_request": fc.ErrMemoryRequestInvalid} {
+		refusal := s.memoryHotplugRefusal(t.Context(), fmt.Errorf("resume: %w", cause), sandboxtypes.RuntimeMetadata{})
+		st := status.Convert(refusal)
+		assert.Equal(t, codes.InvalidArgument, st.Code(), reason)
+		assert.Contains(t, st.Message(), "memory hotplug refused ("+reason+")")
+		assert.Equal(t, uint32(http.StatusBadRequest), createRefusalDetail(t, st).GetHttpStatus(), reason)
+	}
+
 	_, ok := s.countMemoryHotplugRefusal(t.Context(), fmt.Errorf("boot: %w", fc.ErrMemoryHotplugKernel), memoryHotplugPathReboot)
 	assert.True(t, ok)
 	require.NoError(t, s.memoryHotplugRefusal(t.Context(), errors.New("network slot unavailable"), sandboxtypes.RuntimeMetadata{}))
@@ -141,5 +150,5 @@ func TestMemoryHotplugRefusalIsNamedAndCounted(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, map[string]int64{"firecracker/start": 1, "kernel/reboot": 1}, got)
+	assert.Equal(t, map[string]int64{"firecracker/start": 1, "kernel/reboot": 1, "shrink/start": 1, "invalid_request/start": 1}, got)
 }

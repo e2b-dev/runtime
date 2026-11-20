@@ -28,8 +28,22 @@ import (
 // the fd and mmaps it; Close releases both.
 type Memfd struct {
 	fd   int
+	size int64
 	mmap []byte
+
+	// mu orders Extend against Seal and Close: the teardown can close the memfd while a restore
+	// extends it.
+	mu     sync.Mutex
+	sealed bool
+	closed bool
 }
+
+var (
+	// ErrMemfdClosed is Extend on a memfd that was closed.
+	ErrMemfdClosed = errors.New("memfd closed")
+	// ErrMemfdSealed is Extend after Seal, once something may read through Slice.
+	ErrMemfdSealed = errors.New("memfd sealed")
+)
 
 // GuestMemoryError is the guest-memory mmap failing with ENOMEM: the hugepage
 // pool could not back the whole guest, because sandboxes still hold the pages
@@ -40,15 +54,99 @@ func (e GuestMemoryError) Error() string { return e.Err.Error() }
 func (e GuestMemoryError) Unwrap() error { return e.Err }
 
 func NewFromFd(fd int) (*Memfd, error) {
+	return NewFromFdPrefix(fd, 0)
+}
+
+// NewFromFdPrefix is NewFromFd leaving the file's last unusedTail bytes unmapped. The mapping is
+// what reserves the guest's huge pages, so a tail the guest cannot use costs nothing: the part of
+// a hotplug region above what the guest may plug.
+func NewFromFdPrefix(fd int, unusedTail int64) (*Memfd, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		_ = unix.Close(fd)
 
 		return nil, fmt.Errorf("fstat memfd: %w", err)
 	}
-	b, err := unix.Mmap(fd, 0, int(st.Size), unix.PROT_READ, unix.MAP_SHARED)
+	b, err := mapMemfd(fd, prefixLen(st.Size, unusedTail))
 	if err != nil {
 		_ = unix.Close(fd)
+
+		return nil, err
+	}
+
+	return &Memfd{fd: fd, size: st.Size, mmap: b}, nil
+}
+
+// Extend maps more of the file when the guest may now use more of it, leaving unusedTail bytes
+// unmapped. It never shrinks the mapping. It replaces the mapping Slice reads without the lock,
+// so it is refused once Seal was called.
+func (m *Memfd) Extend(unusedTail int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrMemfdClosed
+	}
+	if m.sealed {
+		return ErrMemfdSealed
+	}
+	n := prefixLen(m.size, unusedTail)
+	if n <= int64(len(m.mmap)) {
+		return nil
+	}
+	b, err := mapMemfd(m.fd, n)
+	if err != nil {
+		return err
+	}
+	if err := unix.Munmap(m.mmap); err != nil {
+		_ = unix.Munmap(b)
+
+		return fmt.Errorf("munmap memfd: %w", err)
+	}
+	m.mmap = b
+
+	return nil
+}
+
+// Seal fixes the mapping: Extend is refused from now on. A restore seals the memfd once it has
+// applied the guest's hotplug size, before anything reads through Slice.
+func (m *Memfd) Seal() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sealed = true
+}
+
+// MappedBytes is how much of the file is mapped, and so reserved.
+func (m *Memfd) MappedBytes() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return int64(len(m.mmap))
+}
+
+// FileBytes is the size of the whole file.
+func (m *Memfd) FileBytes() int64 {
+	return m.size
+}
+
+// prefixLen maps the whole file for a tail that would leave nothing mapped; ValidUnusedTail
+// tells the caller so.
+func prefixLen(size, unusedTail int64) int64 {
+	if !ValidUnusedTail(size, unusedTail) {
+		return size
+	}
+
+	return size - unusedTail
+}
+
+// ValidUnusedTail reports whether a file of size bytes can leave unusedTail bytes unmapped: a
+// positive tail smaller than the file. Zero is valid and maps the whole file.
+func ValidUnusedTail(size, unusedTail int64) bool {
+	return unusedTail == 0 || (unusedTail > 0 && unusedTail < size)
+}
+
+func mapMemfd(fd int, n int64) ([]byte, error) {
+	b, err := unix.Mmap(fd, 0, int(n), unix.PROT_READ, unix.MAP_SHARED)
+	if err != nil {
 		if errors.Is(err, unix.ENOMEM) {
 			err = GuestMemoryError{Err: err}
 		}
@@ -56,7 +154,7 @@ func NewFromFd(fd int) (*Memfd, error) {
 		return nil, fmt.Errorf("mmap memfd: %w", err)
 	}
 
-	return &Memfd{fd: fd, mmap: b}, nil
+	return b, nil
 }
 
 // Slice returns a zero-copy view of [offset, offset+size). Valid until Close.
@@ -78,11 +176,17 @@ func (m *Memfd) ReadAt(p []byte, off int64) (int, error) {
 	return copy(p, b), nil
 }
 
-// Close releases the mmap and the fd. Single-use: every Memfd has exactly
-// one owner (NewCacheFromMemfd consumes it during construction; the UFFD
-// handshake transfers ownership via atomic Swap), so we don't guard against
-// double-close.
+// Close releases the mmap and the fd. Every Memfd has exactly one owner
+// (NewCacheFromMemfd consumes it during construction; the UFFD handshake
+// transfers ownership via atomic Swap); a second Close does nothing, so it
+// cannot unmap or close what the process reused since.
 func (m *Memfd) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
+	m.closed = true
 	var err error
 	if e := unix.Munmap(m.mmap); e != nil {
 		err = fmt.Errorf("munmap memfd: %w", e)

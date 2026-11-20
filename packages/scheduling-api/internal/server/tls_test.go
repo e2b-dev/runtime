@@ -6,15 +6,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/mtlstest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -58,7 +62,7 @@ func TestMutualTLS(t *testing.T) {
 	}
 	cfg, err := config.ServerTLS(newProcess(t, ca, serverID), mtls.ListenerSettings{Allow: []string{apiID}})
 	require.NoError(t, err)
-	srv, err := server.New(telemetry.NewNoopClient(), cfg, &fakeStorage{})
+	srv, err := server.New(telemetry.NewNoopClient(), cfg, &fakeStorage{}, &fakeState{})
 	require.NoError(t, err)
 	srv.RegisterService(&testServiceDesc, struct{}{})
 	healthv1.RegisterHealthServer(srv, health.NewServer())
@@ -97,6 +101,10 @@ func TestMutualTLS(t *testing.T) {
 				if tc.signer == nil {
 					_, err = healthv1.NewHealthClient(conn).Check(ctx, &healthv1.HealthCheckRequest{})
 					require.NoError(t, err, "plaintext is limited to health probes")
+					stream, err := scheduling.NewStateServiceClient(conn).TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+					require.NoError(t, err)
+					_, err = stream.Recv()
+					require.Equal(t, codes.Unauthenticated, status.Code(err), "plaintext streams are rejected: %v", err)
 				}
 
 				return

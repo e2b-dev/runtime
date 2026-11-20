@@ -30,6 +30,10 @@ message SandboxConfig {
   // VM capacity on cold boot; 0 defaults to max(vcpu, recorded snapshot capacity).
   // Memory resumes use recorded capacity; legacy resizes must pass the original size.
   int64 max_vcpus = 28;
+  // Memory the sandbox runs with, in MiB: ram_mb is boot RAM and the rest is plugged
+  // into the template's hotplug region. 0 keeps the size the sandbox was paused with
+  // (boot RAM for a template). A memory resume never shrinks a sandbox.
+  int64 memory_mb = 29;
 
   string team_id = 13;
   // Maximum length of the sandbox in Hours.
@@ -335,6 +339,11 @@ message RunningSandbox {
   // with its own timeout action: a kill, or a pause, which the node makes
   // filesystem-only. Set for a guest that powered itself off.
   bool disk_kept = 12;
+  // Memory the sandbox runs with, in MiB: ram_mb of boot RAM plus the memory
+  // it asked its hotplug region to plug, including a size kept from its
+  // snapshot. ram_mb keeps meaning boot RAM; a node that predates this field
+  // leaves it unset, and ram_mb is then the whole size.
+  optional int64 memory_mb = 13;
 }
 
 // What the host saw of a guest whose sandbox ended.

@@ -615,6 +615,19 @@ func (c *apiClient) getMemoryHotplug(ctx context.Context) (*models.MemoryHotplug
 	return res.Payload, nil
 }
 
+// requestMemoryHotplug sets how much of the hotplug region the guest should plug. It returns once
+// Firecracker took the target; the guest plugs after it, while its vCPUs run.
+func (c *apiClient) requestMemoryHotplug(ctx context.Context, requestedMib int64) error {
+	_, err := c.client.Operations.PatchMemoryHotplugContext(ctx, &operations.PatchMemoryHotplugParams{
+		Body: &models.MemoryHotplugSizeUpdate{RequestedSizeMib: requestedMib},
+	})
+	if err != nil {
+		return fmt.Errorf("error requesting memory hotplug: %w", err)
+	}
+
+	return nil
+}
+
 func (c *apiClient) setMemoryHotplug(ctx context.Context, totalMib int64) error {
 	_, err := c.client.Operations.PutMemoryHotplugContext(ctx, &operations.PutMemoryHotplugParams{
 		Body: &models.MemoryHotplugConfig{

@@ -537,14 +537,20 @@ func (s *Storage) CommitUpdate(ctx context.Context, _ uuid.UUID, sandboxID strin
 	return updated, nil
 }
 
-// AbortUpdate releases the lock BeginUpdate took.
+// AbortUpdate releases the lock BeginUpdate took. A lock no longer held is
+// both redislock.ErrLockNotHeld and sandboxtypes.ErrLockLost.
 func (s *Storage) AbortUpdate(ctx context.Context, _ uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken) error {
 	t, err := decodeUpdateToken(token)
 	if err != nil {
 		return err
 	}
 
-	return s.releaseLockValue(ctx, redis_utils.GetLockKey(recordKey(sandboxID)), t.LockValue)
+	err = s.releaseLockValue(ctx, redis_utils.GetLockKey(recordKey(sandboxID)), t.LockValue)
+	if errors.Is(err, redislock.ErrLockNotHeld) {
+		return fmt.Errorf("%w: %w", err, sandboxtypes.ErrLockLost)
+	}
+
+	return err
 }
 
 // updateToken is what an UpdateToken carries: the lock's value, enough for
@@ -567,10 +573,10 @@ func encodeUpdateToken(lockValue string, endTime time.Time) (sandboxtypes.Update
 func decodeUpdateToken(token sandboxtypes.UpdateToken) (updateToken, error) {
 	var t updateToken
 	if err := json.Unmarshal([]byte(token), &t); err != nil {
-		return updateToken{}, fmt.Errorf("invalid update token: %w", err)
+		return updateToken{}, fmt.Errorf("%w: %w", sandboxtypes.ErrInvalidUpdateToken, err)
 	}
 	if t.LockValue == "" {
-		return updateToken{}, errors.New("invalid update token: no lock value")
+		return updateToken{}, fmt.Errorf("%w: no lock value", sandboxtypes.ErrInvalidUpdateToken)
 	}
 
 	return t, nil

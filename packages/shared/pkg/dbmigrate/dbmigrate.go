@@ -37,8 +37,14 @@ func NewGooseStore(trackingTable string) (database.Store, error) {
 
 // NewGooseProvider creates a PostgreSQL Goose provider without changing
 // Goose's package globals. The caller owns the migration stream and tracking
-// table name.
-func NewGooseProvider(databaseConnection *sql.DB, migrations fs.FS, trackingTable string) (*goose.Provider, error) {
+// table name; options are applied after the store and session locker, for
+// example to add Go migrations.
+func NewGooseProvider(
+	databaseConnection *sql.DB,
+	migrations fs.FS,
+	trackingTable string,
+	options ...goose.ProviderOption,
+) (*goose.Provider, error) {
 	store, err := NewGooseStore(trackingTable)
 	if err != nil {
 		return nil, err
@@ -51,8 +57,7 @@ func NewGooseProvider(databaseConnection *sql.DB, migrations fs.FS, trackingTabl
 		"",
 		databaseConnection,
 		migrations,
-		goose.WithStore(store),
-		goose.WithSessionLocker(locker),
+		append([]goose.ProviderOption{goose.WithStore(store), goose.WithSessionLocker(locker)}, options...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create migration provider: %w", err)

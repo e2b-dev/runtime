@@ -35,12 +35,14 @@ type Server struct {
 	scheduling.UnimplementedStateServiceServer
 
 	storage sandboxtypes.Storage
+	maxWait time.Duration
 }
 
 var _ scheduling.StateServiceServer = (*Server)(nil)
 
-func NewServer(storage sandboxtypes.Storage) *Server {
-	return &Server{storage: storage}
+// NewServer's maxWait bounds one WaitForTransition call.
+func NewServer(storage sandboxtypes.Storage, maxWait time.Duration) *Server {
+	return &Server{storage: storage, maxWait: maxWait}
 }
 
 func (s *Server) Add(ctx context.Context, req *scheduling.AddRequest) (*scheduling.AddResponse, error) {
@@ -217,6 +219,19 @@ func outcomeOf(err error) (scheduling.StateOutcome, bool) {
 		return scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, true
 	case errors.Is(err, sandboxtypes.ErrLockLost):
 		return scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST, true
+	case errors.Is(err, sandboxtypes.ErrHoldConflict):
+		return scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT, true
+	case errors.Is(err, sandboxtypes.ErrNotHeld):
+		return scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD, true
+	case errors.Is(err, sandboxtypes.ErrEvictionInProgress):
+		return scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS, true
+	case errors.Is(err, sandboxtypes.ErrEvictionNotNeeded):
+		return scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED, true
+	case errors.Is(err, sandboxtypes.ErrRestoreConflict):
+		return scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT, true
+	}
+	if _, ok := errors.AsType[*sandboxtypes.InvalidStateTransitionError](err); ok {
+		return scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION, true
 	}
 
 	return scheduling.StateOutcome_STATE_OUTCOME_UNSPECIFIED, false

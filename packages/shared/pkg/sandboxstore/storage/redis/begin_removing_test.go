@@ -221,3 +221,38 @@ func TestWaitForTransition_FinishOnAnotherInstance(t *testing.T) {
 		require.Fail(t, "the waiter never returned")
 	}
 }
+
+func TestWaitForTransition_FailureIsTyped(t *testing.T) {
+	t.Parallel()
+
+	storage, client := setupTestStorage(t)
+	sbx := createTestSandbox("wait-failure-typed")
+	require.NoError(t, storage.Add(t.Context(), sbx))
+	transition, _, finish, err := storage.startRemovingWithFinish(t.Context(), sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+	require.NoError(t, err)
+
+	joiner := make(chan error, 1)
+	go func() {
+		_, _, err := sandboxtypes.StartRemoving(t.Context(), storage, sbx.TeamID, sbx.SandboxID, sandboxtypes.RemoveOpts{Action: sandboxtypes.StateActionPause})
+		joiner <- err
+	}()
+	waitForTransitionWaiters(t, storage, client, sbx, 1)
+	finish(t.Context(), errors.New("boom"))
+
+	var joinErr error
+	select {
+	case joinErr = <-joiner:
+	case <-time.After(hangGuard):
+		require.Fail(t, "the joiner never returned")
+	}
+	require.EqualError(t, joinErr, "failed waiting for transition: transition failed: boom", "the text is unchanged through the helper's wrap")
+	failed, ok := errors.AsType[*sandboxtypes.TransitionFailedError](joinErr)
+	require.True(t, ok, "the failure is typed through the helper's wrap")
+	assert.Equal(t, "boom", failed.Message)
+
+	_, err = storage.WaitForTransition(t.Context(), sbx.TeamID, sbx.SandboxID, transition.ID)
+	require.EqualError(t, err, "transition failed: boom", "the text is unchanged")
+	failed, ok = errors.AsType[*sandboxtypes.TransitionFailedError](err)
+	require.True(t, ok)
+	assert.Equal(t, "boom", failed.Message)
+}

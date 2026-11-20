@@ -90,7 +90,7 @@ flowchart TB
 | Template manager | `packages/orchestrator` (role) | build nodes | Builds templates from Docker images |
 | Client proxy | `packages/client-proxy` | API nodes | Edge router: sandbox URL → correct node |
 | Envd | `packages/envd` | inside every VM | In-VM agent: process/filesystem API for SDKs |
-| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation service on the API's Redis data; no callers yet |
+| Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation and sandbox state services on the API's Redis data; the API calls it behind a flag that is off by default |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
@@ -283,6 +283,15 @@ image, which E2B Embed runs on port 3001 against the API alone.
   is assigned to one. At startup a cluster service that fails three lists in a row stops holding
   the API back: it starts with the local cluster, and the background sync adds the remote clusters
   once the service answers.
+- **Scheduling API connection**: with `SCHEDULING_API_GRPC_ADDRESS` set, the API prepares a gRPC
+  connection to scheduling-api through the `scheduling` client hop, balanced over every resolved
+  address like the cluster service's (a `dns:///name:port` target gives each replica of a headless
+  Service its own connection) and sent only to replicas that report `e2b.scheduling.v1.StateService`
+  as `SERVING`. The sandbox store sends a call there instead of to its own Redis store when the
+  `sandbox-state-scheduling-api` flag is on for the call's team or sandbox (default off; without
+  LaunchDarkly the `SANDBOX_STATE_SCHEDULING_API` environment variable). Calls without a team (the
+  evictor's expired items, the per-team counts and the node sync) always stay on Redis. Without an
+  address the API makes no connection and never reads the flag.
 - **Rig passthrough**: admin endpoints under `/clusters/{clusterID}/rigs` manage a cluster's
   orchestrator node pools ("rigs"). They list rigs, change rig capacity, list and terminate
   instances, and read recent scaling errors. Every handler delegates to the cluster's edge service
@@ -535,7 +544,8 @@ a service JWT: it lists clusters with their team counts, reads one cluster with 
 a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
 its token, and deletes it with the same checks as the management delete. The list filters, sorts
 and pages the cluster service's records in memory, comparing text without regard to case. No
-route returns a cluster's token.
+route returns a cluster's token. `/unstable/admin/clusters/team-counts` returns the live team
+count of each cluster on its own; it reads only the teams, so it answers without a cluster service.
 
 ### Orchestrator (`packages/orchestrator`)
 
@@ -1491,7 +1501,7 @@ packages/
   orchestrator/         Sandbox runtime + template builder (one binary, per-node)
   client-proxy/         Edge router for sandbox traffic
   envd/                 In-VM agent (pkg/version.go is release-please's; see Envd)
-  scheduling-api/       gRPC start reservation service on the API's Redis data (not deployed yet; no callers yet)
+  scheduling-api/       gRPC start reservation and sandbox state services on the API's Redis data (not deployed yet; the API calls it behind a flag, off by default)
   shared/               Protos, telemetry, storage clients, proxy engine, feature flags
   auth/                 AuthN library (API keys, JWT/OIDC) used by api
   db/                   Postgres migrations (goose) + queries (sqlc)

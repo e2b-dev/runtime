@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	storage_redis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 )
@@ -22,17 +24,26 @@ import (
 type redisSetup struct {
 	records *storage_redis.Storage
 	client  scheduling.StateServiceClient
+	remote  *remote.Storage
 }
 
 func setupRedis(t *testing.T) redisSetup {
 	t.Helper()
 
-	records, err := storage_redis.NewStorage(redis_utils.SetupInstance(t), noop.NewMeterProvider())
+	return setupRedisOn(t, redis_utils.SetupInstance(t))
+}
+
+func setupRedisOn(t *testing.T, client goredis.UniversalClient) redisSetup {
+	t.Helper()
+
+	records, err := storage_redis.NewStorage(client, noop.NewMeterProvider())
 	require.NoError(t, err)
 	go records.Start(t.Context())
 	t.Cleanup(func() { records.Close(context.WithoutCancel(t.Context())) })
 
-	return redisSetup{records: records, client: newClient(t, records)}
+	conn := newConnWithWait(t, records, hangTimeout)
+
+	return redisSetup{records: records, client: scheduling.NewStateServiceClient(conn), remote: remote.NewStorage(conn)}
 }
 
 func (s redisSetup) add(ctx context.Context, t *testing.T, sbx sandboxtypes.Sandbox) scheduling.StateOutcome {
