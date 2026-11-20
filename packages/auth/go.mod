@@ -11,7 +11,7 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/e2b-dev/infra/packages/db v0.0.0
 	github.com/e2b-dev/infra/packages/shared v0.0.0
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -88,8 +88,6 @@ require (
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
@@ -136,6 +134,7 @@ require (
 	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect

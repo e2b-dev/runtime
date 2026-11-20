@@ -27,7 +27,7 @@ require (
 	github.com/e2b-dev/infra/packages/shared v0.0.0
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/flowchartsman/retry v1.2.0
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-redis/redis_rate/v10 v10.0.1
@@ -284,8 +284,6 @@ require (
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
 	github.com/ngrok/firewall_toolkit v0.0.18 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/onsi/ginkgo v1.16.5 // indirect
 	github.com/onsi/gomega v1.38.2 // indirect
@@ -406,7 +404,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	go4.org/netipx v0.0.0-20230125063823-8449b0a6169f // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect

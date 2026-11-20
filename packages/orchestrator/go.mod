@@ -31,7 +31,7 @@ require (
 	github.com/e2b-dev/infra/packages/shared v0.0.0
 	github.com/edsrzf/mmap-go v1.2.1-0.20241212181136-fad1cd13edbd
 	github.com/gaissmai/extnetip v1.4.1
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/gin-contrib/size v1.0.2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-git/go-billy/v5 v5.9.0
@@ -233,8 +233,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/onsi/ginkgo v1.16.5 // indirect
 	github.com/onsi/gomega v1.38.2 // indirect
@@ -285,6 +283,7 @@ require (
 	go.uber.org/atomic v1.12.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261011100332-faecfb24eb49 // indirect
