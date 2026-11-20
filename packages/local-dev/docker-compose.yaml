@@ -48,7 +48,7 @@ services:
       - MEMCACHED_THREADS=4 # Number of threads to use
 
   mimir:
-    image: grafana/mimir:2.17.1
+    image: grafana/mimir:3.2.6
     command: -config.file=/etc/mimir/mimir.yaml
     volumes:
       - ./mimir.yaml:/etc/mimir/mimir.yaml:z
