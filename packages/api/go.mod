@@ -43,7 +43,7 @@ require (
 	github.com/launchdarkly/go-sdk-common/v3 v3.3.0
 	github.com/launchdarkly/go-server-sdk/v7 v7.13.0
 	github.com/oapi-codegen/gin-middleware v1.2.1
-	github.com/oapi-codegen/runtime v1.8.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/posthog/posthog-go v1.39.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/riverqueue/river v0.51.0

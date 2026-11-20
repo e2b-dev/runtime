@@ -51,7 +51,7 @@ require (
 	github.com/moby/moby/api v1.56.1
 	github.com/ngrok/firewall_toolkit v0.0.18
 	github.com/oapi-codegen/gin-middleware v1.2.1
-	github.com/oapi-codegen/runtime v1.8.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/soheilhy/cmux v0.1.5

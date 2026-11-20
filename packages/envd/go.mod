@@ -17,7 +17,7 @@ require (
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/uuid v1.6.0
-	github.com/oapi-codegen/runtime v1.8.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/prometheus/procfs v0.23.0
 	github.com/rs/cors v1.11.1
 	github.com/rs/zerolog v1.35.1
