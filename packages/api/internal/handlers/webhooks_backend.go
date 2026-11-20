@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -73,7 +74,11 @@ type webhooksMessages struct {
 func (a *APIStore) sendWebhooksBackendError(c *gin.Context, err error, messages webhooksMessages) {
 	code, message := webhooksBackendStatus(err, messages)
 
-	a.sendAPIStoreError(c, code, message)
+	if code == http.StatusServiceUnavailable && webhookErrorReason(status.Convert(err), webhookmanagement.WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE) {
+		apierrors.SendAPIError(c, &apierrors.APIError{Code: code, ClientMsg: message, Retryable: apierrors.CanRetry})
+	} else {
+		a.sendAPIStoreError(c, code, message)
+	}
 
 	if code >= http.StatusInternalServerError {
 		telemetry.ReportCriticalError(c.Request.Context(), messages.fallback, err)
@@ -104,8 +109,12 @@ func webhooksBackendStatus(err error, messages webhooksMessages) (int, string) {
 		return http.StatusBadRequest, grpcStatus.Message()
 	case codes.NotFound:
 		return http.StatusNotFound, messages.notFound
+	case codes.FailedPrecondition:
+		return http.StatusConflict, "Webhook project placement does not match"
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable, messages.fallback
 	case codes.ResourceExhausted:
-		if webhookLimitReached(grpcStatus) {
+		if webhookErrorReason(grpcStatus, webhookmanagement.WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED) {
 			return http.StatusTooManyRequests, grpcStatus.Message()
 		}
 
@@ -117,15 +126,10 @@ func webhooksBackendStatus(err error, messages webhooksMessages) (int, string) {
 	}
 }
 
-// webhookLimitReached distinguishes the one exhaustion the caller can act on,
-// which the contract carries as a typed detail rather than in the description.
-func webhookLimitReached(grpcStatus *status.Status) bool {
-	const limitReached = webhookmanagement.
-		WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED
-
+func webhookErrorReason(grpcStatus *status.Status, want webhookmanagement.WebhookManagementErrorReason) bool {
 	for _, detail := range grpcStatus.Details() {
 		reason, ok := detail.(*webhookmanagement.WebhookManagementErrorDetail)
-		if ok && reason.GetReason() == limitReached {
+		if ok && reason.GetReason() == want {
 			return true
 		}
 	}

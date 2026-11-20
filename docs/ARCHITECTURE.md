@@ -260,8 +260,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   this: it authenticates the caller, resolves the team's cluster, and forwards the request over
   two unary gRPC contracts (`e2b.webhooks.events.v1` and `e2b.webhooks.management.v1`) to the
   backend named by `WEBHOOKS_BACKEND_GRPC_ADDRESS`. The team and cluster come from the
-  authenticated context, never from the request, and a team with no cluster selects the local
-  one. Without a configured address the routes stay registered and answer 503, so the surface
+  authenticated project, never from the request body. Webhook writes read the cluster from the
+  live team row on the primary and hold `FOR SHARE` until the webhook backend answers.
+  Project deletion's `FOR UPDATE` waits for that lock. An omitted cluster selects the local one;
+  remote webhook writes require the exact project and cluster to match the
+  project's live claim. Without a configured address the routes stay registered and answer 503, so the surface
   does not depend on how a deployment is wired. A backend failure the caller cannot act on is
   answered with the endpoint's own message; the outcomes that keep their identity are
   not-found, a rejected request, the webhook-count limit, and a timeout. A create or update
