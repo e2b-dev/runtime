@@ -38,7 +38,7 @@ require (
 	github.com/grafana/loki/v3 v3.6.11
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2
 	github.com/hashicorp/nomad/api v0.0.0-20260324203407-b27b0c2e019a
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/launchdarkly/go-sdk-common/v3 v3.3.0
 	github.com/launchdarkly/go-server-sdk/v7 v7.13.0
