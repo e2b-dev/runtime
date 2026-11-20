@@ -569,6 +569,11 @@ type Sandbox struct {
 	// deliveredEnvdVersion is the envd version a confirmed live upgrade delivered in this
 	// life (MarkEnvdDelivered), nil until one does.
 	deliveredEnvdVersion atomic.Pointer[string]
+	// capturedEnvVars is the user environment CaptureEnvdEnvVars read from the running envd
+	// before a live upgrade, nil until one is read. Only CaptureEnvdEnvVars writes it, after
+	// checking it against Config.Envd.Vars; every later /init sends it in place of an empty
+	// Config.Envd.Vars.
+	capturedEnvVars atomic.Pointer[map[string]string]
 	// envdReinit is the most recent post-checkpoint re-init's handle (startEnvdReinit),
 	// which a following Pause stops before freezing. envdReinitHolds, under envdReinitMu,
 	// counts the Pauses between their cut and their freeze (cutEnvdReinit,

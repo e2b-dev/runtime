@@ -1353,7 +1353,10 @@ sequenceDiagram
   `packages/shared/pkg/featureflags`), via envd's `POST /upgrade` (see the envd section). It is
   best-effort — a delivery failure before the `exec` leaves the old envd serving — except an
   unrecoverable post-`exec` failure (the new envd never re-initializes), which fails the resume
-  rather than return a permanently unusable sandbox.
+  rather than return a permanently unusable sandbox. A memory resume's config carries no
+  environment variables, and the new envd starts without them, so before delivering the binary
+  the orchestrator reads them from the running envd (`GET /envs`) and the post-upgrade `/init`
+  sends them back; when they cannot be read, the upgrade is declined.
 - **Envd offline-upgrade on cold-boot resume**: reaches envd too old for the live `/upgrade`
   handover (below `MinEnvdVersionForUpgrade`). When a *filesystem-only* snapshot cold-boots
   (`RebootSandbox`), the orchestrator rewrites `/usr/bin/envd` in the rootfs **before** the VM
