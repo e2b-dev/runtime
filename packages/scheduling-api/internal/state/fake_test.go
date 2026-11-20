@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -27,6 +28,20 @@ type observed struct {
 	states   []sandboxtypes.State
 	reported []sandboxtypes.NodeSandbox
 	nodeID   string
+	token    sandboxtypes.UpdateToken
+	updated  sandboxtypes.Sandbox
+	hold     sandboxtypes.Hold
+	until    time.Time
+	aborted  []sandboxtypes.UpdateToken
+
+	removeOpts   sandboxtypes.RemoveOpts
+	action       sandboxtypes.StateAction
+	transitionID string
+	result       sandboxtypes.TransitionOutcome
+	restoring    sandboxtypes.StateTransition
+	restoreOpts  sandboxtypes.RestoreOpts
+	placement    *orchestrator.SandboxNetworkPlacement
+	waitDeadline bool
 }
 
 type fakeStorage struct {
@@ -39,7 +54,14 @@ type fakeStorage struct {
 	items   []sandboxtypes.Sandbox
 	counts  map[uuid.UUID]int64
 	orphans []sandboxtypes.NodeSandbox
+	token   sandboxtypes.UpdateToken
+	moved   bool
 	block   func(ctx context.Context)
+
+	transition  sandboxtypes.StateTransition
+	alreadyDone bool
+	waitID      string
+	wait        func(ctx context.Context) (string, error)
 
 	mu   sync.Mutex
 	seen observed
@@ -116,6 +138,111 @@ func (f *fakeStorage) Reconcile(ctx context.Context, sandboxes []sandboxtypes.No
 	f.observe(func(o *observed) { o.reported, o.nodeID = sandboxes, nodeID })
 
 	return f.orphans
+}
+
+func (f *fakeStorage) BeginUpdate(ctx context.Context, _ uuid.UUID, _ string) (sandboxtypes.Sandbox, sandboxtypes.UpdateToken, error) {
+	f.call(ctx, "BeginUpdate")
+	if f.err != nil {
+		return sandboxtypes.Sandbox{}, "", f.err
+	}
+
+	return f.record, f.token, nil
+}
+
+func (f *fakeStorage) CommitUpdate(ctx context.Context, _ uuid.UUID, _ string, token sandboxtypes.UpdateToken, updated sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
+	f.call(ctx, "CommitUpdate")
+	f.observe(func(o *observed) { o.token, o.updated = token, updated })
+	if f.err != nil {
+		return sandboxtypes.Sandbox{}, f.err
+	}
+
+	return updated, nil
+}
+
+func (f *fakeStorage) AbortUpdate(ctx context.Context, _ uuid.UUID, _ string, token sandboxtypes.UpdateToken) error {
+	f.call(ctx, "AbortUpdate")
+	f.observe(func(o *observed) { o.token, o.aborted = token, append(o.aborted, token) })
+
+	return f.err
+}
+
+func (f *fakeStorage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, until time.Time) error {
+	f.call(ctx, "HoldExecution")
+	f.observe(func(o *observed) { o.hold, o.until = hold, until })
+
+	return f.err
+}
+
+func (f *fakeStorage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold, nodeID string) (bool, error) {
+	f.call(ctx, "MoveHeldExecution")
+	f.observe(func(o *observed) { o.hold, o.nodeID = hold, nodeID })
+	if f.err != nil {
+		return false, f.err
+	}
+
+	return f.moved, nil
+}
+
+func (f *fakeStorage) ReleaseHeldExecution(ctx context.Context, hold sandboxtypes.Hold) error {
+	f.call(ctx, "ReleaseHeldExecution")
+	f.observe(func(o *observed) { o.hold = hold })
+
+	return f.err
+}
+
+func (f *fakeStorage) RemoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold) (sandboxtypes.Sandbox, error) {
+	f.call(ctx, "RemoveHeldExecution")
+	f.observe(func(o *observed) { o.hold = hold })
+	if f.err != nil {
+		return sandboxtypes.Sandbox{}, f.err
+	}
+
+	return f.record, nil
+}
+
+func (f *fakeStorage) BeginRemoving(ctx context.Context, _ uuid.UUID, _ string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
+	f.call(ctx, "BeginRemoving")
+	f.observe(func(o *observed) { o.removeOpts = opts })
+
+	return f.transition, f.alreadyDone, f.err
+}
+
+func (f *fakeStorage) FinishTransition(ctx context.Context, _ uuid.UUID, _ string, transitionID string, action sandboxtypes.StateAction, outcome sandboxtypes.TransitionOutcome) error {
+	f.call(ctx, "FinishTransition")
+	f.observe(func(o *observed) { o.transitionID, o.action, o.result = transitionID, action, outcome })
+
+	return f.err
+}
+
+func (f *fakeStorage) RestoreRunning(ctx context.Context, transition sandboxtypes.StateTransition, opts sandboxtypes.RestoreOpts) (sandboxtypes.Sandbox, error) {
+	f.call(ctx, "RestoreRunning")
+	f.observe(func(o *observed) { o.restoring, o.restoreOpts = transition, opts })
+	if f.err != nil {
+		return sandboxtypes.Sandbox{}, f.err
+	}
+
+	return f.record, nil
+}
+
+func (f *fakeStorage) RestoreCheckpointed(ctx context.Context, transition sandboxtypes.StateTransition, placement *orchestrator.SandboxNetworkPlacement) (sandboxtypes.Sandbox, error) {
+	f.call(ctx, "RestoreCheckpointed")
+	f.observe(func(o *observed) { o.restoring, o.placement = transition, placement })
+	if f.err != nil {
+		return sandboxtypes.Sandbox{}, f.err
+	}
+
+	return f.record, nil
+}
+
+func (f *fakeStorage) WaitForTransition(ctx context.Context, _ uuid.UUID, _ string, transitionID string) (string, error) {
+	f.call(ctx, "WaitForTransition")
+	_, hasDeadline := ctx.Deadline()
+	f.observe(func(o *observed) { o.transitionID, o.waitDeadline = transitionID, hasDeadline })
+	if f.wait != nil {
+		return f.wait(ctx)
+	}
+
+	return f.waitID, f.err
 }
 
 type teamItemsStream struct {
@@ -366,7 +493,7 @@ func TestCancelledCaller(t *testing.T) {
 			cancel()
 			fake := newFake()
 			fake.err = errors.New("backend gave up")
-			st := requireCode(t, call(ctx, state.NewServer(fake)), codes.Canceled)
+			st := requireCode(t, call(ctx, state.NewServer(fake, hangTimeout)), codes.Canceled)
 			assert.NotContains(t, st.Message(), "backend gave up")
 		})
 	}
@@ -379,7 +506,7 @@ func TestCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.err = errors.New("backend gave up")
 		stream := teamItemsStream{context: func() context.Context { return ctx }}
-		err := state.NewServer(fake).TeamItems(scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build(), stream)
+		err := state.NewServer(fake, hangTimeout).TeamItems(scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build(), stream)
 		st := requireCode(t, err, codes.Canceled)
 		assert.NotContains(t, st.Message(), "backend gave up")
 	})
@@ -392,7 +519,7 @@ func TestCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.err = errors.New("backend gave up")
 		stream := expiredItemsStream{context: func() context.Context { return ctx }}
-		err := state.NewServer(fake).ExpiredItems(scheduling.ExpiredItemsRequest_builder{}.Build(), stream)
+		err := state.NewServer(fake, hangTimeout).ExpiredItems(scheduling.ExpiredItemsRequest_builder{}.Build(), stream)
 		st := requireCode(t, err, codes.Canceled)
 		assert.NotContains(t, st.Message(), "backend gave up")
 	})

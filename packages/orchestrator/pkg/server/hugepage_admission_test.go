@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -16,8 +17,11 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
 const testHugePageSize = 2 << 20
@@ -145,16 +149,16 @@ func TestHoldHugePages(t *testing.T) {
 	t.Parallel()
 
 	on := hugePageAdmissionServer(t, true, pool(5120, 0, 0))
-	release := on.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096, HugePages: true}))
+	release := on.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096, HugePages: true}), metadata.Template{})
 	assert.Equal(t, int64(4096), on.hugePages.pendingMiB)
 	release()
 	assert.Zero(t, on.hugePages.pendingMiB)
 
-	on.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096}))()
+	on.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096}), metadata.Template{})()
 	assert.Zero(t, on.hugePages.pendingMiB)
 
 	off := hugePageAdmissionServer(t, false, pool(5120, 0, 0))
-	off.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096, HugePages: true}))
+	off.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 4096, HugePages: true}), metadata.Template{})
 	assert.Zero(t, off.hugePages.pendingMiB, "flag off holds nothing")
 }
 
@@ -279,4 +283,159 @@ func TestCreate_RefusesAStartTheFreeHugePagesCannotBack(t *testing.T) {
 	reservation.Release()
 	require.True(t, s.startingSandboxes.TryAcquire(1), "the refusal released the start slot")
 	s.startingSandboxes.Release(1)
+}
+
+// Admission, before the template is read, charges boot RAM whatever size the start asks for; the
+// requested size is charged once the template accepted it, and a hold counts the memory the start
+// runs with.
+func TestHugePageAdmissionChargesTheRequestedMemory(t *testing.T) {
+	t.Parallel()
+
+	s := hugePageAdmissionServer(t, true, pool(5120, 0, 0))
+	release, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-1", RamMb: 1024, MemoryMb: 12288})
+	require.NoError(t, err, "a size the template has not checked yet is not charged")
+	assert.Equal(t, int64(1024), s.hugePages.pendingMiB)
+	release()
+
+	_, err = s.admitHugePagesMB(t.Context(), "sandbox-2", 12288)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "12 GiB does not fit a 10 GiB pool")
+
+	hold := s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: 4096, HugePages: true}), metadata.Template{})
+	assert.Equal(t, int64(4096), s.hugePages.pendingMiB)
+	hold()
+
+	// A request off the slot grid is refused by the resume; until then the hold counts it as the
+	// whole slots a handshake would reserve.
+	hold = s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: 1024 + 1026, HugePages: true}), metadata.Template{MemoryHotplugMB: 3072})
+	assert.Equal(t, int64(1024+1152), s.hugePages.pendingMiB)
+	hold()
+}
+
+// A memory resume that names no size runs at the size its snapshot had asked for, and is charged
+// it. With 2 GiB of boot RAM, created at 6 GiB and paused with 4 GiB recorded as plugged, it does
+// not fit a node with 5 GiB of free hugepages, as it would not with that size named.
+func TestResumeWithoutASizeIsChargedTheRecordedMemory(t *testing.T) {
+	t.Parallel()
+
+	meta := metadata.Template{MemoryHotplugMB: 6144, MemoryHotplugRequestedMB: 4096}
+	for name, memoryMB := range map[string]int64{"no size named": 0, "the same size named": 6144} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := sandbox.NewConfig(sandbox.Config{RamMB: 2048, MemoryMB: memoryMB})
+			_, hotplugMB, err := startMemory(meta, cfg, false)
+			require.NoError(t, err)
+			assert.Equal(t, int64(4096), hotplugMB)
+
+			s := hugePageAdmissionServer(t, true, pool(2560, 0, 0))
+			release, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-1", RamMb: 2048, MemoryMb: memoryMB})
+			require.NoError(t, err, "boot RAM fits")
+			defer release()
+			_, err = s.admitHugePagesMB(t.Context(), "sandbox-1", hotplugMB)
+			assert.Equal(t, codes.FailedPrecondition, status.Code(err), "6 GiB does not fit 5 GiB of free hugepages")
+		})
+	}
+}
+
+// A checkpoint's resume or a prefetch harvest of a sandbox that kept its snapshot's size holds the
+// memory the guest restores: boot RAM plus what the snapshot had asked to plug.
+func TestHoldHugePagesCountsTheRecordedMemory(t *testing.T) {
+	t.Parallel()
+
+	s := hugePageAdmissionServer(t, true, pool(5120, 0, 0))
+	meta := metadata.Template{MemoryHotplugMB: 6144, MemoryHotplugRequestedMB: 4096}
+	hold := s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 2048, HugePages: true}), meta)
+	assert.Equal(t, int64(6144), s.hugePages.pendingMiB)
+	hold()
+
+	hold = s.holdHugePages(t.Context(), sandbox.NewConfig(sandbox.Config{RamMB: 2048, MemoryMB: 1024, HugePages: true}), meta)
+	assert.Equal(t, int64(6144), s.hugePages.pendingMiB, "a request the resume refuses still holds the recorded size")
+	hold()
+	assert.Zero(t, s.hugePages.pendingMiB)
+}
+
+// A start whose guest memory cannot be mapped reports the memory it was charged, so placement sees
+// its real need: a named size, or the size a memory resume's snapshot had asked for.
+func TestMemoryRefusalReportsTheChargedSize(t *testing.T) {
+	t.Parallel()
+
+	meta := metadata.Template{MemoryHotplugMB: 6144, MemoryHotplugRequestedMB: 4096}
+	s := memoryRefusalServer(t, true)
+	for name, memoryMB := range map[string]int64{"no size named": 0, "a larger size named": 8192} {
+		startMB, _, err := startMemory(meta, sandbox.NewConfig(sandbox.Config{RamMB: 2048, MemoryMB: memoryMB}), false)
+		require.NoError(t, err)
+		refusal := s.memoryRefusal(t.Context(), guestMemoryChain(), startMB, 0, sandboxtypes.RuntimeMetadata{})
+		assert.Contains(t, status.Convert(refusal).Message(), fmt.Sprintf("%d MiB", max(memoryMB, 6144)), name)
+	}
+}
+
+// A requested size is checked against the template before any of it is charged: one the template
+// cannot take is the caller's error, refused as InvalidArgument whatever the node has free.
+func TestRequestedHotplugCharge(t *testing.T) {
+	t.Parallel()
+
+	meta := metadata.Template{MemoryHotplugMB: 3072, MemoryHotplugRequestedMB: 1024}
+	for name, tc := range map[string]struct {
+		memoryMB int64
+		coldBoot bool
+		want     int64
+		wantErr  error
+	}{
+		"no size named keeps the snapshot's":      {memoryMB: 0, want: 1024},
+		"no size named on a cold boot plugs back": {memoryMB: 0, coldBoot: true, want: 1024},
+		"boot RAM named on a cold boot":           {memoryMB: 1024, coldBoot: true, want: 0},
+		"a size within the region":                {memoryMB: 3072, want: 2048},
+		"beyond the region":                       {memoryMB: 8192, wantErr: fc.ErrMemoryRequestInvalid},
+		"below the snapshot's request":            {memoryMB: 1024, wantErr: fc.ErrMemoryHotplugShrink},
+		"a cold boot may plug less":               {memoryMB: 1536, coldBoot: true, want: 512},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			total, got, err := startMemory(meta, sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: tc.memoryMB}), tc.coldBoot)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, 1024+tc.want, total)
+		})
+	}
+
+	s := hugePageAdmissionServer(t, true, pool(2048, 0, 0))
+	_, _, err := startMemory(meta, sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: 8192}), false)
+	st := status.Convert(s.memoryHotplugRefusal(t.Context(), err, sandboxtypes.RuntimeMetadata{}))
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+}
+
+// A reboot or filesystem-only resume that names no size plugs back what its lineage had asked for,
+// which admission, run before the template is read, did not see: it is charged on top, and a start
+// that names a size is charged that size instead.
+func TestColdBootPlugBackIsCharged(t *testing.T) {
+	t.Parallel()
+
+	meta := metadata.Template{MemoryHotplugMB: 3072, MemoryHotplugRequestedMB: 2048}
+	for name, tc := range map[string]struct {
+		meta              metadata.Template
+		memoryMB          int64
+		wantTotal, wantHP int64
+	}{
+		"no size plugs back the lineage's": {meta: meta, wantTotal: 3072, wantHP: 2048},
+		"a named size wins":                {meta: meta, memoryMB: 2048, wantTotal: 2048, wantHP: 1024},
+		"a lineage that plugged nothing":   {meta: metadata.Template{}, wantTotal: 1024, wantHP: 0},
+	} {
+		total, hotplugMB, err := startMemory(tc.meta, sandbox.NewConfig(sandbox.Config{RamMB: 1024, MemoryMB: tc.memoryMB}), true)
+		require.NoError(t, err, name)
+		assert.Equal(t, tc.wantTotal, total, name)
+		assert.Equal(t, tc.wantHP, hotplugMB, name)
+	}
+
+	s := hugePageAdmissionServer(t, true, pool(1400, 0, 0))
+	release, err := s.admitHugePages(t.Context(), &orchestrator.SandboxConfig{SandboxId: "sandbox-1", RamMb: 1024})
+	require.NoError(t, err)
+	defer release()
+	_, err = s.admitHugePagesMB(t.Context(), "sandbox-1", 2048)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err), "1 GiB plus 2 GiB plugged back does not fit a 2.7 GiB pool")
 }

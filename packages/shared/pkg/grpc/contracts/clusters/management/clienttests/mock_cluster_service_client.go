@@ -48,6 +48,89 @@ func (_m *MockClusterServiceClient) EXPECT() *MockClusterServiceClient_Expecter 
 	return &MockClusterServiceClient_Expecter{mock: &_m.Mock}
 }
 
+// AssignProject provides a mock function for the type MockClusterServiceClient
+func (_mock *MockClusterServiceClient) AssignProject(ctx context.Context, in *management.AssignProjectRequest, opts ...grpc.CallOption) (*management.AssignProjectResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for AssignProject")
+	}
+
+	var r0 *management.AssignProjectResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.AssignProjectRequest, ...grpc.CallOption) (*management.AssignProjectResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.AssignProjectRequest, ...grpc.CallOption) *management.AssignProjectResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*management.AssignProjectResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *management.AssignProjectRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClusterServiceClient_AssignProject_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AssignProject'
+type MockClusterServiceClient_AssignProject_Call struct {
+	*mock.Call
+}
+
+// AssignProject is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *management.AssignProjectRequest
+//   - opts ...grpc.CallOption
+func (_e *MockClusterServiceClient_Expecter) AssignProject(ctx any, in any, opts ...any) *MockClusterServiceClient_AssignProject_Call {
+	return &MockClusterServiceClient_AssignProject_Call{Call: _e.mock.On("AssignProject",
+		append([]any{ctx, in}, opts...)...)}
+}
+
+func (_c *MockClusterServiceClient_AssignProject_Call) Run(run func(ctx context.Context, in *management.AssignProjectRequest, opts ...grpc.CallOption)) *MockClusterServiceClient_AssignProject_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *management.AssignProjectRequest
+		if args[1] != nil {
+			arg1 = args[1].(*management.AssignProjectRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClusterServiceClient_AssignProject_Call) Return(assignProjectResponse *management.AssignProjectResponse, err error) *MockClusterServiceClient_AssignProject_Call {
+	_c.Call.Return(assignProjectResponse, err)
+	return _c
+}
+
+func (_c *MockClusterServiceClient_AssignProject_Call) RunAndReturn(run func(ctx context.Context, in *management.AssignProjectRequest, opts ...grpc.CallOption) (*management.AssignProjectResponse, error)) *MockClusterServiceClient_AssignProject_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // CreateCluster provides a mock function for the type MockClusterServiceClient
 func (_mock *MockClusterServiceClient) CreateCluster(ctx context.Context, in *management.CreateClusterRequest, opts ...grpc.CallOption) (*management.CreateClusterResponse, error) {
 	var tmpRet mock.Arguments
@@ -214,6 +297,89 @@ func (_c *MockClusterServiceClient_DeleteCluster_Call) RunAndReturn(run func(ctx
 	return _c
 }
 
+// DetachProject provides a mock function for the type MockClusterServiceClient
+func (_mock *MockClusterServiceClient) DetachProject(ctx context.Context, in *management.DetachProjectRequest, opts ...grpc.CallOption) (*management.DetachProjectResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for DetachProject")
+	}
+
+	var r0 *management.DetachProjectResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.DetachProjectRequest, ...grpc.CallOption) (*management.DetachProjectResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.DetachProjectRequest, ...grpc.CallOption) *management.DetachProjectResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*management.DetachProjectResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *management.DetachProjectRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClusterServiceClient_DetachProject_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DetachProject'
+type MockClusterServiceClient_DetachProject_Call struct {
+	*mock.Call
+}
+
+// DetachProject is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *management.DetachProjectRequest
+//   - opts ...grpc.CallOption
+func (_e *MockClusterServiceClient_Expecter) DetachProject(ctx any, in any, opts ...any) *MockClusterServiceClient_DetachProject_Call {
+	return &MockClusterServiceClient_DetachProject_Call{Call: _e.mock.On("DetachProject",
+		append([]any{ctx, in}, opts...)...)}
+}
+
+func (_c *MockClusterServiceClient_DetachProject_Call) Run(run func(ctx context.Context, in *management.DetachProjectRequest, opts ...grpc.CallOption)) *MockClusterServiceClient_DetachProject_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *management.DetachProjectRequest
+		if args[1] != nil {
+			arg1 = args[1].(*management.DetachProjectRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClusterServiceClient_DetachProject_Call) Return(detachProjectResponse *management.DetachProjectResponse, err error) *MockClusterServiceClient_DetachProject_Call {
+	_c.Call.Return(detachProjectResponse, err)
+	return _c
+}
+
+func (_c *MockClusterServiceClient_DetachProject_Call) RunAndReturn(run func(ctx context.Context, in *management.DetachProjectRequest, opts ...grpc.CallOption) (*management.DetachProjectResponse, error)) *MockClusterServiceClient_DetachProject_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetCluster provides a mock function for the type MockClusterServiceClient
 func (_mock *MockClusterServiceClient) GetCluster(ctx context.Context, in *management.GetClusterRequest, opts ...grpc.CallOption) (*management.GetClusterResponse, error) {
 	var tmpRet mock.Arguments
@@ -376,6 +542,89 @@ func (_c *MockClusterServiceClient_ListClusters_Call) Return(listClustersRespons
 }
 
 func (_c *MockClusterServiceClient_ListClusters_Call) RunAndReturn(run func(ctx context.Context, in *management.ListClustersRequest, opts ...grpc.CallOption) (*management.ListClustersResponse, error)) *MockClusterServiceClient_ListClusters_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LookupProjectAssignments provides a mock function for the type MockClusterServiceClient
+func (_mock *MockClusterServiceClient) LookupProjectAssignments(ctx context.Context, in *management.LookupProjectAssignmentsRequest, opts ...grpc.CallOption) (*management.LookupProjectAssignmentsResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for LookupProjectAssignments")
+	}
+
+	var r0 *management.LookupProjectAssignmentsResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.LookupProjectAssignmentsRequest, ...grpc.CallOption) (*management.LookupProjectAssignmentsResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *management.LookupProjectAssignmentsRequest, ...grpc.CallOption) *management.LookupProjectAssignmentsResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*management.LookupProjectAssignmentsResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *management.LookupProjectAssignmentsRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClusterServiceClient_LookupProjectAssignments_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LookupProjectAssignments'
+type MockClusterServiceClient_LookupProjectAssignments_Call struct {
+	*mock.Call
+}
+
+// LookupProjectAssignments is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *management.LookupProjectAssignmentsRequest
+//   - opts ...grpc.CallOption
+func (_e *MockClusterServiceClient_Expecter) LookupProjectAssignments(ctx any, in any, opts ...any) *MockClusterServiceClient_LookupProjectAssignments_Call {
+	return &MockClusterServiceClient_LookupProjectAssignments_Call{Call: _e.mock.On("LookupProjectAssignments",
+		append([]any{ctx, in}, opts...)...)}
+}
+
+func (_c *MockClusterServiceClient_LookupProjectAssignments_Call) Run(run func(ctx context.Context, in *management.LookupProjectAssignmentsRequest, opts ...grpc.CallOption)) *MockClusterServiceClient_LookupProjectAssignments_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *management.LookupProjectAssignmentsRequest
+		if args[1] != nil {
+			arg1 = args[1].(*management.LookupProjectAssignmentsRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClusterServiceClient_LookupProjectAssignments_Call) Return(lookupProjectAssignmentsResponse *management.LookupProjectAssignmentsResponse, err error) *MockClusterServiceClient_LookupProjectAssignments_Call {
+	_c.Call.Return(lookupProjectAssignmentsResponse, err)
+	return _c
+}
+
+func (_c *MockClusterServiceClient_LookupProjectAssignments_Call) RunAndReturn(run func(ctx context.Context, in *management.LookupProjectAssignmentsRequest, opts ...grpc.CallOption) (*management.LookupProjectAssignmentsResponse, error)) *MockClusterServiceClient_LookupProjectAssignments_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -64,10 +65,27 @@ type envdReinit struct {
 	cancel   context.CancelCauseFunc
 	// done is closed once the re-init has returned and recorded how it ended.
 	done chan struct{}
+	// purpose labels the /init and names its failure.
+	purpose envdReinitPurpose
+}
+
+// envdReinitPurpose is why a re-init's /init is sent: the start type and init reason it is
+// labelled with, and what a failure logs.
+type envdReinitPurpose struct {
+	startType StartType
+	reason    envdInitReason
+	failure   string
+}
+
+// postCheckpointReinit is the re-init that re-syncs the guest clock after an in-place checkpoint.
+var postCheckpointReinit = envdReinitPurpose{
+	startType: StartTypeResume,
+	reason:    envdInitReinit,
+	failure:   "envd re-init after in-place resume failed (guest clock may lag)",
 }
 
 func newEnvdReinit(cancel context.CancelCauseFunc) *envdReinit {
-	return &envdReinit{cancel: cancel, done: make(chan struct{})}
+	return &envdReinit{cancel: cancel, done: make(chan struct{}), purpose: postCheckpointReinit}
 }
 
 // begin records the loop the re-init's gate picked. It reports false for a held re-init a
@@ -171,26 +189,56 @@ func (r *envdReinit) stop() (wait, stopped bool) {
 // startEnvdReinit publishes a re-init handle in place of the previous one, which it
 // replaces, and runs bestEffortEnvdReinit on a goroutine: a sick envd must cost the
 // checkpoint nothing. A following Pause stops it through cutEnvdReinit. Under a Pause's
-// hold (between its cut and its freeze) it publishes nothing and reports false: a handle
+// hold (between its cut and its freeze) it publishes nothing and returns nil: a handle
 // published there would escape the cut and could write its /init across the freeze.
-func (s *Sandbox) startEnvdReinit(ctx context.Context) bool {
+// The handle it returns is closed (done) once the re-init has returned.
+func (s *Sandbox) startEnvdReinit(ctx context.Context) *envdReinit {
+	return s.startEnvdReinitAs(ctx, postCheckpointReinit)
+}
+
+// startEnvdReinitAs is startEnvdReinit for a re-init sent for purpose.
+func (s *Sandbox) startEnvdReinitAs(ctx context.Context, purpose envdReinitPurpose) *envdReinit {
+	return s.startEnvdReinitIn(ctx, purpose, &s.envdReinit)
+}
+
+// startMemoryConfirmReinit starts the /init a memory confirmation sends. It has a slot of its own,
+// so it never replaces a post-checkpoint re-init nor is replaced by one; a Pause's cut stops it
+// all the same.
+func (s *Sandbox) startMemoryConfirmReinit(ctx context.Context, startType StartType) *envdReinit {
+	return s.startEnvdReinitIn(ctx, memoryConfirmReinit(startType), &s.memoryConfirmReinit)
+}
+
+// startEnvdReinitIn is startEnvdReinitAs publishing the handle in slot.
+func (s *Sandbox) startEnvdReinitIn(ctx context.Context, purpose envdReinitPurpose, slot *atomic.Pointer[envdReinit]) *envdReinit {
 	initCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	r := newEnvdReinit(cancel)
+	r.purpose = purpose
 
+	if !s.publishEnvdReinit(slot, r) {
+		cancel(errEnvdReinitCut)
+
+		return nil
+	}
+
+	go s.bestEffortEnvdReinit(ctx, initCtx, r)
+
+	return r
+}
+
+// publishEnvdReinit publishes r in slot in place of the handle before it, which it replaces. Under
+// a Pause's hold it publishes nothing and reports false.
+func (s *Sandbox) publishEnvdReinit(slot *atomic.Pointer[envdReinit], r *envdReinit) bool {
 	s.envdReinitMu.Lock()
 	if s.envdReinitHolds > 0 {
 		s.envdReinitMu.Unlock()
-		cancel(errEnvdReinitCut)
 
 		return false
 	}
-	prev := s.envdReinit.Swap(r)
+	prev := slot.Swap(r)
 	s.envdReinitMu.Unlock()
 	if prev != nil {
 		prev.replace()
 	}
-
-	go s.bestEffortEnvdReinit(ctx, initCtx, r)
 
 	return true
 }
@@ -212,17 +260,30 @@ func (s *Sandbox) releaseEnvdReinit() {
 // keep the re-init from completing (stop's stopped). It takes a hold on publication
 // first, whatever it finds, so the handle it stops stays the published one until the
 // caller's releaseEnvdReinit; the caller owes one release per cut.
+//
+// A memory confirmation's /init is stopped the same way and waited for first. Nothing replaces
+// it: a confirmation still going sends another once the Pause is over.
 func (s *Sandbox) cutEnvdReinit(ctx context.Context) (r *envdReinit, cut bool, err error) {
 	s.envdReinitMu.Lock()
 	s.envdReinitHolds++
 	r = s.envdReinit.Load()
+	confirm := s.memoryConfirmReinit.Load()
 	s.envdReinitMu.Unlock()
+	if confirm != nil {
+		if wait, _ := confirm.stop(); wait {
+			select {
+			case <-confirm.done:
+			case <-ctx.Done():
+				err = fmt.Errorf("wait for the envd memory-confirm /init: %w", context.Cause(ctx))
+			}
+		}
+	}
 	if r == nil {
-		return nil, false, nil
+		return nil, false, err
 	}
 	wait, stopped := r.stop()
-	if !wait {
-		return r, stopped, nil
+	if !wait || err != nil {
+		return r, stopped, err
 	}
 
 	select {
@@ -309,7 +370,7 @@ func (s *Sandbox) bestEffortEnvdReinit(ctx, initCtx context.Context, r *envdRein
 		}
 	}()
 
-	err := s.initEnvd(initCtx, StartTypeResume, false, envdInitOptions{budget: budget, reinit: r})
+	err := s.initEnvd(initCtx, r.purpose.startType, false, envdInitOptions{budget: budget, reinit: r})
 
 	// The re-init was cut only if initEnvd says so: a stop whose cancel the response
 	// outran cut nothing.
@@ -327,7 +388,7 @@ func (s *Sandbox) bestEffortEnvdReinit(ctx, initCtx context.Context, r *envdRein
 		// The sandbox keeps running.
 		s.log().Warn(ctx, "envd re-init: the sandbox's network refused the envd that answered", zap.Error(err))
 	default:
-		s.log().Warn(ctx, "envd re-init after in-place resume failed (guest clock may lag)", zap.Error(err))
+		s.log().Warn(ctx, r.purpose.failure, zap.Error(err))
 	}
 	// Last, after the counter and the warning: a waiter reads both once done is closed.
 	r.publishReturned()

@@ -19,25 +19,32 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ClusterService_CreateCluster_FullMethodName = "/e2b.clusters.management.v1.ClusterService/CreateCluster"
-	ClusterService_GetCluster_FullMethodName    = "/e2b.clusters.management.v1.ClusterService/GetCluster"
-	ClusterService_ListClusters_FullMethodName  = "/e2b.clusters.management.v1.ClusterService/ListClusters"
-	ClusterService_UpdateCluster_FullMethodName = "/e2b.clusters.management.v1.ClusterService/UpdateCluster"
-	ClusterService_DeleteCluster_FullMethodName = "/e2b.clusters.management.v1.ClusterService/DeleteCluster"
+	ClusterService_CreateCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/CreateCluster"
+	ClusterService_GetCluster_FullMethodName               = "/e2b.clusters.management.v1.ClusterService/GetCluster"
+	ClusterService_ListClusters_FullMethodName             = "/e2b.clusters.management.v1.ClusterService/ListClusters"
+	ClusterService_UpdateCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/UpdateCluster"
+	ClusterService_DeleteCluster_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/DeleteCluster"
+	ClusterService_AssignProject_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/AssignProject"
+	ClusterService_DetachProject_FullMethodName            = "/e2b.clusters.management.v1.ClusterService/DetachProject"
+	ClusterService_LookupProjectAssignments_FullMethodName = "/e2b.clusters.management.v1.ClusterService/LookupProjectAssignments"
 )
 
 // ClusterServiceClient is the client API for ClusterService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Stores the remote clusters a control plane schedules onto; the local
-// cluster has no record.
+// Stores the remote clusters a control plane schedules onto, and the cluster
+// each project is assigned to. The local cluster has no record, and a project
+// on it has no assignment.
 type ClusterServiceClient interface {
 	CreateCluster(ctx context.Context, in *CreateClusterRequest, opts ...grpc.CallOption) (*CreateClusterResponse, error)
 	GetCluster(ctx context.Context, in *GetClusterRequest, opts ...grpc.CallOption) (*GetClusterResponse, error)
 	ListClusters(ctx context.Context, in *ListClustersRequest, opts ...grpc.CallOption) (*ListClustersResponse, error)
 	UpdateCluster(ctx context.Context, in *UpdateClusterRequest, opts ...grpc.CallOption) (*UpdateClusterResponse, error)
 	DeleteCluster(ctx context.Context, in *DeleteClusterRequest, opts ...grpc.CallOption) (*DeleteClusterResponse, error)
+	AssignProject(ctx context.Context, in *AssignProjectRequest, opts ...grpc.CallOption) (*AssignProjectResponse, error)
+	DetachProject(ctx context.Context, in *DetachProjectRequest, opts ...grpc.CallOption) (*DetachProjectResponse, error)
+	LookupProjectAssignments(ctx context.Context, in *LookupProjectAssignmentsRequest, opts ...grpc.CallOption) (*LookupProjectAssignmentsResponse, error)
 }
 
 type clusterServiceClient struct {
@@ -98,18 +105,52 @@ func (c *clusterServiceClient) DeleteCluster(ctx context.Context, in *DeleteClus
 	return out, nil
 }
 
+func (c *clusterServiceClient) AssignProject(ctx context.Context, in *AssignProjectRequest, opts ...grpc.CallOption) (*AssignProjectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AssignProjectResponse)
+	err := c.cc.Invoke(ctx, ClusterService_AssignProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *clusterServiceClient) DetachProject(ctx context.Context, in *DetachProjectRequest, opts ...grpc.CallOption) (*DetachProjectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DetachProjectResponse)
+	err := c.cc.Invoke(ctx, ClusterService_DetachProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *clusterServiceClient) LookupProjectAssignments(ctx context.Context, in *LookupProjectAssignmentsRequest, opts ...grpc.CallOption) (*LookupProjectAssignmentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LookupProjectAssignmentsResponse)
+	err := c.cc.Invoke(ctx, ClusterService_LookupProjectAssignments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ClusterServiceServer is the server API for ClusterService service.
 // All implementations must embed UnimplementedClusterServiceServer
 // for forward compatibility.
 //
-// Stores the remote clusters a control plane schedules onto; the local
-// cluster has no record.
+// Stores the remote clusters a control plane schedules onto, and the cluster
+// each project is assigned to. The local cluster has no record, and a project
+// on it has no assignment.
 type ClusterServiceServer interface {
 	CreateCluster(context.Context, *CreateClusterRequest) (*CreateClusterResponse, error)
 	GetCluster(context.Context, *GetClusterRequest) (*GetClusterResponse, error)
 	ListClusters(context.Context, *ListClustersRequest) (*ListClustersResponse, error)
 	UpdateCluster(context.Context, *UpdateClusterRequest) (*UpdateClusterResponse, error)
 	DeleteCluster(context.Context, *DeleteClusterRequest) (*DeleteClusterResponse, error)
+	AssignProject(context.Context, *AssignProjectRequest) (*AssignProjectResponse, error)
+	DetachProject(context.Context, *DetachProjectRequest) (*DetachProjectResponse, error)
+	LookupProjectAssignments(context.Context, *LookupProjectAssignmentsRequest) (*LookupProjectAssignmentsResponse, error)
 	mustEmbedUnimplementedClusterServiceServer()
 }
 
@@ -134,6 +175,15 @@ func (UnimplementedClusterServiceServer) UpdateCluster(context.Context, *UpdateC
 }
 func (UnimplementedClusterServiceServer) DeleteCluster(context.Context, *DeleteClusterRequest) (*DeleteClusterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteCluster not implemented")
+}
+func (UnimplementedClusterServiceServer) AssignProject(context.Context, *AssignProjectRequest) (*AssignProjectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AssignProject not implemented")
+}
+func (UnimplementedClusterServiceServer) DetachProject(context.Context, *DetachProjectRequest) (*DetachProjectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DetachProject not implemented")
+}
+func (UnimplementedClusterServiceServer) LookupProjectAssignments(context.Context, *LookupProjectAssignmentsRequest) (*LookupProjectAssignmentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LookupProjectAssignments not implemented")
 }
 func (UnimplementedClusterServiceServer) mustEmbedUnimplementedClusterServiceServer() {}
 func (UnimplementedClusterServiceServer) testEmbeddedByValue()                        {}
@@ -246,6 +296,60 @@ func _ClusterService_DeleteCluster_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ClusterService_AssignProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).AssignProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_AssignProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).AssignProject(ctx, req.(*AssignProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ClusterService_DetachProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DetachProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).DetachProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_DetachProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).DetachProject(ctx, req.(*DetachProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ClusterService_LookupProjectAssignments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupProjectAssignmentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).LookupProjectAssignments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_LookupProjectAssignments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).LookupProjectAssignments(ctx, req.(*LookupProjectAssignmentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ClusterService_ServiceDesc is the grpc.ServiceDesc for ClusterService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -272,6 +376,18 @@ var ClusterService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteCluster",
 			Handler:    _ClusterService_DeleteCluster_Handler,
+		},
+		{
+			MethodName: "AssignProject",
+			Handler:    _ClusterService_AssignProject_Handler,
+		},
+		{
+			MethodName: "DetachProject",
+			Handler:    _ClusterService_DetachProject_Handler,
+		},
+		{
+			MethodName: "LookupProjectAssignments",
+			Handler:    _ClusterService_LookupProjectAssignments_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

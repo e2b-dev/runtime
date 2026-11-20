@@ -1269,6 +1269,19 @@ type ClusterListResponse struct {
 	Total int64 `json:"total"`
 }
 
+// ClusterTeamCount defines model for ClusterTeamCount.
+type ClusterTeamCount struct {
+	ClusterId openapi_types.UUID `json:"clusterId"`
+
+	// TeamCount Number of live teams assigned to the cluster
+	TeamCount int64 `json:"teamCount"`
+}
+
+// ClusterTeamCountList defines model for ClusterTeamCountList.
+type ClusterTeamCountList struct {
+	Items []ClusterTeamCount `json:"items"`
+}
+
 // ClusterTeamListItem defines model for ClusterTeamListItem.
 type ClusterTeamListItem struct {
 	CreatedAt time.Time          `json:"createdAt"`
@@ -5368,6 +5381,13 @@ type ClientInterface interface {
 	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
 	AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AdminListClusterTeamCounts Count each cluster's teams as admin
+	//
+	// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
+	//
+	// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
+	AdminListClusterTeamCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// AdminDeleteCluster Delete a cluster and its environments as admin
 	//
 	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction, which no team assignment can interleave with, it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history; the cluster service records the deletion and then deletes the cluster. An assignment requested meanwhile waits and is then refused. If the cluster service does not delete the cluster, nothing is soft-deleted and the cluster stays recorded as being deleted. Deleting an absent cluster still releases its templates, and is refused while a live team is assigned to it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
@@ -7727,6 +7747,23 @@ func (c *Client) AdminCreateClusterWithBody(ctx context.Context, contentType str
 // Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
 func (c *Client) AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminCreateClusterRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdminListClusterTeamCounts Count each cluster's teams as admin
+//
+// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
+//
+// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
+func (c *Client) AdminListClusterTeamCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdminListClusterTeamCountsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -13116,6 +13153,33 @@ func NewAdminCreateClusterRequestWithBody(server string, contentType string, bod
 	return req, nil
 }
 
+// NewAdminListClusterTeamCountsRequest constructs an http.Request for the AdminListClusterTeamCounts method
+func NewAdminListClusterTeamCountsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/unstable/admin/clusters/team-counts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewAdminDeleteClusterRequest constructs an http.Request for the AdminDeleteCluster method
 func NewAdminDeleteClusterRequest(server string, clusterID ClusterID) (*http.Request, error) {
 	var err error
@@ -16871,6 +16935,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
 	AdminCreateClusterWithResponse(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error)
+
+	// AdminListClusterTeamCountsWithResponse Count each cluster's teams as admin
+	//
+	// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
+	AdminListClusterTeamCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminListClusterTeamCountsResponse, error)
 
 	// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
 	//
@@ -23550,6 +23623,61 @@ func (r AdminCreateClusterResponse) ContentType() string {
 	return ""
 }
 
+type AdminListClusterTeamCountsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterTeamCountList
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdminListClusterTeamCountsResponse) GetJSON200() *ClusterTeamCountList {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AdminListClusterTeamCountsResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AdminListClusterTeamCountsResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AdminListClusterTeamCountsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdminListClusterTeamCountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdminListClusterTeamCountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdminListClusterTeamCountsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type AdminDeleteClusterResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -29593,6 +29721,21 @@ func (c *ClientWithResponses) AdminCreateClusterWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseAdminCreateClusterResponse(rsp)
+}
+
+// AdminListClusterTeamCountsWithResponse Count each cluster's teams as admin
+//
+// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
+func (c *ClientWithResponses) AdminListClusterTeamCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminListClusterTeamCountsResponse, error) {
+	rsp, err := c.AdminListClusterTeamCounts(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdminListClusterTeamCountsResponse(rsp)
 }
 
 // AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
@@ -36146,6 +36289,46 @@ func ParseAdminCreateClusterResponse(rsp *http.Response) (*AdminCreateClusterRes
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdminListClusterTeamCountsResponse parses an HTTP response from a AdminListClusterTeamCountsWithResponse call
+func ParseAdminListClusterTeamCountsResponse(rsp *http.Response) (*AdminListClusterTeamCountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdminListClusterTeamCountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterTeamCountList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -79,9 +79,9 @@ func TestSchedulingClientUsesDedicatedTLSHop(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tlsConfig, err := newServiceTLS(procFor(t, tc.identity, tc.trusted), cfg.TLSConfig{Scheduling: mtls.HopSettings{Expect: []string{tc.expected}}}, false, true)
+			creds, err := newSchedulingHop(procFor(t, tc.identity, tc.trusted), mtls.HopSettings{Expect: []string{tc.expected}})
 			require.NoError(t, err)
-			conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(tlsConfig.scheduling))
+			conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(creds))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 			callCtx, stop := context.WithTimeout(t.Context(), 3*time.Second)
@@ -115,18 +115,18 @@ func TestSchedulingTLSConfiguration(t *testing.T) {
 		{Expect: []string{"*"}},
 		{Expect: []string{"spiffe://test.example/scheduling-api"}},
 	} {
-		_, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: settings}, false, true)
+		_, err := newSchedulingHop(proc, settings)
 		require.Error(t, err)
 	}
-	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: mtls.HopSettings{Mode: "off"}}, false, true)
+	creds, err := newSchedulingHop(proc, mtls.HopSettings{Mode: "off"})
 	require.NoError(t, err)
-	conn, err := grpc.NewClient(servicetest.GRPCServer(t), grpc.WithTransportCredentials(tlsConfig.scheduling))
+	conn, err := grpc.NewClient(servicetest.GRPCServer(t), grpc.WithTransportCredentials(creds))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	healthCheck(t, conn)
-	tlsConfig, err = newServiceTLS(proc, cfg.TLSConfig{}, false, false)
+	tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{}, false)
 	require.NoError(t, err)
-	require.Nil(t, tlsConfig.scheduling)
+	require.Nil(t, tlsConfig.hops.Scheduling)
 }
 
 func TestSchedulingTLSModeWithCertificates(t *testing.T) {
@@ -150,16 +150,16 @@ func TestSchedulingTLSModeWithCertificates(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tlsConfig, err := newServiceTLS(proc, cfg.TLSConfig{Scheduling: mtls.HopSettings{
+			creds, err := newSchedulingHop(proc, mtls.HopSettings{
 				Mode: tc.mode, Expect: []string{"spiffe://test.example/scheduling-api"},
-			}}, false, true)
+			})
 			if !tc.valid {
 				require.Error(t, err)
 
 				return
 			}
 			require.NoError(t, err)
-			require.NotNil(t, tlsConfig.scheduling)
+			require.NotNil(t, creds)
 		})
 	}
 }

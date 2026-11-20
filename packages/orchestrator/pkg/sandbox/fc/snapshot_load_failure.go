@@ -48,6 +48,9 @@ const (
 	// snapshotLoadUffdExited is the memory handler exiting for any other
 	// reason, which aborts the load before Firecracker answers.
 	snapshotLoadUffdExited snapshotLoadFailureReason = "uffd_exited"
+	// snapshotLoadHotplugStatus is the restore not reading the hotplug device's state after the
+	// snapshot loaded, which it needs to size the guest memory mapping.
+	snapshotLoadHotplugStatus snapshotLoadFailureReason = "hotplug_status"
 	// snapshotLoadTransport is the API socket being unreachable or answering
 	// unintelligibly, which says nothing about the snapshot.
 	snapshotLoadTransport snapshotLoadFailureReason = "transport"

@@ -13,6 +13,8 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/metadata"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -123,13 +125,20 @@ func usesHugePages(sbx *sandbox.Sandbox) bool { return sbx.Config.HugePages }
 // here as well. Only hugepage lifecycles count, and a teardown counts when it
 // was running at the pool read, as one that ended since may have returned
 // pages the read did not see.
+// It charges boot RAM: a requested size is checked against the template first, which is read
+// later, and charged then (admitHugePagesMB).
 func (s *Server) admitHugePages(ctx context.Context, cfg *orchestrator.SandboxConfig) (func(), error) {
+	return s.admitHugePagesMB(ctx, cfg.GetSandboxId(), cfg.GetRamMb())
+}
+
+// admitHugePagesMB is admitHugePages for mb MiB of guest memory.
+func (s *Server) admitHugePagesMB(ctx context.Context, sandboxID string, mb int64) (func(), error) {
 	if s.hugePages == nil || !s.featureFlags.BoolFlag(ctx, featureflags.CreateHugePageAdmissionFlag) {
 		return func() {}, nil
 	}
 
 	stoppingBefore := s.sandboxFactory.Sandboxes.StoppingMatching(usesHugePages)
-	release, shortage := s.hugePages.admit(ctx, cfg.GetRamMb())
+	release, shortage := s.hugePages.admit(ctx, mb)
 	if shortage == nil {
 		return release, nil
 	}
@@ -142,7 +151,7 @@ func (s *Server) admitHugePages(ctx context.Context, cfg *orchestrator.SandboxCo
 		attribute.Int64("hugepages.pending", int64(shortage.pendingPages)),
 		attribute.Int("stopping", stopping))
 	logger.L().Warn(ctx, "Insufficient hugepages for sandbox start",
-		logger.WithSandboxID(cfg.GetSandboxId()),
+		logger.WithSandboxID(sandboxID),
 		zap.Int64("ram_mb", shortage.ramMB),
 		zap.Uint64("needed_pages", shortage.neededPages),
 		zap.Uint64("free_pages", shortage.freePages),
@@ -157,12 +166,39 @@ func (s *Server) admitHugePages(ctx context.Context, cfg *orchestrator.SandboxCo
 }
 
 // holdHugePages counts the guest memory of a hugepage start the admission
-// does not refuse, a checkpoint's resume or a prefetch harvest, until the
-// returned release is called.
-func (s *Server) holdHugePages(ctx context.Context, cfg *sandbox.Config) func() {
+// does not refuse, a checkpoint's resume or a prefetch harvest of the
+// snapshot meta describes, until the returned release is called. Both are
+// memory resumes: they run at their snapshot's size (startMemory).
+func (s *Server) holdHugePages(ctx context.Context, cfg *sandbox.Config, meta metadata.Template) func() {
 	if s.hugePages == nil || !cfg.HugePages || !s.featureFlags.BoolFlag(ctx, featureflags.CreateHugePageAdmissionFlag) {
 		return func() {}
 	}
 
-	return s.hugePages.hold(cfg.RamMB)
+	_, hotplugMB, err := startMemory(meta, cfg, false)
+	if err != nil {
+		// The resume refuses the request itself; until then the hold covers what was named or recorded.
+		hotplugMB = max(cfg.MemoryMB-cfg.RamMB, meta.MemoryHotplugRequestedMB, 0)
+	}
+
+	// The handshake reserves whole slots, as Create's charge counts them.
+	return s.hugePages.hold(cfg.RamMB + fc.MemoryHotplugUsableMB(hotplugMB, 0))
+}
+
+// startMemory checks a start's requested memory against the template it starts from and returns
+// the guest memory the start runs at, in MiB: totalMB, boot RAM plus hotplugMB. hotplugMB is what a
+// named size asks to plug, or, for a memory resume that names none, what its snapshot had asked
+// for, which the guest loads back with it, or, for a cold boot that names none, what its lineage
+// had asked for, which it plugs back (rebootMemoryMB). Create charges hotplugMB on top of the boot RAM
+// admission charged and reports totalMB when the guest memory cannot be mapped; a hold counts
+// totalMB.
+func startMemory(meta metadata.Template, cfg *sandbox.Config, coldBoot bool) (totalMB, hotplugMB int64, err error) {
+	hotplugMB, err = sandbox.RequestedMemoryHotplug(cfg.MemoryMB, cfg.RamMB, meta, coldBoot)
+	if err != nil {
+		return cfg.RamMB, 0, err
+	}
+	if coldBoot && cfg.MemoryMB == 0 {
+		hotplugMB = meta.MemoryHotplugRequestedMB
+	}
+
+	return cfg.RamMB + hotplugMB, hotplugMB, nil
 }

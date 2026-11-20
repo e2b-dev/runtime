@@ -130,6 +130,16 @@ func (s *Sandbox) SetMemoryHotplugMBForTest(mb int64) {
 	s.memoryHotplugMB = mb
 }
 
+// SetMemoryHotplugRequestedMBForTest sets how much of the region the sandbox reports it asked to plug.
+func (s *Sandbox) SetMemoryHotplugRequestedMBForTest(mb int64) {
+	s.memoryHotplugRequestedMB = mb
+}
+
+// SetLastPluggedMBForTest sets the plugged size the sandbox reports it last read.
+func (s *Sandbox) SetLastPluggedMBForTest(mb int64) {
+	s.lastPluggedMB.Store(mb)
+}
+
 // SetPluggedMemoryReaderForTest replaces the hotplug status read PluggedMemoryMB makes.
 func (s *Sandbox) SetPluggedMemoryReaderForTest(read func(context.Context) (int64, error)) {
 	s.readPluggedMemory = read

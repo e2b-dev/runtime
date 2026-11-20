@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
@@ -26,6 +27,7 @@ import (
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
 	redisbackend "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
@@ -149,6 +151,8 @@ func New(
 	snapshotCache SnapshotCacheInvalidator,
 	snapshotUpsertSem *utils.AdjustableSemaphore,
 	analyticsCreds, nodeCreds credentials.TransportCredentials,
+	// A concrete type: a nil *grpc.ClientConn in an interface would not be nil.
+	schedulingConn *grpc.ClientConn,
 ) (*Orchestrator, error) {
 	analyticsInstance, err := analyticscollector.NewAnalytics(
 		config.AnalyticsCollectorHost,
@@ -220,6 +224,10 @@ func New(
 		localClusterOwnsOrchestrators: skipNomadSync,
 	}
 
+	var storeOpts []sandbox.Option
+	if schedulingConn != nil {
+		storeOpts = append(storeOpts, sandbox.WithRemoteBackend(remote.NewStorage(schedulingConn), remote.NewReservationStorage(schedulingConn), featureFlags))
+	}
 	o.sandboxStore = sandbox.NewStore(
 		redisStorage,
 		redisreservations.NewReservationStorage(redisClient, redisStorage.Notifier()),
@@ -231,6 +239,7 @@ func New(
 			},
 			EndEndedSandbox: o.endEndedSandbox,
 		},
+		storeOpts...,
 	)
 
 	o.startup = newStartupGate(clusters.StartupReady(), clusters.LocalInstanceJoined(), o.syncClusterDiscoveredNodes)

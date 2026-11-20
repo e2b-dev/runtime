@@ -1024,7 +1024,7 @@ func (s *Sandbox) initEnvd(ctx context.Context, startType StartType, recordMetri
 		initReason := envdInitRepeat
 		switch {
 		case opts.reinit != nil:
-			initReason = envdInitReinit
+			initReason = opts.reinit.purpose.reason
 		case recordMetrics:
 			initReason = envdInitFirst
 		}
@@ -1131,6 +1131,9 @@ const (
 	envdInitFirst  envdInitReason = "first"
 	envdInitReinit envdInitReason = "reinit"
 	envdInitRepeat envdInitReason = "repeat"
+	// envdInitMemoryConfirm is the /init a start that changed its plugged memory sends to read
+	// envd's memory limit after the plug.
+	envdInitMemoryConfirm envdInitReason = "memory_confirm"
 )
 
 type envdCpuReportOutcome string
@@ -1291,6 +1294,7 @@ func (s *Sandbox) readEnvdInitHeaders(ctx context.Context, header http.Header, s
 	if m := header.Get(envdMemoryHeader); m != "" {
 		s.recordEnvdMemoryProtection(ctx, m, startType, recordMetrics)
 	}
+	s.recordEnvdMemoryReport(header.Get(envdMemoryHeader))
 
 	return admissibleEnvdVersion(header.Get("X-Envd-Version"))
 }

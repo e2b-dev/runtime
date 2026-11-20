@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -17,12 +20,16 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
 const hangTimeout = 30 * time.Second
 
-var reservationServiceName = scheduling.ReservationService_ServiceDesc.ServiceName
+var (
+	reservationServiceName = scheduling.ReservationService_ServiceDesc.ServiceName
+	stateServiceName       = scheduling.StateService_ServiceDesc.ServiceName
+)
 
 func TestServe(t *testing.T) {
 	t.Parallel()
@@ -42,7 +49,7 @@ func TestServe(t *testing.T) {
 	// Watches, not Check polling: the result must not depend on the drain's length.
 	healthClient := healthv1.NewHealthClient(conn)
 	watches := map[string]healthv1.Health_WatchClient{}
-	for _, service := range []string{"", reservationServiceName} {
+	for _, service := range []string{"", reservationServiceName, stateServiceName} {
 		watch, err := healthClient.Watch(callCtx, &healthv1.HealthCheckRequest{Service: service}, grpc.WaitForReady(true))
 		require.NoError(t, err)
 		response, err := watch.Recv()
@@ -62,6 +69,62 @@ func TestServe(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, waited.GetOutcome())
 	require.Equal(t, []byte("result"), waited.GetResult())
+
+	state := scheduling.NewStateServiceClient(conn)
+	teamID := uuid.New()
+	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	record, err := json.Marshal(sandboxtypes.Sandbox{
+		SandboxID:   sandbox,
+		TeamID:      teamID,
+		ExecutionID: uuid.NewString(),
+		StartTime:   start,
+		EndTime:     start.Add(time.Hour),
+		State:       sandboxtypes.StateRunning,
+	})
+	require.NoError(t, err)
+	added, err := state.Add(callCtx, scheduling.AddRequest_builder{Record: record}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, added.GetOutcome())
+	got, err := state.Get(callCtx, scheduling.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandbox}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, got.GetOutcome())
+	require.JSONEq(t, string(record), string(got.GetRecord()), "Get returns the added record")
+
+	items, err := state.TeamItems(callCtx, scheduling.TeamItemsRequest_builder{TeamId: teamID.String()}.Build())
+	require.NoError(t, err)
+	var streamed [][]byte
+	for {
+		resp, err := items.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		streamed = append(streamed, resp.GetRecords()...)
+	}
+	require.Len(t, streamed, 1, "TeamItems streams the added record")
+	require.JSONEq(t, string(record), string(streamed[0]))
+
+	begun, err := state.BeginRemoving(callCtx, scheduling.BeginRemovingRequest_builder{
+		TeamId:    teamID.String(),
+		SandboxId: sandbox,
+		Options:   scheduling.RemoveOptions_builder{Action: scheduling.RemoveAction_REMOVE_ACTION_KILL}.Build(),
+	}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, begun.GetOutcome())
+	transitionID := begun.GetTransition().GetId()
+	require.NotEmpty(t, transitionID, "this call started the kill")
+	finished, err := state.FinishTransition(callCtx, scheduling.FinishTransitionRequest_builder{
+		TeamId:       teamID.String(),
+		SandboxId:    sandbox,
+		TransitionId: transitionID,
+		Action:       scheduling.RemoveAction_REMOVE_ACTION_KILL,
+		Result:       scheduling.TransitionResult_builder{}.Build(),
+	}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, finished.GetOutcome())
+	transitionWait, err := state.WaitForTransition(callCtx, scheduling.WaitForTransitionRequest_builder{TeamId: teamID.String(), SandboxId: sandbox, TransitionId: transitionID}.Build())
+	require.NoError(t, err)
+	require.Equal(t, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED, transitionWait.GetOutcome())
 
 	stop()
 	for service, watch := range watches {

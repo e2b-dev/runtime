@@ -70,7 +70,7 @@ func (s *Server) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*orchestrat
 
 	for _, item := range s.sandboxes.Items() {
 		sandboxVCpuAllocated += uint32(item.Config.Vcpu)
-		sandboxMemoryAllocated += uint64(item.Config.RamMB) * 1024 * 1024
+		sandboxMemoryAllocated += uint64(item.MemoryMB()) * 1024 * 1024
 		sandboxDiskAllocated += uint64(item.Config.TotalDiskSizeMB) * 1024 * 1024
 	}
 

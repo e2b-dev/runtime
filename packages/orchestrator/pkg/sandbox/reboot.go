@@ -124,6 +124,16 @@ func rebootMemoryHotplugMB(requested, recorded int64) int64 {
 	return recorded
 }
 
+// rebootMemoryMB is the memory a cold boot runs with: an explicit size wins, and omission plugs
+// back what the lineage had asked for, so a rebooted sandbox keeps its size.
+func rebootMemoryMB(requested, ramMB, recordedHotplugMB int64) int64 {
+	if requested != 0 || recordedHotplugMB == 0 {
+		return requested
+	}
+
+	return ramMB + recordedHotplugMB
+}
+
 // rebootAllowed reports whether a snapshot may be cold-booted: it is marked
 // filesystem-only, or the request explicitly demanded a filesystem boot of its
 // memory-inclusive snapshot, accepting crash-recovery semantics for the rootfs.
@@ -276,13 +286,16 @@ func (f *Factory) rebootSandbox(
 	if config.SkipEnvdWait {
 		// The guest runs no envd the caller wants to wait for (resume-build
 		// inspecting a bare boot); the caller drives the VM itself, as on the
-		// resume path.
+		// resume path. A cold boot's hotplug request still goes out once the device is active.
 		telemetry.ReportEvent(ctx, "skipping envd wait")
+		sbx.completeMemoryResizeWithoutEnvd(ctx, StartTypeReboot)
 	} else if err := sbx.WaitForEnvd(ctx, StartTypeReboot, rebootEnvdWait(config, envdWait)); err != nil {
 		reset := isGuestResetBeforeEnvd(config.GuestProfile(), err, sbx.FirecrackerExit())
 		closeErr := sbx.Close(context.WithoutCancel(ctx))
 
 		return nil, envdWaitError(err, reset, closeErr)
+	} else {
+		sbx.completeMemoryResize(ctx, StartTypeReboot)
 	}
 
 	// deferMarkRunning: the caller promotes the sandbox to live itself after a
@@ -330,6 +343,7 @@ func (f *Factory) prepareColdBoot(
 	// An explicit maximum may resize the fresh VM; omission preserves its recorded capacity.
 	config.ConfiguredVmVcpus = rebootMaxVcpus(config.ConfiguredVmVcpus, meta.VcpuCount)
 	config.MemoryHotplugMB = rebootMemoryHotplugMB(config.MemoryHotplugMB, meta.MemoryHotplugMB)
+	config.MemoryMB = rebootMemoryMB(config.MemoryMB, config.RamMB, meta.MemoryHotplugRequestedMB)
 	// The fresh VM gets this runtime's device ids whatever the memory image recorded.
 	config.FirecrackerConfig = config.FirecrackerConfig.ForColdBoot()
 

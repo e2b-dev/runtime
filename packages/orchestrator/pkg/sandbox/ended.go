@@ -21,6 +21,7 @@ type EndedSandbox struct {
 	ExecutionID string
 	Vcpu        int64
 	RamMB       int64
+	MemoryMB    int64
 	StartedAt   time.Time
 	EndAt       time.Time
 	GuestEvent  fc.GuestEvent
@@ -40,6 +41,7 @@ func (m *Map) AddEnded(sbx *Sandbox, event fc.GuestEvent, now time.Time) {
 		ExecutionID: sbx.Runtime.ExecutionID,
 		Vcpu:        sbx.Config.Vcpu,
 		RamMB:       sbx.Config.RamMB,
+		MemoryMB:    sbx.MemoryMB(),
 		StartedAt:   sbx.GetStartedAt(),
 		EndAt:       sbx.GetEndAt(),
 		GuestEvent:  event,

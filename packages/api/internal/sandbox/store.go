@@ -8,13 +8,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
+
+var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/sandbox")
 
 type CreationMetadata struct {
 	IsResume       bool
@@ -56,23 +64,80 @@ type Callbacks struct {
 	EndEndedSandbox OrphanCallback
 }
 
-type Store struct {
-	storage   Storage
-	callbacks Callbacks
+const (
+	backendRedis         = "redis"
+	backendSchedulingAPI = "scheduling-api"
+)
 
+type backends struct {
+	slug         string
+	storage      Storage
 	reservations ReservationStorage
+}
+
+type Store struct {
+	local     backends
+	remote    *backends
+	flags     *featureflags.Client
+	callbacks Callbacks
+}
+
+type Option func(*Store)
+
+func WithRemoteBackend(storage Storage, reservations ReservationStorage, flags *featureflags.Client) Option {
+	return func(s *Store) {
+		s.remote = &backends{slug: backendSchedulingAPI, storage: storage, reservations: reservations}
+		s.flags = flags
+	}
 }
 
 func NewStore(
 	backend Storage,
 	reservations ReservationStorage,
 	callbacks Callbacks,
+	opts ...Option,
 ) *Store {
-	return &Store{
-		storage:      backend,
-		reservations: reservations,
-		callbacks:    callbacks,
+	s := &Store{
+		local:     backends{slug: backendRedis, storage: backend, reservations: reservations},
+		callbacks: callbacks,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
+// Every Store method picks once and keeps that pair for the whole call, returned
+// closures included: an update token of one backend is not valid on the other.
+func (s *Store) pick(ctx context.Context, teamID uuid.UUID, sandboxID string) backends {
+	if s.remote == nil || teamID == uuid.Nil {
+		return s.local
+	}
+
+	contexts := []ldcontext.Context{featureflags.TeamContext(teamID.String())}
+	if sandboxID != "" {
+		contexts = append(contexts, featureflags.SandboxContext(sandboxID))
+	}
+	if s.flags.BoolFlag(ctx, featureflags.SandboxStateSchedulingAPIFlag, contexts...) {
+		return *s.remote
+	}
+
+	return s.local
+}
+
+//nolint:spancheck // the caller ends the span
+func (s *Store) begin(ctx context.Context, method string, teamID uuid.UUID, sandboxID string) (context.Context, backends, trace.Span) {
+	b := s.pick(ctx, teamID, sandboxID)
+	// The evictor polls ExpiredItems every 50 ms from a background context;
+	// that poll must start no trace.
+	if !trace.SpanContextFromContext(ctx).IsValid() {
+		return ctx, b, noop.Span{}
+	}
+	ctx, span := tracer.Start(ctx, "sandbox-store "+method,
+		trace.WithAttributes(attribute.String("sandbox.store.backend", b.slug)))
+
+	return ctx, b, span
 }
 
 // Add inserts a sandbox into the store. It never overwrites a stored record
@@ -92,7 +157,10 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 		sandbox.EndTime = sandbox.StartTime.Add(sandbox.MaxInstanceLength)
 	}
 
-	if err := s.storage.Add(ctx, sandbox); err != nil {
+	bctx, b, span := s.begin(ctx, "add", sandbox.TeamID, sandbox.SandboxID)
+	defer span.End()
+
+	if err := b.storage.Add(bctx, sandbox); err != nil {
 		return err
 	}
 
@@ -105,7 +173,10 @@ func (s *Store) Add(ctx context.Context, sandbox Sandbox, creation *CreationMeta
 }
 
 func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, error) {
-	return s.storage.Get(ctx, teamID, sandboxID)
+	bctx, b, span := s.begin(ctx, "get", teamID, sandboxID)
+	defer span.End()
+
+	return b.storage.Get(bctx, teamID, sandboxID)
 }
 
 // Remove deletes the sandbox's record when it is the expected execution's,
@@ -116,7 +187,10 @@ func (s *Store) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sa
 // its reservation too, since it stays in place, as does a record whose lock
 // expired under this call, which may be a successor's by now.
 func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) {
-	err := s.storage.Remove(ctx, teamID, sandboxID, expectedExecutionID)
+	bctx, b, span := s.begin(ctx, "remove", teamID, sandboxID)
+	defer span.End()
+
+	err := b.storage.Remove(bctx, teamID, sandboxID, expectedExecutionID)
 	switch {
 	case errors.Is(err, ErrExecutionMismatch):
 		logger.L().Info(ctx, "Sandbox record superseded, left in place", logger.WithSandboxID(sandboxID))
@@ -134,53 +208,77 @@ func (s *Store) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expecte
 		logger.L().Error(ctx, "Failed to remove sandbox from storage", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
 
-	err = s.reservations.Release(ctx, teamID, sandboxID)
+	err = b.reservations.Release(bctx, teamID, sandboxID)
 	if err != nil {
 		logger.L().Error(ctx, "Failed to release reservation", zap.Error(err), logger.WithSandboxID(sandboxID))
 	}
 }
 
 func (s *Store) TeamItems(ctx context.Context, teamID uuid.UUID, states []State) ([]Sandbox, error) {
-	return s.storage.TeamItems(ctx, teamID, states)
+	bctx, b, span := s.begin(ctx, "team-items", teamID, "")
+	defer span.End()
+
+	return b.storage.TeamItems(bctx, teamID, states)
 }
 
 func (s *Store) ExpiredItems(ctx context.Context) ([]Sandbox, error) {
-	return s.storage.ExpiredItems(ctx)
+	bctx, b, span := s.begin(ctx, "expired-items", uuid.Nil, "")
+	defer span.End()
+
+	return b.storage.ExpiredItems(bctx)
 }
 
 func (s *Store) TeamsWithSandboxes(ctx context.Context) (map[uuid.UUID]int64, error) {
-	return s.storage.TeamsWithSandboxCount(ctx)
+	bctx, b, span := s.begin(ctx, "teams-with-sandboxes", uuid.Nil, "")
+	defer span.End()
+
+	return b.storage.TeamsWithSandboxCount(bctx)
 }
 
 func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error) {
-	return sandboxtypes.UpdateRecord(ctx, s.storage, teamID, sandboxID, updateFunc)
+	bctx, b, span := s.begin(ctx, "update", teamID, sandboxID)
+	defer span.End()
+
+	return sandboxtypes.UpdateRecord(bctx, b.storage, teamID, sandboxID, updateFunc)
 }
 
 // HoldExecution marks the running execution as held until `until`; see
 // sandboxtypes.LifecycleHolds.
 func (s *Store) HoldExecution(ctx context.Context, hold Hold, until time.Time) error {
-	return s.storage.HoldExecution(ctx, hold, until)
+	bctx, b, span := s.begin(ctx, "hold-execution", hold.TeamID, hold.SandboxID)
+	defer span.End()
+
+	return b.storage.HoldExecution(bctx, hold, until)
 }
 
 // MoveHeldExecution changes the held execution's node to nodeID and releases
 // the hold, and reports whether it wrote.
 func (s *Store) MoveHeldExecution(ctx context.Context, hold Hold, nodeID string) (bool, error) {
-	return s.storage.MoveHeldExecution(ctx, hold, nodeID)
+	bctx, b, span := s.begin(ctx, "move-held-execution", hold.TeamID, hold.SandboxID)
+	defer span.End()
+
+	return b.storage.MoveHeldExecution(bctx, hold, nodeID)
 }
 
 // ReleaseHeldExecution clears the hold without moving the record.
 func (s *Store) ReleaseHeldExecution(ctx context.Context, hold Hold) error {
-	return s.storage.ReleaseHeldExecution(ctx, hold)
+	bctx, b, span := s.begin(ctx, "release-held-execution", hold.TeamID, hold.SandboxID)
+	defer span.End()
+
+	return b.storage.ReleaseHeldExecution(bctx, hold)
 }
 
 // RemoveHeldExecution removes the held record, returned as it was, and, as
 // Remove does, releases the sandbox's reservation.
 func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, error) {
-	removed, err := s.storage.RemoveHeldExecution(ctx, hold)
+	bctx, b, span := s.begin(ctx, "remove-held-execution", hold.TeamID, hold.SandboxID)
+	defer span.End()
+
+	removed, err := b.storage.RemoveHeldExecution(bctx, hold)
 	if err != nil {
 		return Sandbox{}, err
 	}
-	if err := s.reservations.Release(ctx, hold.TeamID, hold.SandboxID); err != nil {
+	if err := b.reservations.Release(bctx, hold.TeamID, hold.SandboxID); err != nil {
 		logger.L().Error(ctx, "Failed to release reservation", zap.Error(err), logger.WithSandboxID(hold.SandboxID))
 	}
 
@@ -191,7 +289,10 @@ func (s *Store) RemoveHeldExecution(ctx context.Context, hold Hold) (Sandbox, er
 // callback that ends it with the caller's error; a no-op when this call
 // started no transition.
 func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, func(context.Context, error), error) {
-	transition, alreadyDone, err := sandboxtypes.StartRemoving(ctx, s.storage, teamID, sandboxID, opts)
+	bctx, b, span := s.begin(ctx, "start-removing", teamID, sandboxID)
+	defer span.End()
+
+	transition, alreadyDone, err := sandboxtypes.StartRemoving(bctx, b.storage, teamID, sandboxID, opts)
 	if err != nil {
 		return transition, false, nil, err
 	}
@@ -200,7 +301,7 @@ func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID s
 	}
 
 	return transition, alreadyDone, func(ctx context.Context, workErr error) {
-		err := s.storage.FinishTransition(ctx, teamID, sandboxID, transition.ID, opts.Action, sandboxtypes.TransitionOutcomeOf(workErr))
+		err := b.storage.FinishTransition(ctx, teamID, sandboxID, transition.ID, opts.Action, sandboxtypes.TransitionOutcomeOf(workErr))
 		if err != nil {
 			logger.L().Warn(ctx, "Failed to finish state transition", logger.WithSandboxID(sandboxID), zap.String("transition_id", transition.ID), zap.Error(err))
 		}
@@ -208,15 +309,24 @@ func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID s
 }
 
 func (s *Store) RestoreRunning(ctx context.Context, transition StateTransition, opts RestoreOpts) (Sandbox, error) {
-	return s.storage.RestoreRunning(ctx, transition, opts)
+	bctx, b, span := s.begin(ctx, "restore-running", transition.Sandbox.TeamID, transition.Sandbox.SandboxID)
+	defer span.End()
+
+	return b.storage.RestoreRunning(bctx, transition, opts)
 }
 
 func (s *Store) RestoreCheckpointed(ctx context.Context, transition StateTransition, placement *orchestrator.SandboxNetworkPlacement) (Sandbox, error) {
-	return s.storage.RestoreCheckpointed(ctx, transition, placement)
+	bctx, b, span := s.begin(ctx, "restore-checkpointed", transition.Sandbox.TeamID, transition.Sandbox.SandboxID)
+	defer span.End()
+
+	return b.storage.RestoreCheckpointed(bctx, transition, placement)
 }
 
 func (s *Store) WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	_, err := s.storage.WaitForTransition(ctx, teamID, sandboxID, "")
+	bctx, b, span := s.begin(ctx, "wait-for-state-change", teamID, sandboxID)
+	defer span.End()
+
+	_, err := b.storage.WaitForTransition(bctx, teamID, sandboxID, "")
 
 	return err
 }
@@ -234,7 +344,10 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 			running = append(running, sbx)
 		}
 	}
-	orphans := s.storage.Reconcile(ctx, running, nodeID)
+	bctx, b, span := s.begin(ctx, "reconcile", uuid.Nil, "")
+	defer span.End()
+
+	orphans := b.storage.Reconcile(bctx, running, nodeID)
 
 	// A powered-off sandbox gets its timeout action now rather than at its
 	// end time. The callback does not wait for it, and the evictor drops a
@@ -272,12 +385,15 @@ func (s *Store) Reconcile(ctx context.Context, sandboxes []NodeSandbox, nodeID s
 // waitForStart, when the sandbox is already starting or running; callers
 // compare them with nil.
 func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string, limit int) (finishStart func(Sandbox, error), waitForStart func(ctx context.Context) (Sandbox, error), err error) {
-	reserved, err := s.reservations.Reserve(ctx, teamID, sandboxID, limit)
+	bctx, b, span := s.begin(ctx, "reserve", teamID, sandboxID)
+	defer span.End()
+
+	reserved, err := b.reservations.Reserve(bctx, teamID, sandboxID, limit)
 	if err != nil {
 		if errors.Is(err, ErrAlreadyExists) {
 			// Try to get the sandbox from the storage if already exists
 			return nil, func(ctx context.Context) (Sandbox, error) {
-				return s.storage.Get(ctx, teamID, sandboxID)
+				return b.storage.Get(ctx, teamID, sandboxID)
 			}, nil
 		}
 
@@ -286,7 +402,7 @@ func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string,
 
 	if !reserved {
 		return nil, func(ctx context.Context) (Sandbox, error) {
-			result, err := s.reservations.WaitForStart(ctx, teamID, sandboxID)
+			result, err := b.reservations.WaitForStart(ctx, teamID, sandboxID)
 			if err != nil {
 				return Sandbox{}, err
 			}
@@ -295,10 +411,10 @@ func (s *Store) Reserve(ctx context.Context, teamID uuid.UUID, sandboxID string,
 		}, nil
 	}
 
-	return s.finishStart(ctx, teamID, sandboxID), nil, nil
+	return b.finishStart(ctx, teamID, sandboxID), nil, nil
 }
 
-func (s *Store) finishStart(ctx context.Context, teamID uuid.UUID, sandboxID string) func(Sandbox, error) {
+func (b backends) finishStart(ctx context.Context, teamID uuid.UUID, sandboxID string) func(Sandbox, error) {
 	return func(sbx Sandbox, startErr error) {
 		bgCtx := context.WithoutCancel(ctx)
 
@@ -310,12 +426,12 @@ func (s *Store) finishStart(ctx context.Context, teamID uuid.UUID, sandboxID str
 			)
 
 			// Still try to remove from pending even if encoding fails.
-			_ = s.reservations.Release(bgCtx, teamID, sandboxID)
+			_ = b.reservations.Release(bgCtx, teamID, sandboxID)
 
 			return
 		}
 
-		if err := s.reservations.FinishStart(bgCtx, teamID, sandboxID, resultData); err != nil {
+		if err := b.reservations.FinishStart(bgCtx, teamID, sandboxID, resultData); err != nil {
 			logger.L().Error(ctx, "failed to run finishStart script",
 				zap.Error(err),
 				logger.WithSandboxID(sandboxID),
@@ -325,17 +441,26 @@ func (s *Store) finishStart(ctx context.Context, teamID uuid.UUID, sandboxID str
 }
 
 func (s *Store) ClaimKill(ctx context.Context, teamID uuid.UUID, sandboxID string) (string, bool, error) {
-	return s.reservations.ClaimKill(ctx, teamID, sandboxID)
+	bctx, b, span := s.begin(ctx, "claim-kill", teamID, sandboxID)
+	defer span.End()
+
+	return b.reservations.ClaimKill(bctx, teamID, sandboxID)
 }
 
 func (s *Store) ReleaseKillClaim(ctx context.Context, teamID uuid.UUID, sandboxID, claimID string) error {
-	return s.reservations.ReleaseKillClaim(ctx, teamID, sandboxID, claimID)
+	bctx, b, span := s.begin(ctx, "release-kill-claim", teamID, sandboxID)
+	defer span.End()
+
+	return b.reservations.ReleaseKillClaim(bctx, teamID, sandboxID, claimID)
 }
 
 // WaitForStart returns once no start of the sandbox is pending. How that start
 // ended is the starter's to report, so only a ctx error is returned.
 func (s *Store) WaitForStart(ctx context.Context, teamID uuid.UUID, sandboxID string) error {
-	_, _ = s.reservations.WaitForStart(ctx, teamID, sandboxID)
+	bctx, b, span := s.begin(ctx, "wait-for-start", teamID, sandboxID)
+	defer span.End()
+
+	_, _ = b.reservations.WaitForStart(bctx, teamID, sandboxID)
 
 	return ctx.Err()
 }

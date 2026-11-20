@@ -486,7 +486,7 @@ func (s *Storage) checkTransitionResult(ctx context.Context, resultKey string) e
 	}
 
 	if result != "" {
-		return fmt.Errorf("transition failed: %s", result)
+		return &sandboxtypes.TransitionFailedError{Message: result}
 	}
 
 	return nil

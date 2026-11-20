@@ -160,6 +160,12 @@ type Config struct {
 	// remote cluster.
 	ClusterServiceGrpcAddress string `env:"CLUSTER_SERVICE_GRPC_ADDRESS"`
 
+	// SchedulingAPIGrpcAddress is the gRPC target of scheduling-api, either
+	// "host:port" or a schemed target such as "dns:///name:port" for a
+	// headless Service, so that every replica gets its own connection.
+	// Optional: when empty the API makes no connection to it.
+	SchedulingAPIGrpcAddress string `env:"SCHEDULING_API_GRPC_ADDRESS"`
+
 	VolumesToken VolumesTokenConfig
 
 	AuthProvider      sharedauth.ProviderConfig `env:"AUTH_PROVIDER_CONFIG"`

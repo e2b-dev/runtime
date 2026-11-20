@@ -252,6 +252,12 @@ type Template struct {
 	// code before a template with a region exists.
 	MemoryHotplugMB int64 `json:"memory_hotplug_mb,omitempty"`
 
+	// MemoryHotplugRequestedMB is how much of that region, in MiB, the VM in this snapshot had
+	// asked Firecracker to plug when it was paused; 0 is nothing. A memory snapshot restores the
+	// request with the device, so a resume keeps it unless asked for more, and a cold boot of the
+	// lineage plugs back to it. A template build plugs nothing.
+	MemoryHotplugRequestedMB int64 `json:"memory_hotplug_requested_mb,omitempty"`
+
 	// FilesystemOnly marks a snapshot that persists only the filesystem (no
 	// memory snapshot); resuming it must cold-boot (reboot) from the rootfs. The
 	// zero value (false) is a full memory snapshot, so pre-existing snapshots
@@ -471,7 +477,7 @@ func V1TemplateVersion() Template {
 
 // BasedOn derives the metadata of a build that starts FROM another template.
 //
-// Deliberately does NOT carry CmdlineArgs, CPU templates, VcpuCount or MemoryHotplugMB: a new build resolves its
+// Deliberately does NOT carry CmdlineArgs, CPU templates, VcpuCount or the hotplug sizes: a new build resolves its
 // own settings and cold-boots a VM at its own size, which Pause records in its snapshot.
 func (t Template) BasedOn(
 	ft FromTemplate,
@@ -489,22 +495,23 @@ func (t Template) BasedOn(
 
 func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 	return Template{
-		Version:          CurrentVersion,
-		Template:         metadata,
-		Context:          t.Context,
-		Start:            t.Start,
-		FromTemplate:     t.FromTemplate,
-		FromImage:        t.FromImage,
-		CmdlineArgs:      t.CmdlineArgs,
-		Balloon:          t.Balloon,
-		CPUTemplate:      t.CPUTemplate,
-		BuildCPUTemplate: t.BuildCPUTemplate,
-		VcpuCount:        t.VcpuCount,
-		MemoryHotplugMB:  t.MemoryHotplugMB,
-		GuestOS:          t.GuestOS,
-		RootfsDriveID:    t.RootfsDriveID,
-		NetIfaceID:       t.NetIfaceID,
-		RootfsFile:       t.RootfsFile,
+		Version:                  CurrentVersion,
+		Template:                 metadata,
+		Context:                  t.Context,
+		Start:                    t.Start,
+		FromTemplate:             t.FromTemplate,
+		FromImage:                t.FromImage,
+		CmdlineArgs:              t.CmdlineArgs,
+		Balloon:                  t.Balloon,
+		CPUTemplate:              t.CPUTemplate,
+		BuildCPUTemplate:         t.BuildCPUTemplate,
+		VcpuCount:                t.VcpuCount,
+		MemoryHotplugMB:          t.MemoryHotplugMB,
+		MemoryHotplugRequestedMB: t.MemoryHotplugRequestedMB,
+		GuestOS:                  t.GuestOS,
+		RootfsDriveID:            t.RootfsDriveID,
+		NetIfaceID:               t.NetIfaceID,
+		RootfsFile:               t.RootfsFile,
 
 		NoMmdsStore:         t.NoMmdsStore,
 		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
@@ -513,22 +520,23 @@ func (t Template) NewVersionTemplate(metadata TemplateMetadata) Template {
 
 func (t Template) SameVersionTemplate(metadata TemplateMetadata) Template {
 	return Template{
-		Version:          t.Version,
-		Template:         metadata,
-		Context:          t.Context,
-		Start:            t.Start,
-		FromTemplate:     t.FromTemplate,
-		FromImage:        t.FromImage,
-		CmdlineArgs:      t.CmdlineArgs,
-		Balloon:          t.Balloon,
-		CPUTemplate:      t.CPUTemplate,
-		BuildCPUTemplate: t.BuildCPUTemplate,
-		VcpuCount:        t.VcpuCount,
-		MemoryHotplugMB:  t.MemoryHotplugMB,
-		GuestOS:          t.GuestOS,
-		RootfsDriveID:    t.RootfsDriveID,
-		NetIfaceID:       t.NetIfaceID,
-		RootfsFile:       t.RootfsFile,
+		Version:                  t.Version,
+		Template:                 metadata,
+		Context:                  t.Context,
+		Start:                    t.Start,
+		FromTemplate:             t.FromTemplate,
+		FromImage:                t.FromImage,
+		CmdlineArgs:              t.CmdlineArgs,
+		Balloon:                  t.Balloon,
+		CPUTemplate:              t.CPUTemplate,
+		BuildCPUTemplate:         t.BuildCPUTemplate,
+		VcpuCount:                t.VcpuCount,
+		MemoryHotplugMB:          t.MemoryHotplugMB,
+		MemoryHotplugRequestedMB: t.MemoryHotplugRequestedMB,
+		GuestOS:                  t.GuestOS,
+		RootfsDriveID:            t.RootfsDriveID,
+		NetIfaceID:               t.NetIfaceID,
+		RootfsFile:               t.RootfsFile,
 
 		NoMmdsStore:         t.NoMmdsStore,
 		EnvdAccessTokenHash: t.EnvdAccessTokenHash,
@@ -561,28 +569,37 @@ func (t Template) WithMemoryHotplugMB(mb int64) Template {
 	return t
 }
 
+// WithMemoryHotplugRequestedMB returns a copy of the template stamped with how much of its hotplug
+// region the VM had asked Firecracker to plug.
+func (t Template) WithMemoryHotplugRequestedMB(mb int64) Template {
+	t.MemoryHotplugRequestedMB = mb
+
+	return t
+}
+
 // WithPrefetch returns a copy of the template with the given prefetch mapping.
 func (t Template) WithPrefetch(prefetch *Prefetch) Template {
 	return Template{
-		Version:            t.Version,
-		Template:           t.Template,
-		Context:            t.Context,
-		Start:              t.Start,
-		FromTemplate:       t.FromTemplate,
-		FromImage:          t.FromImage,
-		Prefetch:           prefetch,
-		CmdlineArgs:        t.CmdlineArgs,
-		Balloon:            t.Balloon,
-		CPUTemplate:        t.CPUTemplate,
-		BuildCPUTemplate:   t.BuildCPUTemplate,
-		VcpuCount:          t.VcpuCount,
-		MemoryHotplugMB:    t.MemoryHotplugMB,
-		EnvdUnresponsive:   t.EnvdUnresponsive,
-		RunningEnvdVersion: t.RunningEnvdVersion,
-		GuestOS:            t.GuestOS,
-		RootfsDriveID:      t.RootfsDriveID,
-		NetIfaceID:         t.NetIfaceID,
-		RootfsFile:         t.RootfsFile,
+		Version:                  t.Version,
+		Template:                 t.Template,
+		Context:                  t.Context,
+		Start:                    t.Start,
+		FromTemplate:             t.FromTemplate,
+		FromImage:                t.FromImage,
+		Prefetch:                 prefetch,
+		CmdlineArgs:              t.CmdlineArgs,
+		Balloon:                  t.Balloon,
+		CPUTemplate:              t.CPUTemplate,
+		BuildCPUTemplate:         t.BuildCPUTemplate,
+		VcpuCount:                t.VcpuCount,
+		MemoryHotplugMB:          t.MemoryHotplugMB,
+		MemoryHotplugRequestedMB: t.MemoryHotplugRequestedMB,
+		EnvdUnresponsive:         t.EnvdUnresponsive,
+		RunningEnvdVersion:       t.RunningEnvdVersion,
+		GuestOS:                  t.GuestOS,
+		RootfsDriveID:            t.RootfsDriveID,
+		NetIfaceID:               t.NetIfaceID,
+		RootfsFile:               t.RootfsFile,
 
 		NoMmdsStore:         t.NoMmdsStore,
 		EnvdAccessTokenHash: t.EnvdAccessTokenHash,

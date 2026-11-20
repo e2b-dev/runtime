@@ -15,6 +15,8 @@ import (
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -442,32 +444,50 @@ func TestAdmitPauseDisk_NoReleaseLandsBetweenTheSampleAndTheReservation(t *testi
 	assert.Zero(t, s.buildDisk.reserved.Load())
 }
 
-// A pause can only write dirty pages from boot RAM and the slots plugged now, so the bound is
-// boot RAM plus what Firecracker reports as plugged, the whole region when that cannot be read,
-// and boot RAM alone, without asking Firecracker, for a sandbox without a region.
+// More plugged than the sandbox recorded asking for, which happens only when the record was lost
+// (for example across a rollback), is warned about and counted; the bound still covers it.
+//
+// A pause can only write dirty pages from boot RAM and the plugged slots, and a guest still
+// growing plugs more before the freeze, so the bound is boot RAM plus the larger of what
+// Firecracker reports as plugged and the requested size; when the plugged size cannot be read,
+// boot RAM plus the requested size or the last plugged size read, whichever is larger, or the whole
+// region when neither is known; and boot RAM alone, without asking Firecracker, for a sandbox
+// without a region.
 func TestAdmitPauseDisk_BoundsTheHotplugRegionByWhatIsPlugged(t *testing.T) {
 	t.Parallel()
 
 	errUnreadable := errors.New("hotplug status unreadable")
 	for _, tc := range []struct {
-		name     string
-		region   int64
-		plugged  int64
-		readErr  error
-		wantMiB  int64
-		wantRead bool
+		name        string
+		region      int64
+		requested   int64
+		lastPlugged int64
+		plugged     int64
+		readErr     error
+		wantMiB     int64
+		wantRead    bool
+		wantAbove   int64
 	}{
 		{name: "region with nothing plugged", region: 3072, plugged: 0, wantMiB: 2048, wantRead: true},
-		{name: "region with some plugged", region: 3072, plugged: 1024, wantMiB: 2048 + 1024, wantRead: true},
-		{name: "unreadable plugged size", region: 3072, readErr: errUnreadable, wantMiB: 2048 + 3072, wantRead: true},
+		{name: "region with some plugged", region: 3072, requested: 1024, plugged: 1024, wantMiB: 2048 + 1024, wantRead: true},
+		{name: "region still plugging towards its request", region: 3072, requested: 3072, plugged: 1024, wantMiB: 2048 + 3072, wantRead: true},
+		{name: "unreadable plugged size, nothing known", region: 3072, readErr: errUnreadable, wantMiB: 2048 + 3072, wantRead: true},
+		{name: "unreadable, only a plugged size seen", region: 3072, lastPlugged: 512, readErr: errUnreadable, wantMiB: 2048 + 512, wantRead: true},
+		{name: "unreadable plugged size", region: 3072, requested: 1024, readErr: errUnreadable, wantMiB: 2048 + 1024, wantRead: true},
+		{name: "unreadable, a larger plugged size seen", region: 3072, requested: 1024, lastPlugged: 2048, readErr: errUnreadable, wantMiB: 2048 + 2048, wantRead: true},
+		{name: "more plugged than recorded", region: 6144, requested: 0, plugged: 4096, wantMiB: 2048 + 4096, wantRead: true, wantAbove: 1},
 		{name: "no region", region: 0, wantMiB: 2048},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			s := diskAdmissionTestServer(t, 0, 64*testGiB)
+			above := &countingCounter{}
+			s.pluggedAboveRequested = above
 			sbx := diskAdmissionSandbox(t, "sbx-disk-hotplug", 27, 2048)
 			sbx.SetMemoryHotplugMBForTest(tc.region)
+			sbx.SetMemoryHotplugRequestedMBForTest(tc.requested)
+			sbx.SetLastPluggedMBForTest(tc.lastPlugged)
 			read := false
 			sbx.SetPluggedMemoryReaderForTest(func(ctx context.Context) (int64, error) {
 				read = true
@@ -481,7 +501,19 @@ func TestAdmitPauseDisk_BoundsTheHotplugRegionByWhatIsPlugged(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, pauseSnapfileAllowance+tc.wantMiB*testMiB, s.buildDisk.reserved.Load())
 			assert.Equal(t, tc.wantRead, read)
+			assert.Equal(t, tc.wantAbove, above.n.Load(), "more plugged than recorded is counted")
 			reservation.Release()
 		})
 	}
+}
+
+// countingCounter counts its adds.
+type countingCounter struct {
+	noop.Int64Counter
+
+	n atomic.Int64
+}
+
+func (c *countingCounter) Add(_ context.Context, incr int64, _ ...metric.AddOption) {
+	c.n.Add(incr)
 }

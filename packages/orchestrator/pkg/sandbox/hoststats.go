@@ -36,7 +36,7 @@ func initializeHostStatsCollector(
 			BuildID:     runtime.BuildID,
 			TeamID:      teamID,
 			VCPUCount:   config.Vcpu,
-			MemoryMB:    config.RamMB,
+			MemoryMB:    sbx.MemoryMB(),
 			SandboxType: runtime.SandboxType,
 		},
 		hostStatsDelivery,

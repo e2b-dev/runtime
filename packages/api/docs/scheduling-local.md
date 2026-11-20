@@ -1,13 +1,21 @@
 # Scheduling client TLS
 
-The API TLS configuration has a dedicated scheduling hop. Its caller selects
-whether to construct the hop with the `schedulingHop` argument to `newServiceTLS`.
-The API startup leaves it unselected until the backend integration is added.
+The API TLS configuration has a dedicated scheduling hop. The API startup
+selects it when `SCHEDULING_API_GRPC_ADDRESS` is set. That address is the gRPC
+target of scheduling-api: a plain `host:port`, or a schemed target such as
+`dns:///name:port` for a headless Service. The API then prepares a connection
+to it through the hop. The sandbox store sends a call over it when the
+`sandbox-state-scheduling-api` feature flag is on for the call's team or
+sandbox; otherwise the call goes to the API's own Redis store. Without
+LaunchDarkly the flag reads `SANDBOX_STATE_SCHEDULING_API` and defaults to off.
+The calls that have no team (expired items, teams with sandboxes, node sync)
+always stay on Redis.
 
 When selected, the hop defaults to mTLS. It uses the shared certificate loader
 and verifies the server's SPIFFE identity. Configure these settings:
 
 ```dotenv
+SCHEDULING_API_GRPC_ADDRESS=localhost:50051
 E2B_TLS_CERT_FILE=/path/to/api.crt
 E2B_TLS_KEY_FILE=/path/to/api.key
 E2B_TLS_CA_FILE=/path/to/ca.crt

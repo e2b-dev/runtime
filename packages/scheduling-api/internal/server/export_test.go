@@ -1,6 +1,7 @@
 package server
 
 const (
-	UnaryDeadline = unaryDeadline
-	MaxWait       = maxWait
+	UnaryDeadline  = unaryDeadline
+	MaxWait        = maxWait
+	MaxMessageSize = maxMessageSize
 )

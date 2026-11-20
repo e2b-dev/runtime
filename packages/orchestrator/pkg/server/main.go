@@ -100,6 +100,7 @@ type Server struct {
 	sandboxCrashedCounter     metric.Int64Counter
 	guestRebootsCounter       metric.Int64Counter
 	memoryHotplugRefused      metric.Int64Counter
+	pluggedAboveRequested     metric.Int64Counter
 	guestRebootDuration       metric.Int64Histogram
 	sandboxCheckpointCounter  metric.Int64Counter
 	sandboxCheckpointDuration metric.Int64Histogram
@@ -240,6 +241,11 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to register memory hotplug refusals counter: %w", err)
 	}
 	server.memoryHotplugRefused = memoryHotplugRefused
+	pluggedAboveRequested, err := telemetry.GetCounter(meter, telemetry.SandboxMemoryHotplugPluggedAboveRequested)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register the plugged-above-requested counter: %w", err)
+	}
+	server.pluggedAboveRequested = pluggedAboveRequested
 
 	guestRebootDuration, err := telemetry.GetHistogram(meter, telemetry.GuestRebootDurationHistogramName)
 	if err != nil {
@@ -399,7 +405,7 @@ func New(ctx context.Context, cfg ServiceConfig) (*Server, error) {
 
 			for _, item := range server.sandboxFactory.Sandboxes.Items() {
 				cpuAllocated += item.Config.Vcpu
-				memoryAllocated += item.Config.RamMB * 1024 * 1024
+				memoryAllocated += item.MemoryMB() * 1024 * 1024
 				diskAllocated += item.Config.TotalDiskSizeMB * 1024 * 1024
 			}
 

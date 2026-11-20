@@ -47,3 +47,34 @@ func TestMemoryHotplugMBRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, decoded.MemoryHotplugMB, "a template without a region reads as none")
 }
+
+// The requested size travels with the region: a resume keeps it unless asked for more, and a
+// cold boot of the lineage plugs back to it.
+func TestCopyConstructorsCarryMemoryHotplugRequestedMB(t *testing.T) {
+	t.Parallel()
+
+	base := Template{Version: CurrentVersion, Template: TemplateMetadata{BuildID: "build-1"}, MemoryHotplugMB: 3072, MemoryHotplugRequestedMB: 2048}
+
+	tests := map[string]Template{
+		"SameVersionTemplate":          base.SameVersionTemplate(TemplateMetadata{BuildID: "build-2"}),
+		"NewVersionTemplate":           base.NewVersionTemplate(TemplateMetadata{BuildID: "build-2"}),
+		"WithPrefetch":                 base.WithPrefetch(&Prefetch{Memory: &MemoryPrefetchMapping{}}),
+		"WithMemoryHotplugMB":          base.WithMemoryHotplugMB(3072),
+		"WithMemoryHotplugRequestedMB": Template{Version: CurrentVersion}.WithMemoryHotplugRequestedMB(2048),
+	}
+	for name, got := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, int64(2048), got.MemoryHotplugRequestedMB)
+		})
+	}
+
+	assert.Zero(t, base.BasedOn(FromTemplate{Alias: "a", BuildID: "build-0"}).MemoryHotplugRequestedMB,
+		"a from-template build plugs nothing")
+
+	reader, err := serialize(Template{Version: CurrentVersion, Template: TemplateMetadata{BuildID: "b"}}.WithMemoryHotplugRequestedMB(512))
+	require.NoError(t, err)
+	decoded, err := deserialize(reader)
+	require.NoError(t, err)
+	assert.Equal(t, int64(512), decoded.MemoryHotplugRequestedMB)
+}

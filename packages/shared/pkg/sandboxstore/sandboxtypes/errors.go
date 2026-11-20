@@ -90,6 +90,16 @@ func (PauseRefusedCheckpointInProgressError) Is(target error) bool {
 	return ok
 }
 
+// TransitionFailedError is the failure a transition's starter finished it
+// with, as its waiters read it back from the store.
+type TransitionFailedError struct {
+	Message string
+}
+
+func (e *TransitionFailedError) Error() string {
+	return "transition failed: " + e.Message
+}
+
 // RestoredTransitionError is what the starter of a refused pause finishes
 // its transition with and what the pause's waiters receive: it is
 // ErrTransitionRestored to every existing check and carries the refusal, so
@@ -199,6 +209,10 @@ var ErrHoldConflict = errors.New("the sandbox record cannot be held by this oper
 // longer holds this caller's token: it expired, and another caller may have
 // written. Nothing was written, so a retry can succeed.
 var ErrLockLost = errors.New("the record's lock was lost before the update was written")
+
+// ErrInvalidUpdateToken refuses an UpdateToken that no BeginUpdate of this
+// backend returned; nothing is written or released.
+var ErrInvalidUpdateToken = errors.New("invalid update token")
 
 // ErrNotHeld means the record is not held by the operation.
 var ErrNotHeld = errors.New("the sandbox record is not held by this operation")

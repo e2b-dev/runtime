@@ -127,6 +127,7 @@ func TestPrepareColdBootCarriesTheRegion(t *testing.T) {
 			boot, err := (&Factory{featureFlags: ff}).prepareColdBoot(t.Context(), tpl, meta, config, sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + uuid.NewString()})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, config.MemoryHotplugMB)
+			assert.Zero(t, config.MemoryMB, "a lineage that plugged nothing asks for nothing")
 
 			memfile, err := boot.template.Memfile(t.Context())
 			require.NoError(t, err)
@@ -185,5 +186,184 @@ func TestResumeIgnoresBootOnlyRegionRules(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+func TestRequestedMemoryHotplug(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		memoryMB, ramMB, regionMB, recordedMB int64
+		memoryResume                          bool
+		want                                  int64
+		wantErr                               error
+	}{
+		"no size keeps the snapshot's request":     {memoryMB: 0, ramMB: 1024, regionMB: 3072, recordedMB: 2048, memoryResume: true, want: 2048},
+		"boot RAM only":                            {memoryMB: 1024, ramMB: 1024, regionMB: 3072, want: 0},
+		"grow within the region":                   {memoryMB: 3072, ramMB: 1024, regionMB: 3072, recordedMB: 1024, memoryResume: true, want: 2048},
+		"the whole region":                         {memoryMB: 4096, ramMB: 1024, regionMB: 3072, want: 3072},
+		"below boot RAM":                           {memoryMB: 512, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryHotplugUnsupported},
+		"beyond the region":                        {memoryMB: 4224, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryHotplugUnsupported},
+		"no region":                                {memoryMB: 2048, ramMB: 1024, regionMB: 0, wantErr: fc.ErrMemoryHotplugUnsupported},
+		"not a whole block":                        {memoryMB: 2049, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryHotplugUnsupported},
+		"whole blocks but not a whole slot":        {memoryMB: 1024 + 1026, ramMB: 1024, regionMB: 3072, wantErr: fc.ErrMemoryRequestInvalid},
+		"a memory resume cannot shrink":            {memoryMB: 2048, ramMB: 1024, regionMB: 3072, recordedMB: 2048, memoryResume: true, wantErr: fc.ErrMemoryHotplugShrink},
+		"a cold boot may come back smaller":        {memoryMB: 2048, ramMB: 1024, regionMB: 3072, recordedMB: 2048, want: 1024},
+		"a memory resume may keep its size":        {memoryMB: 3072, ramMB: 1024, regionMB: 3072, recordedMB: 2048, memoryResume: true, want: 2048},
+		"a memory resume without a region at boot": {memoryMB: 1024, ramMB: 1024, regionMB: 0, memoryResume: true, want: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := requestedMemoryHotplug(tc.memoryMB, tc.ramMB, tc.regionMB, tc.recordedMB, tc.memoryResume)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	_, err := requestedMemoryHotplug(2048, 1024, 3072, 2048, true)
+	assert.Equal(t, "shrink", fc.MemoryHotplugRefusalReason(err))
+	_, err = requestedMemoryHotplug(9999, 1024, 3072, 0, false)
+	assert.Equal(t, "invalid_request", fc.MemoryHotplugRefusalReason(err))
+	require.ErrorIs(t, err, fc.ErrMemoryRequestInvalid)
+}
+
+// A memory resume reads the restored device only when it has one and has a size to check: a named
+// size over a region, or a recorded one. A template without a region may name boot RAM alone, which
+// sets no target, so the restore makes no hotplug query.
+func TestRestoreMemoryHotplugTarget(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		regionMB, memoryMB, requestMB int64
+		want                          int64
+		explicit, ok                  bool
+	}{
+		"no region, boot RAM named":           {regionMB: 0, memoryMB: 1024, requestMB: 0},
+		"no region, nothing named":            {regionMB: 0},
+		"a region, nothing named or recorded": {regionMB: 3072},
+		"a region, boot RAM named":            {regionMB: 3072, memoryMB: 1024, requestMB: 0, want: 0, explicit: true, ok: true},
+		"a region, a size named":              {regionMB: 3072, memoryMB: 3072, requestMB: 2048, want: 2048, explicit: true, ok: true},
+		"a region, a recorded size kept":      {regionMB: 3072, requestMB: 2048, want: 2048, ok: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			target, explicit, ok := restoreMemoryHotplugTarget(tc.regionMB, tc.memoryMB, tc.requestMB)
+			assert.Equal(t, tc.ok, ok)
+			assert.Equal(t, tc.want, target)
+			assert.Equal(t, tc.explicit, explicit)
+		})
+	}
+}
+
+// A memory resume that asks for less memory than its snapshot had, or for more than the region
+// holds, is refused before any resource is taken.
+func TestResumeRefusesAnUnfitMemoryRequestBeforeResourceInitialization(t *testing.T) {
+	t.Parallel()
+
+	meta := metadata.Template{VcpuCount: 2, MemoryHotplugMB: 3072, MemoryHotplugRequestedMB: 2048}
+	for name, tc := range map[string]struct {
+		memoryMB int64
+		want     error
+	}{
+		"shrink":            {memoryMB: 2048, want: fc.ErrMemoryHotplugShrink},
+		"beyond the region": {memoryMB: 8192, want: fc.ErrMemoryHotplugUnsupported},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := (&Factory{}).ResumeSandbox(
+				t.Context(),
+				capacityOnlyTemplate{meta: meta},
+				NewConfig(Config{Vcpu: 2, RamMB: 1024, MemoryMB: tc.memoryMB, FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.17-0.4.1"}}),
+				sandboxtypes.RuntimeMetadata{},
+				time.Time{},
+				time.Time{},
+				nil,
+			)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+
+	_, err := (&Factory{}).ResumeSandbox(
+		t.Context(),
+		capacityOnlyTemplate{meta: metadata.Template{VcpuCount: 2}},
+		NewConfig(Config{Vcpu: 2, RamMB: 1024, MemoryMB: 2048, FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.17-0.4.1"}}),
+		sandboxtypes.RuntimeMetadata{},
+		time.Time{},
+		time.Time{},
+		nil,
+	)
+	require.ErrorIs(t, err, fc.ErrMemoryRequestInvalid, "a template without a region cannot grow")
+}
+
+// A cold boot refuses a memory request its region cannot hold, before any resource is taken.
+func TestColdBootRefusesAnUnfitMemoryRequest(t *testing.T) {
+	t.Parallel()
+
+	_, err := coldBootMemoryHotplug(NewConfig(Config{RamMB: 1024, MemoryMB: 8192, MemoryHotplugMB: 3072, FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.17-0.4.1"}}), fc.ProcessOptions{})
+	require.ErrorIs(t, err, fc.ErrMemoryHotplugUnsupported)
+	_, err = coldBootMemoryHotplug(NewConfig(Config{RamMB: 1024, MemoryMB: 2048, MemoryHotplugMB: 3072, FirecrackerConfig: fc.Config{FirecrackerVersion: "v1.17-0.4.1"}}), fc.ProcessOptions{})
+	require.NoError(t, err)
+}
+
+// A reboot plugs back what its lineage had asked for unless the request names a size.
+func TestPrepareColdBootPlugsBackTheRecordedRequest(t *testing.T) {
+	t.Parallel()
+
+	ff, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ff.Close(context.WithoutCancel(t.Context())) })
+
+	for name, tc := range map[string]struct{ memoryMB, recorded, want int64 }{
+		"plugs back the recorded request": {memoryMB: 0, recorded: 2048, want: 3072},
+		"an explicit size wins":           {memoryMB: 2048, recorded: 2048, want: 2048},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tpl := templatemocks.NewMockTemplate(t)
+			tpl.EXPECT().Files().Return(storage.CachePaths{Paths: storage.Paths{BuildID: uuid.NewString()}})
+			config := NewConfig(Config{
+				Vcpu: 2, RamMB: 1024, HugePages: true, MemoryMB: tc.memoryMB,
+				Envd:              EnvdMetadata{Version: "0.5.0"},
+				FirecrackerConfig: fc.Config{KernelVersion: "vmlinux-6.1.158", FirecrackerVersion: "v1.17-0.4.1"},
+			})
+			meta := metadata.Template{Version: metadata.CurrentVersion, VcpuCount: 2, MemoryHotplugMB: 3072, MemoryHotplugRequestedMB: tc.recorded}
+
+			_, err := (&Factory{featureFlags: ff}).prepareColdBoot(t.Context(), tpl, meta, config, sandboxtypes.RuntimeMetadata{SandboxID: "sbx-" + uuid.NewString()})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, config.MemoryMB)
+		})
+	}
+}
+
+func TestMemoryHotplugUnusedBytes(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name                          string
+		regionMB, slotMB, requestedMB int64
+		wantMB                        int64
+	}{
+		{"no region", 0, 0, 0, 0},
+		{"nothing requested leaves the whole region unmapped", 3072, 0, 0, 3072},
+		{"a whole-slot request maps exactly it", 3072, 0, 1024, 2048},
+		{"a partial slot is mapped whole", 3072, 0, 1026, 1920},
+		{"the whole region maps everything", 3072, 0, 3072, 0},
+		{"the device's slot size wins over the default", 3072, 512, 1100, 1536},
+		{"a larger slot rounds further", 3072, 1024, 1026, 1024},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.wantMB<<20, memoryHotplugUnusedBytes(tt.regionMB, tt.slotMB, tt.requestedMB))
+		})
 	}
 }

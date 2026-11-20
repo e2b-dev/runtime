@@ -126,7 +126,7 @@ func (o *fsObject) WriteTo(ctx context.Context, dst io.Writer) (n int64, err err
 	start := time.Now()
 	defer func() { RecordReadBlob(ctx, time.Since(start), n, o.path, SourceFS, err) }()
 
-	handle, err := o.getHandle(true)
+	handle, err := o.getHandle()
 	if err != nil {
 		return 0, err
 	}
@@ -225,7 +225,7 @@ func (o *fsObject) storeFileCompressed(ctx context.Context, localPath string, cf
 }
 
 func (o *fsObject) openRangeReader(_ context.Context, off, length int64) (RangeReader, error) {
-	f, err := o.getHandle(true)
+	f, err := o.getHandle()
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (o *fsObject) Size(ctx context.Context) (_ int64, err error) {
 	start := time.Now()
 	defer func() { RecordReadSize(ctx, time.Since(start), o.objType, SourceFS, err) }()
 
-	handle, err := o.getHandle(true)
+	handle, err := o.getHandle()
 	if err != nil {
 		return 0, err
 	}
@@ -293,25 +293,26 @@ func ValidateUploadToken(key []byte, path string, expires int64, token string) b
 	return hmac.Equal([]byte(expected), []byte(token))
 }
 
-func (o *fsObject) getHandle(checkExistence bool) (*os.File, error) {
-	if checkExistence {
-		info, err := os.Stat(o.path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, ErrObjectNotExist
-			}
-
-			return nil, err
+func (o *fsObject) getHandle() (*os.File, error) {
+	handle, err := os.Open(o.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrObjectNotExist
 		}
 
-		if info.IsDir() {
-			return nil, fmt.Errorf("path %s is a directory", o.path)
-		}
+		return nil, err
 	}
 
-	handle, err := os.OpenFile(o.path, os.O_RDWR|os.O_CREATE, 0o644)
+	info, err := handle.Stat()
 	if err != nil {
+		handle.Close()
+
 		return nil, err
+	}
+	if info.IsDir() {
+		handle.Close()
+
+		return nil, fmt.Errorf("path %s is a directory", o.path)
 	}
 
 	return handle, nil

@@ -222,19 +222,32 @@ func TestWaitForStartWaiting(t *testing.T) {
 func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage) scheduling.ReservationServiceClient {
 	t.Helper()
 
-	grpcServer, err := server.New(telemetry.NewNoopClient(), mtls.ServerConfig{Mode: mtls.StaticMode(mtls.ModeOff)}, reservations)
+	return scheduling.NewReservationServiceClient(newConn(t, reservations, &fakeState{}))
+}
+
+func newStateClient(t *testing.T, storage sandboxtypes.Storage, options ...grpc.DialOption) scheduling.StateServiceClient {
+	t.Helper()
+
+	return scheduling.NewStateServiceClient(newConn(t, &fakeStorage{}, storage, options...))
+}
+
+func newConn(t *testing.T, reservations sandboxtypes.ReservationStorage, storage sandboxtypes.Storage, options ...grpc.DialOption) *grpc.ClientConn {
+	t.Helper()
+
+	grpcServer, err := server.New(telemetry.NewNoopClient(), mtls.ServerConfig{Mode: mtls.StaticMode(mtls.ModeOff)}, reservations, storage)
 	require.NoError(t, err)
 	listener := bufconn.Listen(1 << 20)
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 
-	conn, err := grpc.NewClient("passthrough:///bufconn",
+	conn, err := grpc.NewClient("passthrough:///bufconn", append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}, options...)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, conn.Close()) })
 
-	return scheduling.NewReservationServiceClient(conn)
+	return conn
 }
 
 func callContext(t *testing.T) context.Context {

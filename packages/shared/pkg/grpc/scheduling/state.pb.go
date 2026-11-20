@@ -10,6 +10,7 @@ import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	unsafe "unsafe"
@@ -25,31 +26,49 @@ const (
 type StateOutcome int32
 
 const (
-	StateOutcome_STATE_OUTCOME_UNSPECIFIED        StateOutcome = 0
-	StateOutcome_STATE_OUTCOME_OK                 StateOutcome = 1
-	StateOutcome_STATE_OUTCOME_NOT_FOUND          StateOutcome = 2
-	StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD     StateOutcome = 3
-	StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH StateOutcome = 4
-	StateOutcome_STATE_OUTCOME_LOCK_LOST          StateOutcome = 5
+	StateOutcome_STATE_OUTCOME_UNSPECIFIED          StateOutcome = 0
+	StateOutcome_STATE_OUTCOME_OK                   StateOutcome = 1
+	StateOutcome_STATE_OUTCOME_NOT_FOUND            StateOutcome = 2
+	StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD       StateOutcome = 3
+	StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH   StateOutcome = 4
+	StateOutcome_STATE_OUTCOME_LOCK_LOST            StateOutcome = 5
+	StateOutcome_STATE_OUTCOME_HOLD_CONFLICT        StateOutcome = 6
+	StateOutcome_STATE_OUTCOME_NOT_HELD             StateOutcome = 7
+	StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS StateOutcome = 8
+	StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED  StateOutcome = 9
+	StateOutcome_STATE_OUTCOME_INVALID_TRANSITION   StateOutcome = 10
+	StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT     StateOutcome = 11
 )
 
 // Enum value maps for StateOutcome.
 var (
 	StateOutcome_name = map[int32]string{
-		0: "STATE_OUTCOME_UNSPECIFIED",
-		1: "STATE_OUTCOME_OK",
-		2: "STATE_OUTCOME_NOT_FOUND",
-		3: "STATE_OUTCOME_LIFECYCLE_HELD",
-		4: "STATE_OUTCOME_EXECUTION_MISMATCH",
-		5: "STATE_OUTCOME_LOCK_LOST",
+		0:  "STATE_OUTCOME_UNSPECIFIED",
+		1:  "STATE_OUTCOME_OK",
+		2:  "STATE_OUTCOME_NOT_FOUND",
+		3:  "STATE_OUTCOME_LIFECYCLE_HELD",
+		4:  "STATE_OUTCOME_EXECUTION_MISMATCH",
+		5:  "STATE_OUTCOME_LOCK_LOST",
+		6:  "STATE_OUTCOME_HOLD_CONFLICT",
+		7:  "STATE_OUTCOME_NOT_HELD",
+		8:  "STATE_OUTCOME_EVICTION_IN_PROGRESS",
+		9:  "STATE_OUTCOME_EVICTION_NOT_NEEDED",
+		10: "STATE_OUTCOME_INVALID_TRANSITION",
+		11: "STATE_OUTCOME_RESTORE_CONFLICT",
 	}
 	StateOutcome_value = map[string]int32{
-		"STATE_OUTCOME_UNSPECIFIED":        0,
-		"STATE_OUTCOME_OK":                 1,
-		"STATE_OUTCOME_NOT_FOUND":          2,
-		"STATE_OUTCOME_LIFECYCLE_HELD":     3,
-		"STATE_OUTCOME_EXECUTION_MISMATCH": 4,
-		"STATE_OUTCOME_LOCK_LOST":          5,
+		"STATE_OUTCOME_UNSPECIFIED":          0,
+		"STATE_OUTCOME_OK":                   1,
+		"STATE_OUTCOME_NOT_FOUND":            2,
+		"STATE_OUTCOME_LIFECYCLE_HELD":       3,
+		"STATE_OUTCOME_EXECUTION_MISMATCH":   4,
+		"STATE_OUTCOME_LOCK_LOST":            5,
+		"STATE_OUTCOME_HOLD_CONFLICT":        6,
+		"STATE_OUTCOME_NOT_HELD":             7,
+		"STATE_OUTCOME_EVICTION_IN_PROGRESS": 8,
+		"STATE_OUTCOME_EVICTION_NOT_NEEDED":  9,
+		"STATE_OUTCOME_INVALID_TRANSITION":   10,
+		"STATE_OUTCOME_RESTORE_CONFLICT":     11,
 	}
 )
 
@@ -122,6 +141,110 @@ func (SandboxState) Type() protoreflect.EnumType {
 }
 
 func (x SandboxState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+type RemoveAction int32
+
+const (
+	RemoveAction_REMOVE_ACTION_UNSPECIFIED RemoveAction = 0
+	RemoveAction_REMOVE_ACTION_PAUSE       RemoveAction = 1
+	RemoveAction_REMOVE_ACTION_KILL        RemoveAction = 2
+	RemoveAction_REMOVE_ACTION_SNAPSHOT    RemoveAction = 3
+)
+
+// Enum value maps for RemoveAction.
+var (
+	RemoveAction_name = map[int32]string{
+		0: "REMOVE_ACTION_UNSPECIFIED",
+		1: "REMOVE_ACTION_PAUSE",
+		2: "REMOVE_ACTION_KILL",
+		3: "REMOVE_ACTION_SNAPSHOT",
+	}
+	RemoveAction_value = map[string]int32{
+		"REMOVE_ACTION_UNSPECIFIED": 0,
+		"REMOVE_ACTION_PAUSE":       1,
+		"REMOVE_ACTION_KILL":        2,
+		"REMOVE_ACTION_SNAPSHOT":    3,
+	}
+)
+
+func (x RemoveAction) Enum() *RemoveAction {
+	p := new(RemoveAction)
+	*p = x
+	return p
+}
+
+func (x RemoveAction) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RemoveAction) Descriptor() protoreflect.EnumDescriptor {
+	return file_e2b_scheduling_v1_state_proto_enumTypes[2].Descriptor()
+}
+
+func (RemoveAction) Type() protoreflect.EnumType {
+	return &file_e2b_scheduling_v1_state_proto_enumTypes[2]
+}
+
+func (x RemoveAction) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+type WaitForTransitionOutcome int32
+
+const (
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_UNSPECIFIED WaitForTransitionOutcome = 0
+	// The transition succeeded, or none was open.
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED WaitForTransitionOutcome = 1
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING  WaitForTransitionOutcome = 2
+	// The node refused and the sandbox runs again. An empty refusal_class is
+	// the busy-node refusal.
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED WaitForTransitionOutcome = 3
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED   WaitForTransitionOutcome = 4
+	// The record is another team's.
+	WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND WaitForTransitionOutcome = 5
+)
+
+// Enum value maps for WaitForTransitionOutcome.
+var (
+	WaitForTransitionOutcome_name = map[int32]string{
+		0: "WAIT_FOR_TRANSITION_OUTCOME_UNSPECIFIED",
+		1: "WAIT_FOR_TRANSITION_OUTCOME_FINISHED",
+		2: "WAIT_FOR_TRANSITION_OUTCOME_WAITING",
+		3: "WAIT_FOR_TRANSITION_OUTCOME_RESTORED",
+		4: "WAIT_FOR_TRANSITION_OUTCOME_FAILED",
+		5: "WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND",
+	}
+	WaitForTransitionOutcome_value = map[string]int32{
+		"WAIT_FOR_TRANSITION_OUTCOME_UNSPECIFIED": 0,
+		"WAIT_FOR_TRANSITION_OUTCOME_FINISHED":    1,
+		"WAIT_FOR_TRANSITION_OUTCOME_WAITING":     2,
+		"WAIT_FOR_TRANSITION_OUTCOME_RESTORED":    3,
+		"WAIT_FOR_TRANSITION_OUTCOME_FAILED":      4,
+		"WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND":   5,
+	}
+)
+
+func (x WaitForTransitionOutcome) Enum() *WaitForTransitionOutcome {
+	p := new(WaitForTransitionOutcome)
+	*p = x
+	return p
+}
+
+func (x WaitForTransitionOutcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WaitForTransitionOutcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_e2b_scheduling_v1_state_proto_enumTypes[3].Descriptor()
+}
+
+func (WaitForTransitionOutcome) Type() protoreflect.EnumType {
+	return &file_e2b_scheduling_v1_state_proto_enumTypes[3]
+}
+
+func (x WaitForTransitionOutcome) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
@@ -1284,11 +1407,2696 @@ func (b0 ReconcileResponse_builder) Build() *ReconcileResponse {
 	return m0
 }
 
+type BeginUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *BeginUpdateRequest) Reset() {
+	*x = BeginUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginUpdateRequest) ProtoMessage() {}
+
+func (x *BeginUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *BeginUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *BeginUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *BeginUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+type BeginUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+}
+
+func (b0 BeginUpdateRequest_builder) Build() *BeginUpdateRequest {
+	m0 := &BeginUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	return m0
+}
+
+type BeginUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	xxx_hidden_Token   []byte                 `protobuf:"bytes,3,opt,name=token"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *BeginUpdateResponse) Reset() {
+	*x = BeginUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginUpdateResponse) ProtoMessage() {}
+
+func (x *BeginUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *BeginUpdateResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *BeginUpdateResponse) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *BeginUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *BeginUpdateResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+func (x *BeginUpdateResponse) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+type BeginUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+	// A secret of this update, valid only with its team_id and sandbox_id: it
+	// writes under and releases the lock.
+	Token []byte
+}
+
+func (b0 BeginUpdateResponse_builder) Build() *BeginUpdateResponse {
+	m0 := &BeginUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	x.xxx_hidden_Token = b.Token
+	return m0
+}
+
+type CommitUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_Token     []byte                 `protobuf:"bytes,3,opt,name=token"`
+	xxx_hidden_Record    []byte                 `protobuf:"bytes,4,opt,name=record"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *CommitUpdateRequest) Reset() {
+	*x = CommitUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitUpdateRequest) ProtoMessage() {}
+
+func (x *CommitUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CommitUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *CommitUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *CommitUpdateRequest) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *CommitUpdateRequest) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *CommitUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *CommitUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *CommitUpdateRequest) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+func (x *CommitUpdateRequest) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type CommitUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	Token     []byte
+	// Its team and sandbox IDs must be team_id and sandbox_id.
+	Record []byte
+}
+
+func (b0 CommitUpdateRequest_builder) Build() *CommitUpdateRequest {
+	m0 := &CommitUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_Token = b.Token
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
+type CommitUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *CommitUpdateResponse) Reset() {
+	*x = CommitUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitUpdateResponse) ProtoMessage() {}
+
+func (x *CommitUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *CommitUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *CommitUpdateResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *CommitUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *CommitUpdateResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type CommitUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+}
+
+func (b0 CommitUpdateResponse_builder) Build() *CommitUpdateResponse {
+	m0 := &CommitUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
+type AbortUpdateRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_Token     []byte                 `protobuf:"bytes,3,opt,name=token"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AbortUpdateRequest) Reset() {
+	*x = AbortUpdateRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortUpdateRequest) ProtoMessage() {}
+
+func (x *AbortUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *AbortUpdateRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *AbortUpdateRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *AbortUpdateRequest) GetToken() []byte {
+	if x != nil {
+		return x.xxx_hidden_Token
+	}
+	return nil
+}
+
+func (x *AbortUpdateRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *AbortUpdateRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *AbortUpdateRequest) SetToken(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Token = v
+}
+
+type AbortUpdateRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	Token     []byte
+}
+
+func (b0 AbortUpdateRequest_builder) Build() *AbortUpdateRequest {
+	m0 := &AbortUpdateRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_Token = b.Token
+	return m0
+}
+
+type AbortUpdateResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *AbortUpdateResponse) Reset() {
+	*x = AbortUpdateResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AbortUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AbortUpdateResponse) ProtoMessage() {}
+
+func (x *AbortUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *AbortUpdateResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *AbortUpdateResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type AbortUpdateResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 AbortUpdateResponse_builder) Build() *AbortUpdateResponse {
+	m0 := &AbortUpdateResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type Hold struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId       string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId    string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_ExecutionId  string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId"`
+	xxx_hidden_SourceNodeId string                 `protobuf:"bytes,4,opt,name=source_node_id,json=sourceNodeId"`
+	xxx_hidden_Id           string                 `protobuf:"bytes,5,opt,name=id"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *Hold) Reset() {
+	*x = Hold{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Hold) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Hold) ProtoMessage() {}
+
+func (x *Hold) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *Hold) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *Hold) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *Hold) GetExecutionId() string {
+	if x != nil {
+		return x.xxx_hidden_ExecutionId
+	}
+	return ""
+}
+
+func (x *Hold) GetSourceNodeId() string {
+	if x != nil {
+		return x.xxx_hidden_SourceNodeId
+	}
+	return ""
+}
+
+func (x *Hold) GetId() string {
+	if x != nil {
+		return x.xxx_hidden_Id
+	}
+	return ""
+}
+
+func (x *Hold) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *Hold) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *Hold) SetExecutionId(v string) {
+	x.xxx_hidden_ExecutionId = v
+}
+
+func (x *Hold) SetSourceNodeId(v string) {
+	x.xxx_hidden_SourceNodeId = v
+}
+
+func (x *Hold) SetId(v string) {
+	x.xxx_hidden_Id = v
+}
+
+type Hold_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId       string
+	SandboxId    string
+	ExecutionId  string
+	SourceNodeId string
+	Id           string
+}
+
+func (b0 Hold_builder) Build() *Hold {
+	m0 := &Hold{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_ExecutionId = b.ExecutionId
+	x.xxx_hidden_SourceNodeId = b.SourceNodeId
+	x.xxx_hidden_Id = b.Id
+	return m0
+}
+
+type HoldExecutionRequest struct {
+	state            protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold  *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	xxx_hidden_Until *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=until"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *HoldExecutionRequest) Reset() {
+	*x = HoldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HoldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HoldExecutionRequest) ProtoMessage() {}
+
+func (x *HoldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *HoldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *HoldExecutionRequest) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.xxx_hidden_Until
+	}
+	return nil
+}
+
+func (x *HoldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *HoldExecutionRequest) SetUntil(v *timestamppb.Timestamp) {
+	x.xxx_hidden_Until = v
+}
+
+func (x *HoldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *HoldExecutionRequest) HasUntil() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Until != nil
+}
+
+func (x *HoldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+func (x *HoldExecutionRequest) ClearUntil() {
+	x.xxx_hidden_Until = nil
+}
+
+type HoldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold  *Hold
+	Until *timestamppb.Timestamp
+}
+
+func (b0 HoldExecutionRequest_builder) Build() *HoldExecutionRequest {
+	m0 := &HoldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	x.xxx_hidden_Until = b.Until
+	return m0
+}
+
+type HoldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *HoldExecutionResponse) Reset() {
+	*x = HoldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HoldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HoldExecutionResponse) ProtoMessage() {}
+
+func (x *HoldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *HoldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *HoldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type HoldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 HoldExecutionResponse_builder) Build() *HoldExecutionResponse {
+	m0 := &HoldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type MoveHeldExecutionRequest struct {
+	state             protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold   *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	xxx_hidden_NodeId string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *MoveHeldExecutionRequest) Reset() {
+	*x = MoveHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MoveHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MoveHeldExecutionRequest) ProtoMessage() {}
+
+func (x *MoveHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *MoveHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *MoveHeldExecutionRequest) GetNodeId() string {
+	if x != nil {
+		return x.xxx_hidden_NodeId
+	}
+	return ""
+}
+
+func (x *MoveHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *MoveHeldExecutionRequest) SetNodeId(v string) {
+	x.xxx_hidden_NodeId = v
+}
+
+func (x *MoveHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *MoveHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type MoveHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold   *Hold
+	NodeId string
+}
+
+func (b0 MoveHeldExecutionRequest_builder) Build() *MoveHeldExecutionRequest {
+	m0 := &MoveHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	x.xxx_hidden_NodeId = b.NodeId
+	return m0
+}
+
+type MoveHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Moved   bool                   `protobuf:"varint,2,opt,name=moved"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *MoveHeldExecutionResponse) Reset() {
+	*x = MoveHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MoveHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MoveHeldExecutionResponse) ProtoMessage() {}
+
+func (x *MoveHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *MoveHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *MoveHeldExecutionResponse) GetMoved() bool {
+	if x != nil {
+		return x.xxx_hidden_Moved
+	}
+	return false
+}
+
+func (x *MoveHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *MoveHeldExecutionResponse) SetMoved(v bool) {
+	x.xxx_hidden_Moved = v
+}
+
+type MoveHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Moved   bool
+}
+
+func (b0 MoveHeldExecutionResponse_builder) Build() *MoveHeldExecutionResponse {
+	m0 := &MoveHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Moved = b.Moved
+	return m0
+}
+
+type ReleaseHeldExecutionRequest struct {
+	state           protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ReleaseHeldExecutionRequest) Reset() {
+	*x = ReleaseHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseHeldExecutionRequest) ProtoMessage() {}
+
+func (x *ReleaseHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ReleaseHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *ReleaseHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *ReleaseHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *ReleaseHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type ReleaseHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold *Hold
+}
+
+func (b0 ReleaseHeldExecutionRequest_builder) Build() *ReleaseHeldExecutionRequest {
+	m0 := &ReleaseHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	return m0
+}
+
+type ReleaseHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ReleaseHeldExecutionResponse) Reset() {
+	*x = ReleaseHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseHeldExecutionResponse) ProtoMessage() {}
+
+func (x *ReleaseHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ReleaseHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *ReleaseHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type ReleaseHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 ReleaseHeldExecutionResponse_builder) Build() *ReleaseHeldExecutionResponse {
+	m0 := &ReleaseHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type RemoveHeldExecutionRequest struct {
+	state           protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Hold *Hold                  `protobuf:"bytes,1,opt,name=hold"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RemoveHeldExecutionRequest) Reset() {
+	*x = RemoveHeldExecutionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveHeldExecutionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveHeldExecutionRequest) ProtoMessage() {}
+
+func (x *RemoveHeldExecutionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RemoveHeldExecutionRequest) GetHold() *Hold {
+	if x != nil {
+		return x.xxx_hidden_Hold
+	}
+	return nil
+}
+
+func (x *RemoveHeldExecutionRequest) SetHold(v *Hold) {
+	x.xxx_hidden_Hold = v
+}
+
+func (x *RemoveHeldExecutionRequest) HasHold() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Hold != nil
+}
+
+func (x *RemoveHeldExecutionRequest) ClearHold() {
+	x.xxx_hidden_Hold = nil
+}
+
+type RemoveHeldExecutionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Hold *Hold
+}
+
+func (b0 RemoveHeldExecutionRequest_builder) Build() *RemoveHeldExecutionRequest {
+	m0 := &RemoveHeldExecutionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Hold = b.Hold
+	return m0
+}
+
+type RemoveHeldExecutionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record  []byte                 `protobuf:"bytes,2,opt,name=record"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *RemoveHeldExecutionResponse) Reset() {
+	*x = RemoveHeldExecutionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveHeldExecutionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveHeldExecutionResponse) ProtoMessage() {}
+
+func (x *RemoveHeldExecutionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RemoveHeldExecutionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *RemoveHeldExecutionResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *RemoveHeldExecutionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *RemoveHeldExecutionResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+type RemoveHeldExecutionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+	Record  []byte
+}
+
+func (b0 RemoveHeldExecutionResponse_builder) Build() *RemoveHeldExecutionResponse {
+	m0 := &RemoveHeldExecutionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	return m0
+}
+
+type RemoveOptions struct {
+	state                         protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Action             RemoveAction           `protobuf:"varint,1,opt,name=action,enum=e2b.scheduling.v1.RemoveAction"`
+	xxx_hidden_Eviction           bool                   `protobuf:"varint,2,opt,name=eviction"`
+	xxx_hidden_Reason             string                 `protobuf:"bytes,3,opt,name=reason"`
+	xxx_hidden_FilesystemOnly     bool                   `protobuf:"varint,4,opt,name=filesystem_only,json=filesystemOnly"`
+	xxx_hidden_RequireEnvdHealthy bool                   `protobuf:"varint,5,opt,name=require_envd_healthy,json=requireEnvdHealthy"`
+	xxx_hidden_ExpectExecutionId  string                 `protobuf:"bytes,6,opt,name=expect_execution_id,json=expectExecutionId"`
+	xxx_hidden_BeforeEndTime      bool                   `protobuf:"varint,7,opt,name=before_end_time,json=beforeEndTime"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
+}
+
+func (x *RemoveOptions) Reset() {
+	*x = RemoveOptions{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveOptions) ProtoMessage() {}
+
+func (x *RemoveOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RemoveOptions) GetAction() RemoveAction {
+	if x != nil {
+		return x.xxx_hidden_Action
+	}
+	return RemoveAction_REMOVE_ACTION_UNSPECIFIED
+}
+
+func (x *RemoveOptions) GetEviction() bool {
+	if x != nil {
+		return x.xxx_hidden_Eviction
+	}
+	return false
+}
+
+func (x *RemoveOptions) GetReason() string {
+	if x != nil {
+		return x.xxx_hidden_Reason
+	}
+	return ""
+}
+
+func (x *RemoveOptions) GetFilesystemOnly() bool {
+	if x != nil {
+		return x.xxx_hidden_FilesystemOnly
+	}
+	return false
+}
+
+func (x *RemoveOptions) GetRequireEnvdHealthy() bool {
+	if x != nil {
+		return x.xxx_hidden_RequireEnvdHealthy
+	}
+	return false
+}
+
+func (x *RemoveOptions) GetExpectExecutionId() string {
+	if x != nil {
+		return x.xxx_hidden_ExpectExecutionId
+	}
+	return ""
+}
+
+func (x *RemoveOptions) GetBeforeEndTime() bool {
+	if x != nil {
+		return x.xxx_hidden_BeforeEndTime
+	}
+	return false
+}
+
+func (x *RemoveOptions) SetAction(v RemoveAction) {
+	x.xxx_hidden_Action = v
+}
+
+func (x *RemoveOptions) SetEviction(v bool) {
+	x.xxx_hidden_Eviction = v
+}
+
+func (x *RemoveOptions) SetReason(v string) {
+	x.xxx_hidden_Reason = v
+}
+
+func (x *RemoveOptions) SetFilesystemOnly(v bool) {
+	x.xxx_hidden_FilesystemOnly = v
+}
+
+func (x *RemoveOptions) SetRequireEnvdHealthy(v bool) {
+	x.xxx_hidden_RequireEnvdHealthy = v
+}
+
+func (x *RemoveOptions) SetExpectExecutionId(v string) {
+	x.xxx_hidden_ExpectExecutionId = v
+}
+
+func (x *RemoveOptions) SetBeforeEndTime(v bool) {
+	x.xxx_hidden_BeforeEndTime = v
+}
+
+type RemoveOptions_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Action             RemoveAction
+	Eviction           bool
+	Reason             string
+	FilesystemOnly     bool
+	RequireEnvdHealthy bool
+	// Empty removes whatever execution is stored.
+	ExpectExecutionId string
+	BeforeEndTime     bool
+}
+
+func (b0 RemoveOptions_builder) Build() *RemoveOptions {
+	m0 := &RemoveOptions{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Action = b.Action
+	x.xxx_hidden_Eviction = b.Eviction
+	x.xxx_hidden_Reason = b.Reason
+	x.xxx_hidden_FilesystemOnly = b.FilesystemOnly
+	x.xxx_hidden_RequireEnvdHealthy = b.RequireEnvdHealthy
+	x.xxx_hidden_ExpectExecutionId = b.ExpectExecutionId
+	x.xxx_hidden_BeforeEndTime = b.BeforeEndTime
+	return m0
+}
+
+type StateTransition struct {
+	state                      protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Record          []byte                 `protobuf:"bytes,1,opt,name=record"`
+	xxx_hidden_OriginalEndTime *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=original_end_time,json=originalEndTime"`
+	xxx_hidden_Id              string                 `protobuf:"bytes,3,opt,name=id"`
+	xxx_hidden_InFlightId      string                 `protobuf:"bytes,4,opt,name=in_flight_id,json=inFlightId"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *StateTransition) Reset() {
+	*x = StateTransition{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StateTransition) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StateTransition) ProtoMessage() {}
+
+func (x *StateTransition) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *StateTransition) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *StateTransition) GetOriginalEndTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.xxx_hidden_OriginalEndTime
+	}
+	return nil
+}
+
+func (x *StateTransition) GetId() string {
+	if x != nil {
+		return x.xxx_hidden_Id
+	}
+	return ""
+}
+
+func (x *StateTransition) GetInFlightId() string {
+	if x != nil {
+		return x.xxx_hidden_InFlightId
+	}
+	return ""
+}
+
+func (x *StateTransition) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+func (x *StateTransition) SetOriginalEndTime(v *timestamppb.Timestamp) {
+	x.xxx_hidden_OriginalEndTime = v
+}
+
+func (x *StateTransition) SetId(v string) {
+	x.xxx_hidden_Id = v
+}
+
+func (x *StateTransition) SetInFlightId(v string) {
+	x.xxx_hidden_InFlightId = v
+}
+
+func (x *StateTransition) HasOriginalEndTime() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_OriginalEndTime != nil
+}
+
+func (x *StateTransition) ClearOriginalEndTime() {
+	x.xxx_hidden_OriginalEndTime = nil
+}
+
+type StateTransition_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Record []byte
+	// Absent unless this transition was started by the call that returned it.
+	OriginalEndTime *timestamppb.Timestamp
+	Id              string
+	InFlightId      string
+}
+
+func (b0 StateTransition_builder) Build() *StateTransition {
+	m0 := &StateTransition{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Record = b.Record
+	x.xxx_hidden_OriginalEndTime = b.OriginalEndTime
+	x.xxx_hidden_Id = b.Id
+	x.xxx_hidden_InFlightId = b.InFlightId
+	return m0
+}
+
+type BeginRemovingRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId    string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_Options   *RemoveOptions         `protobuf:"bytes,3,opt,name=options"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *BeginRemovingRequest) Reset() {
+	*x = BeginRemovingRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginRemovingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginRemovingRequest) ProtoMessage() {}
+
+func (x *BeginRemovingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginRemovingRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *BeginRemovingRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *BeginRemovingRequest) GetOptions() *RemoveOptions {
+	if x != nil {
+		return x.xxx_hidden_Options
+	}
+	return nil
+}
+
+func (x *BeginRemovingRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *BeginRemovingRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *BeginRemovingRequest) SetOptions(v *RemoveOptions) {
+	x.xxx_hidden_Options = v
+}
+
+func (x *BeginRemovingRequest) HasOptions() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Options != nil
+}
+
+func (x *BeginRemovingRequest) ClearOptions() {
+	x.xxx_hidden_Options = nil
+}
+
+type BeginRemovingRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	Options   *RemoveOptions
+}
+
+func (b0 BeginRemovingRequest_builder) Build() *BeginRemovingRequest {
+	m0 := &BeginRemovingRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_Options = b.Options
+	return m0
+}
+
+type BeginRemovingResponse struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome      StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Transition   *StateTransition       `protobuf:"bytes,2,opt,name=transition"`
+	xxx_hidden_AlreadyDone  bool                   `protobuf:"varint,3,opt,name=already_done,json=alreadyDone"`
+	xxx_hidden_CurrentState SandboxState           `protobuf:"varint,4,opt,name=current_state,json=currentState,enum=e2b.scheduling.v1.SandboxState"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *BeginRemovingResponse) Reset() {
+	*x = BeginRemovingResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginRemovingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginRemovingResponse) ProtoMessage() {}
+
+func (x *BeginRemovingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *BeginRemovingResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *BeginRemovingResponse) GetTransition() *StateTransition {
+	if x != nil {
+		return x.xxx_hidden_Transition
+	}
+	return nil
+}
+
+func (x *BeginRemovingResponse) GetAlreadyDone() bool {
+	if x != nil {
+		return x.xxx_hidden_AlreadyDone
+	}
+	return false
+}
+
+func (x *BeginRemovingResponse) GetCurrentState() SandboxState {
+	if x != nil {
+		return x.xxx_hidden_CurrentState
+	}
+	return SandboxState_SANDBOX_STATE_UNSPECIFIED
+}
+
+func (x *BeginRemovingResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *BeginRemovingResponse) SetTransition(v *StateTransition) {
+	x.xxx_hidden_Transition = v
+}
+
+func (x *BeginRemovingResponse) SetAlreadyDone(v bool) {
+	x.xxx_hidden_AlreadyDone = v
+}
+
+func (x *BeginRemovingResponse) SetCurrentState(v SandboxState) {
+	x.xxx_hidden_CurrentState = v
+}
+
+func (x *BeginRemovingResponse) HasTransition() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Transition != nil
+}
+
+func (x *BeginRemovingResponse) ClearTransition() {
+	x.xxx_hidden_Transition = nil
+}
+
+type BeginRemovingResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome      StateOutcome
+	Transition   *StateTransition
+	AlreadyDone  bool
+	CurrentState SandboxState
+}
+
+func (b0 BeginRemovingResponse_builder) Build() *BeginRemovingResponse {
+	m0 := &BeginRemovingResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Transition = b.Transition
+	x.xxx_hidden_AlreadyDone = b.AlreadyDone
+	x.xxx_hidden_CurrentState = b.CurrentState
+	return m0
+}
+
+type TransitionResult struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Failed       bool                   `protobuf:"varint,1,opt,name=failed"`
+	xxx_hidden_Error        string                 `protobuf:"bytes,2,opt,name=error"`
+	xxx_hidden_SkipRestore  bool                   `protobuf:"varint,3,opt,name=skip_restore,json=skipRestore"`
+	xxx_hidden_Restored     bool                   `protobuf:"varint,4,opt,name=restored"`
+	xxx_hidden_RefusalClass string                 `protobuf:"bytes,5,opt,name=refusal_class,json=refusalClass"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *TransitionResult) Reset() {
+	*x = TransitionResult{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransitionResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransitionResult) ProtoMessage() {}
+
+func (x *TransitionResult) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *TransitionResult) GetFailed() bool {
+	if x != nil {
+		return x.xxx_hidden_Failed
+	}
+	return false
+}
+
+func (x *TransitionResult) GetError() string {
+	if x != nil {
+		return x.xxx_hidden_Error
+	}
+	return ""
+}
+
+func (x *TransitionResult) GetSkipRestore() bool {
+	if x != nil {
+		return x.xxx_hidden_SkipRestore
+	}
+	return false
+}
+
+func (x *TransitionResult) GetRestored() bool {
+	if x != nil {
+		return x.xxx_hidden_Restored
+	}
+	return false
+}
+
+func (x *TransitionResult) GetRefusalClass() string {
+	if x != nil {
+		return x.xxx_hidden_RefusalClass
+	}
+	return ""
+}
+
+func (x *TransitionResult) SetFailed(v bool) {
+	x.xxx_hidden_Failed = v
+}
+
+func (x *TransitionResult) SetError(v string) {
+	x.xxx_hidden_Error = v
+}
+
+func (x *TransitionResult) SetSkipRestore(v bool) {
+	x.xxx_hidden_SkipRestore = v
+}
+
+func (x *TransitionResult) SetRestored(v bool) {
+	x.xxx_hidden_Restored = v
+}
+
+func (x *TransitionResult) SetRefusalClass(v string) {
+	x.xxx_hidden_RefusalClass = v
+}
+
+type TransitionResult_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Failed       bool
+	Error        string
+	SkipRestore  bool
+	Restored     bool
+	RefusalClass string
+}
+
+func (b0 TransitionResult_builder) Build() *TransitionResult {
+	m0 := &TransitionResult{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Failed = b.Failed
+	x.xxx_hidden_Error = b.Error
+	x.xxx_hidden_SkipRestore = b.SkipRestore
+	x.xxx_hidden_Restored = b.Restored
+	x.xxx_hidden_RefusalClass = b.RefusalClass
+	return m0
+}
+
+type FinishTransitionRequest struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId       string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId    string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_TransitionId string                 `protobuf:"bytes,3,opt,name=transition_id,json=transitionId"`
+	xxx_hidden_Action       RemoveAction           `protobuf:"varint,4,opt,name=action,enum=e2b.scheduling.v1.RemoveAction"`
+	xxx_hidden_Result       *TransitionResult      `protobuf:"bytes,5,opt,name=result"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *FinishTransitionRequest) Reset() {
+	*x = FinishTransitionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FinishTransitionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FinishTransitionRequest) ProtoMessage() {}
+
+func (x *FinishTransitionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *FinishTransitionRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *FinishTransitionRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *FinishTransitionRequest) GetTransitionId() string {
+	if x != nil {
+		return x.xxx_hidden_TransitionId
+	}
+	return ""
+}
+
+func (x *FinishTransitionRequest) GetAction() RemoveAction {
+	if x != nil {
+		return x.xxx_hidden_Action
+	}
+	return RemoveAction_REMOVE_ACTION_UNSPECIFIED
+}
+
+func (x *FinishTransitionRequest) GetResult() *TransitionResult {
+	if x != nil {
+		return x.xxx_hidden_Result
+	}
+	return nil
+}
+
+func (x *FinishTransitionRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *FinishTransitionRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *FinishTransitionRequest) SetTransitionId(v string) {
+	x.xxx_hidden_TransitionId = v
+}
+
+func (x *FinishTransitionRequest) SetAction(v RemoveAction) {
+	x.xxx_hidden_Action = v
+}
+
+func (x *FinishTransitionRequest) SetResult(v *TransitionResult) {
+	x.xxx_hidden_Result = v
+}
+
+func (x *FinishTransitionRequest) HasResult() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Result != nil
+}
+
+func (x *FinishTransitionRequest) ClearResult() {
+	x.xxx_hidden_Result = nil
+}
+
+type FinishTransitionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId       string
+	SandboxId    string
+	TransitionId string
+	Action       RemoveAction
+	Result       *TransitionResult
+}
+
+func (b0 FinishTransitionRequest_builder) Build() *FinishTransitionRequest {
+	m0 := &FinishTransitionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_TransitionId = b.TransitionId
+	x.xxx_hidden_Action = b.Action
+	x.xxx_hidden_Result = b.Result
+	return m0
+}
+
+type FinishTransitionResponse struct {
+	state              protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *FinishTransitionResponse) Reset() {
+	*x = FinishTransitionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FinishTransitionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FinishTransitionResponse) ProtoMessage() {}
+
+func (x *FinishTransitionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *FinishTransitionResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *FinishTransitionResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+type FinishTransitionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome StateOutcome
+}
+
+func (b0 FinishTransitionResponse_builder) Build() *FinishTransitionResponse {
+	m0 := &FinishTransitionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	return m0
+}
+
+type RestoreOptions struct {
+	state                  protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_RetryAfter  *durationpb.Duration   `protobuf:"bytes,1,opt,name=retry_after,json=retryAfter"`
+	xxx_hidden_HoldOnly    bool                   `protobuf:"varint,2,opt,name=hold_only,json=holdOnly"`
+	xxx_hidden_EnvdRefusal bool                   `protobuf:"varint,3,opt,name=envd_refusal,json=envdRefusal"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *RestoreOptions) Reset() {
+	*x = RestoreOptions{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreOptions) ProtoMessage() {}
+
+func (x *RestoreOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RestoreOptions) GetRetryAfter() *durationpb.Duration {
+	if x != nil {
+		return x.xxx_hidden_RetryAfter
+	}
+	return nil
+}
+
+func (x *RestoreOptions) GetHoldOnly() bool {
+	if x != nil {
+		return x.xxx_hidden_HoldOnly
+	}
+	return false
+}
+
+func (x *RestoreOptions) GetEnvdRefusal() bool {
+	if x != nil {
+		return x.xxx_hidden_EnvdRefusal
+	}
+	return false
+}
+
+func (x *RestoreOptions) SetRetryAfter(v *durationpb.Duration) {
+	x.xxx_hidden_RetryAfter = v
+}
+
+func (x *RestoreOptions) SetHoldOnly(v bool) {
+	x.xxx_hidden_HoldOnly = v
+}
+
+func (x *RestoreOptions) SetEnvdRefusal(v bool) {
+	x.xxx_hidden_EnvdRefusal = v
+}
+
+func (x *RestoreOptions) HasRetryAfter() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_RetryAfter != nil
+}
+
+func (x *RestoreOptions) ClearRetryAfter() {
+	x.xxx_hidden_RetryAfter = nil
+}
+
+type RestoreOptions_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	RetryAfter  *durationpb.Duration
+	HoldOnly    bool
+	EnvdRefusal bool
+}
+
+func (b0 RestoreOptions_builder) Build() *RestoreOptions {
+	m0 := &RestoreOptions{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_RetryAfter = b.RetryAfter
+	x.xxx_hidden_HoldOnly = b.HoldOnly
+	x.xxx_hidden_EnvdRefusal = b.EnvdRefusal
+	return m0
+}
+
+type RestoreRunningRequest struct {
+	state                 protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Transition *StateTransition       `protobuf:"bytes,1,opt,name=transition"`
+	xxx_hidden_Options    *RestoreOptions        `protobuf:"bytes,2,opt,name=options"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *RestoreRunningRequest) Reset() {
+	*x = RestoreRunningRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreRunningRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreRunningRequest) ProtoMessage() {}
+
+func (x *RestoreRunningRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RestoreRunningRequest) GetTransition() *StateTransition {
+	if x != nil {
+		return x.xxx_hidden_Transition
+	}
+	return nil
+}
+
+func (x *RestoreRunningRequest) GetOptions() *RestoreOptions {
+	if x != nil {
+		return x.xxx_hidden_Options
+	}
+	return nil
+}
+
+func (x *RestoreRunningRequest) SetTransition(v *StateTransition) {
+	x.xxx_hidden_Transition = v
+}
+
+func (x *RestoreRunningRequest) SetOptions(v *RestoreOptions) {
+	x.xxx_hidden_Options = v
+}
+
+func (x *RestoreRunningRequest) HasTransition() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Transition != nil
+}
+
+func (x *RestoreRunningRequest) HasOptions() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Options != nil
+}
+
+func (x *RestoreRunningRequest) ClearTransition() {
+	x.xxx_hidden_Transition = nil
+}
+
+func (x *RestoreRunningRequest) ClearOptions() {
+	x.xxx_hidden_Options = nil
+}
+
+type RestoreRunningRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Transition *StateTransition
+	Options    *RestoreOptions
+}
+
+func (b0 RestoreRunningRequest_builder) Build() *RestoreRunningRequest {
+	m0 := &RestoreRunningRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Transition = b.Transition
+	x.xxx_hidden_Options = b.Options
+	return m0
+}
+
+type RestoreRunningResponse struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome      StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record       []byte                 `protobuf:"bytes,2,opt,name=record"`
+	xxx_hidden_CurrentState SandboxState           `protobuf:"varint,3,opt,name=current_state,json=currentState,enum=e2b.scheduling.v1.SandboxState"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *RestoreRunningResponse) Reset() {
+	*x = RestoreRunningResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreRunningResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreRunningResponse) ProtoMessage() {}
+
+func (x *RestoreRunningResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RestoreRunningResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *RestoreRunningResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *RestoreRunningResponse) GetCurrentState() SandboxState {
+	if x != nil {
+		return x.xxx_hidden_CurrentState
+	}
+	return SandboxState_SANDBOX_STATE_UNSPECIFIED
+}
+
+func (x *RestoreRunningResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *RestoreRunningResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+func (x *RestoreRunningResponse) SetCurrentState(v SandboxState) {
+	x.xxx_hidden_CurrentState = v
+}
+
+type RestoreRunningResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome      StateOutcome
+	Record       []byte
+	CurrentState SandboxState
+}
+
+func (b0 RestoreRunningResponse_builder) Build() *RestoreRunningResponse {
+	m0 := &RestoreRunningResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	x.xxx_hidden_CurrentState = b.CurrentState
+	return m0
+}
+
+type NetworkPlacement struct {
+	state                     protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ExecutionId    string                 `protobuf:"bytes,1,opt,name=execution_id,json=executionId"`
+	xxx_hidden_NetworkMode    string                 `protobuf:"bytes,2,opt,name=network_mode,json=networkMode"`
+	xxx_hidden_RouterId       string                 `protobuf:"bytes,3,opt,name=router_id,json=routerId"`
+	xxx_hidden_IngressAddress string                 `protobuf:"bytes,4,opt,name=ingress_address,json=ingressAddress"`
+	xxx_hidden_IngressPort    uint32                 `protobuf:"varint,5,opt,name=ingress_port,json=ingressPort"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *NetworkPlacement) Reset() {
+	*x = NetworkPlacement{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkPlacement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkPlacement) ProtoMessage() {}
+
+func (x *NetworkPlacement) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *NetworkPlacement) GetExecutionId() string {
+	if x != nil {
+		return x.xxx_hidden_ExecutionId
+	}
+	return ""
+}
+
+func (x *NetworkPlacement) GetNetworkMode() string {
+	if x != nil {
+		return x.xxx_hidden_NetworkMode
+	}
+	return ""
+}
+
+func (x *NetworkPlacement) GetRouterId() string {
+	if x != nil {
+		return x.xxx_hidden_RouterId
+	}
+	return ""
+}
+
+func (x *NetworkPlacement) GetIngressAddress() string {
+	if x != nil {
+		return x.xxx_hidden_IngressAddress
+	}
+	return ""
+}
+
+func (x *NetworkPlacement) GetIngressPort() uint32 {
+	if x != nil {
+		return x.xxx_hidden_IngressPort
+	}
+	return 0
+}
+
+func (x *NetworkPlacement) SetExecutionId(v string) {
+	x.xxx_hidden_ExecutionId = v
+}
+
+func (x *NetworkPlacement) SetNetworkMode(v string) {
+	x.xxx_hidden_NetworkMode = v
+}
+
+func (x *NetworkPlacement) SetRouterId(v string) {
+	x.xxx_hidden_RouterId = v
+}
+
+func (x *NetworkPlacement) SetIngressAddress(v string) {
+	x.xxx_hidden_IngressAddress = v
+}
+
+func (x *NetworkPlacement) SetIngressPort(v uint32) {
+	x.xxx_hidden_IngressPort = v
+}
+
+type NetworkPlacement_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	ExecutionId    string
+	NetworkMode    string
+	RouterId       string
+	IngressAddress string
+	IngressPort    uint32
+}
+
+func (b0 NetworkPlacement_builder) Build() *NetworkPlacement {
+	m0 := &NetworkPlacement{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_ExecutionId = b.ExecutionId
+	x.xxx_hidden_NetworkMode = b.NetworkMode
+	x.xxx_hidden_RouterId = b.RouterId
+	x.xxx_hidden_IngressAddress = b.IngressAddress
+	x.xxx_hidden_IngressPort = b.IngressPort
+	return m0
+}
+
+type RestoreCheckpointedRequest struct {
+	state                 protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Transition *StateTransition       `protobuf:"bytes,1,opt,name=transition"`
+	xxx_hidden_Placement  *NetworkPlacement      `protobuf:"bytes,2,opt,name=placement"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *RestoreCheckpointedRequest) Reset() {
+	*x = RestoreCheckpointedRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreCheckpointedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreCheckpointedRequest) ProtoMessage() {}
+
+func (x *RestoreCheckpointedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RestoreCheckpointedRequest) GetTransition() *StateTransition {
+	if x != nil {
+		return x.xxx_hidden_Transition
+	}
+	return nil
+}
+
+func (x *RestoreCheckpointedRequest) GetPlacement() *NetworkPlacement {
+	if x != nil {
+		return x.xxx_hidden_Placement
+	}
+	return nil
+}
+
+func (x *RestoreCheckpointedRequest) SetTransition(v *StateTransition) {
+	x.xxx_hidden_Transition = v
+}
+
+func (x *RestoreCheckpointedRequest) SetPlacement(v *NetworkPlacement) {
+	x.xxx_hidden_Placement = v
+}
+
+func (x *RestoreCheckpointedRequest) HasTransition() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Transition != nil
+}
+
+func (x *RestoreCheckpointedRequest) HasPlacement() bool {
+	if x == nil {
+		return false
+	}
+	return x.xxx_hidden_Placement != nil
+}
+
+func (x *RestoreCheckpointedRequest) ClearTransition() {
+	x.xxx_hidden_Transition = nil
+}
+
+func (x *RestoreCheckpointedRequest) ClearPlacement() {
+	x.xxx_hidden_Placement = nil
+}
+
+type RestoreCheckpointedRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Transition *StateTransition
+	// Absent means the worker's own network.
+	Placement *NetworkPlacement
+}
+
+func (b0 RestoreCheckpointedRequest_builder) Build() *RestoreCheckpointedRequest {
+	m0 := &RestoreCheckpointedRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Transition = b.Transition
+	x.xxx_hidden_Placement = b.Placement
+	return m0
+}
+
+type RestoreCheckpointedResponse struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_Outcome      StateOutcome           `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.StateOutcome"`
+	xxx_hidden_Record       []byte                 `protobuf:"bytes,2,opt,name=record"`
+	xxx_hidden_CurrentState SandboxState           `protobuf:"varint,3,opt,name=current_state,json=currentState,enum=e2b.scheduling.v1.SandboxState"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *RestoreCheckpointedResponse) Reset() {
+	*x = RestoreCheckpointedResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreCheckpointedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreCheckpointedResponse) ProtoMessage() {}
+
+func (x *RestoreCheckpointedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RestoreCheckpointedResponse) GetOutcome() StateOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return StateOutcome_STATE_OUTCOME_UNSPECIFIED
+}
+
+func (x *RestoreCheckpointedResponse) GetRecord() []byte {
+	if x != nil {
+		return x.xxx_hidden_Record
+	}
+	return nil
+}
+
+func (x *RestoreCheckpointedResponse) GetCurrentState() SandboxState {
+	if x != nil {
+		return x.xxx_hidden_CurrentState
+	}
+	return SandboxState_SANDBOX_STATE_UNSPECIFIED
+}
+
+func (x *RestoreCheckpointedResponse) SetOutcome(v StateOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *RestoreCheckpointedResponse) SetRecord(v []byte) {
+	if v == nil {
+		v = []byte{}
+	}
+	x.xxx_hidden_Record = v
+}
+
+func (x *RestoreCheckpointedResponse) SetCurrentState(v SandboxState) {
+	x.xxx_hidden_CurrentState = v
+}
+
+type RestoreCheckpointedResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome      StateOutcome
+	Record       []byte
+	CurrentState SandboxState
+}
+
+func (b0 RestoreCheckpointedResponse_builder) Build() *RestoreCheckpointedResponse {
+	m0 := &RestoreCheckpointedResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_Record = b.Record
+	x.xxx_hidden_CurrentState = b.CurrentState
+	return m0
+}
+
+type WaitForTransitionRequest struct {
+	state                   protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_TeamId       string                 `protobuf:"bytes,1,opt,name=team_id,json=teamId"`
+	xxx_hidden_SandboxId    string                 `protobuf:"bytes,2,opt,name=sandbox_id,json=sandboxId"`
+	xxx_hidden_TransitionId string                 `protobuf:"bytes,3,opt,name=transition_id,json=transitionId"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *WaitForTransitionRequest) Reset() {
+	*x = WaitForTransitionRequest{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitForTransitionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitForTransitionRequest) ProtoMessage() {}
+
+func (x *WaitForTransitionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *WaitForTransitionRequest) GetTeamId() string {
+	if x != nil {
+		return x.xxx_hidden_TeamId
+	}
+	return ""
+}
+
+func (x *WaitForTransitionRequest) GetSandboxId() string {
+	if x != nil {
+		return x.xxx_hidden_SandboxId
+	}
+	return ""
+}
+
+func (x *WaitForTransitionRequest) GetTransitionId() string {
+	if x != nil {
+		return x.xxx_hidden_TransitionId
+	}
+	return ""
+}
+
+func (x *WaitForTransitionRequest) SetTeamId(v string) {
+	x.xxx_hidden_TeamId = v
+}
+
+func (x *WaitForTransitionRequest) SetSandboxId(v string) {
+	x.xxx_hidden_SandboxId = v
+}
+
+func (x *WaitForTransitionRequest) SetTransitionId(v string) {
+	x.xxx_hidden_TransitionId = v
+}
+
+type WaitForTransitionRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	TeamId    string
+	SandboxId string
+	// Empty waits for the sandbox's open transition, if any.
+	TransitionId string
+}
+
+func (b0 WaitForTransitionRequest_builder) Build() *WaitForTransitionRequest {
+	m0 := &WaitForTransitionRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_TeamId = b.TeamId
+	x.xxx_hidden_SandboxId = b.SandboxId
+	x.xxx_hidden_TransitionId = b.TransitionId
+	return m0
+}
+
+type WaitForTransitionResponse struct {
+	state                   protoimpl.MessageState   `protogen:"opaque.v1"`
+	xxx_hidden_Outcome      WaitForTransitionOutcome `protobuf:"varint,1,opt,name=outcome,enum=e2b.scheduling.v1.WaitForTransitionOutcome"`
+	xxx_hidden_TransitionId string                   `protobuf:"bytes,2,opt,name=transition_id,json=transitionId"`
+	xxx_hidden_RefusalClass string                   `protobuf:"bytes,3,opt,name=refusal_class,json=refusalClass"`
+	xxx_hidden_Failure      string                   `protobuf:"bytes,4,opt,name=failure"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *WaitForTransitionResponse) Reset() {
+	*x = WaitForTransitionResponse{}
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitForTransitionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitForTransitionResponse) ProtoMessage() {}
+
+func (x *WaitForTransitionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_scheduling_v1_state_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *WaitForTransitionResponse) GetOutcome() WaitForTransitionOutcome {
+	if x != nil {
+		return x.xxx_hidden_Outcome
+	}
+	return WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_UNSPECIFIED
+}
+
+func (x *WaitForTransitionResponse) GetTransitionId() string {
+	if x != nil {
+		return x.xxx_hidden_TransitionId
+	}
+	return ""
+}
+
+func (x *WaitForTransitionResponse) GetRefusalClass() string {
+	if x != nil {
+		return x.xxx_hidden_RefusalClass
+	}
+	return ""
+}
+
+func (x *WaitForTransitionResponse) GetFailure() string {
+	if x != nil {
+		return x.xxx_hidden_Failure
+	}
+	return ""
+}
+
+func (x *WaitForTransitionResponse) SetOutcome(v WaitForTransitionOutcome) {
+	x.xxx_hidden_Outcome = v
+}
+
+func (x *WaitForTransitionResponse) SetTransitionId(v string) {
+	x.xxx_hidden_TransitionId = v
+}
+
+func (x *WaitForTransitionResponse) SetRefusalClass(v string) {
+	x.xxx_hidden_RefusalClass = v
+}
+
+func (x *WaitForTransitionResponse) SetFailure(v string) {
+	x.xxx_hidden_Failure = v
+}
+
+type WaitForTransitionResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	Outcome      WaitForTransitionOutcome
+	TransitionId string
+	RefusalClass string
+	Failure      string
+}
+
+func (b0 WaitForTransitionResponse_builder) Build() *WaitForTransitionResponse {
+	m0 := &WaitForTransitionResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_Outcome = b.Outcome
+	x.xxx_hidden_TransitionId = b.TransitionId
+	x.xxx_hidden_RefusalClass = b.RefusalClass
+	x.xxx_hidden_Failure = b.Failure
+	return m0
+}
+
 var File_e2b_scheduling_v1_state_proto protoreflect.FileDescriptor
 
 const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
 	"\n" +
-	"\x1de2b/scheduling/v1/state.proto\x12\x11e2b.scheduling.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"$\n" +
+	"\x1de2b/scheduling/v1/state.proto\x12\x11e2b.scheduling.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"$\n" +
 	"\n" +
 	"AddRequest\x12\x16\n" +
 	"\x06record\x18\x01 \x01(\fR\x06record\"H\n" +
@@ -1352,20 +4160,180 @@ const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x02 \x01(\tR\tsandboxId\"R\n" +
 	"\x11ReconcileResponse\x12=\n" +
-	"\aorphans\x18\x01 \x03(\v2#.e2b.scheduling.v1.SandboxReferenceR\aorphans*\xc5\x01\n" +
+	"\aorphans\x18\x01 \x03(\v2#.e2b.scheduling.v1.SandboxReferenceR\aorphans\"g\n" +
+	"\x12BeginUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\"~\n" +
+	"\x13BeginUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\fR\x05token\"\x9f\x01\n" +
+	"\x13CommitUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12\x1d\n" +
+	"\x05token\x18\x03 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\x05token\x12\x16\n" +
+	"\x06record\x18\x04 \x01(\fR\x06record\"i\n" +
+	"\x14CommitUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\"\x86\x01\n" +
+	"\x12AbortUpdateRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12\x1d\n" +
+	"\x05token\x18\x03 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\x05token\"P\n" +
+	"\x13AbortUpdateResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"\xbb\x01\n" +
+	"\x04Hold\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12!\n" +
+	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x12$\n" +
+	"\x0esource_node_id\x18\x04 \x01(\tR\fsourceNodeId\x12\x17\n" +
+	"\x02id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\"\xe8\x01\n" +
+	"\x14HoldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\x128\n" +
+	"\x05until\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x05until:a\xbaH^\x1a\\\n" +
+	"\x13hold.source_node_id\x12%hold.source_node_id must not be empty\x1a\x1ethis.hold.source_node_id != ''\"R\n" +
+	"\x15HoldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"q\n" +
+	"\x18MoveHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\x12 \n" +
+	"\anode_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06nodeId\"l\n" +
+	"\x19MoveHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x14\n" +
+	"\x05moved\x18\x02 \x01(\bR\x05moved\"R\n" +
+	"\x1bReleaseHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\"Y\n" +
+	"\x1cReleaseHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"Q\n" +
+	"\x1aRemoveHeldExecutionRequest\x123\n" +
+	"\x04hold\x18\x01 \x01(\v2\x17.e2b.scheduling.v1.HoldB\x06\xbaH\x03\xc8\x01\x01R\x04hold\"p\n" +
+	"\x1bRemoveHeldExecutionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\"\xbb\x02\n" +
+	"\rRemoveOptions\x12C\n" +
+	"\x06action\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.RemoveActionB\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06action\x12\x1a\n" +
+	"\beviction\x18\x02 \x01(\bR\beviction\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12'\n" +
+	"\x0ffilesystem_only\x18\x04 \x01(\bR\x0efilesystemOnly\x120\n" +
+	"\x14require_envd_healthy\x18\x05 \x01(\bR\x12requireEnvdHealthy\x12.\n" +
+	"\x13expect_execution_id\x18\x06 \x01(\tR\x11expectExecutionId\x12&\n" +
+	"\x0fbefore_end_time\x18\a \x01(\bR\rbeforeEndTime\"\xa3\x01\n" +
+	"\x0fStateTransition\x12\x16\n" +
+	"\x06record\x18\x01 \x01(\fR\x06record\x12F\n" +
+	"\x11original_end_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x0foriginalEndTime\x12\x0e\n" +
+	"\x02id\x18\x03 \x01(\tR\x02id\x12 \n" +
+	"\fin_flight_id\x18\x04 \x01(\tR\n" +
+	"inFlightId\"\xad\x01\n" +
+	"\x14BeginRemovingRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12B\n" +
+	"\aoptions\x18\x03 \x01(\v2 .e2b.scheduling.v1.RemoveOptionsB\x06\xbaH\x03\xc8\x01\x01R\aoptions\"\xff\x01\n" +
+	"\x15BeginRemovingResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12B\n" +
+	"\n" +
+	"transition\x18\x02 \x01(\v2\".e2b.scheduling.v1.StateTransitionR\n" +
+	"transition\x12!\n" +
+	"\falready_done\x18\x03 \x01(\bR\valreadyDone\x12D\n" +
+	"\rcurrent_state\x18\x04 \x01(\x0e2\x1f.e2b.scheduling.v1.SandboxStateR\fcurrentState\"\xa4\x01\n" +
+	"\x10TransitionResult\x12\x16\n" +
+	"\x06failed\x18\x01 \x01(\bR\x06failed\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12!\n" +
+	"\fskip_restore\x18\x03 \x01(\bR\vskipRestore\x12\x1a\n" +
+	"\brestored\x18\x04 \x01(\bR\brestored\x12#\n" +
+	"\rrefusal_class\x18\x05 \x01(\tR\frefusalClass\"\x9c\x02\n" +
+	"\x17FinishTransitionRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12,\n" +
+	"\rtransition_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\ftransitionId\x12C\n" +
+	"\x06action\x18\x04 \x01(\x0e2\x1f.e2b.scheduling.v1.RemoveActionB\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06action\x12;\n" +
+	"\x06result\x18\x05 \x01(\v2#.e2b.scheduling.v1.TransitionResultR\x06result\"U\n" +
+	"\x18FinishTransitionResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\"\x8c\x01\n" +
+	"\x0eRestoreOptions\x12:\n" +
+	"\vretry_after\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\n" +
+	"retryAfter\x12\x1b\n" +
+	"\thold_only\x18\x02 \x01(\bR\bholdOnly\x12!\n" +
+	"\fenvd_refusal\x18\x03 \x01(\bR\venvdRefusal\"\xa0\x01\n" +
+	"\x15RestoreRunningRequest\x12J\n" +
+	"\n" +
+	"transition\x18\x01 \x01(\v2\".e2b.scheduling.v1.StateTransitionB\x06\xbaH\x03\xc8\x01\x01R\n" +
+	"transition\x12;\n" +
+	"\aoptions\x18\x02 \x01(\v2!.e2b.scheduling.v1.RestoreOptionsR\aoptions\"\xb1\x01\n" +
+	"\x16RestoreRunningResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\x12D\n" +
+	"\rcurrent_state\x18\x03 \x01(\x0e2\x1f.e2b.scheduling.v1.SandboxStateR\fcurrentState\"\xc1\x01\n" +
+	"\x10NetworkPlacement\x12!\n" +
+	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12!\n" +
+	"\fnetwork_mode\x18\x02 \x01(\tR\vnetworkMode\x12\x1b\n" +
+	"\trouter_id\x18\x03 \x01(\tR\brouterId\x12'\n" +
+	"\x0fingress_address\x18\x04 \x01(\tR\x0eingressAddress\x12!\n" +
+	"\fingress_port\x18\x05 \x01(\rR\vingressPort\"\xab\x01\n" +
+	"\x1aRestoreCheckpointedRequest\x12J\n" +
+	"\n" +
+	"transition\x18\x01 \x01(\v2\".e2b.scheduling.v1.StateTransitionB\x06\xbaH\x03\xc8\x01\x01R\n" +
+	"transition\x12A\n" +
+	"\tplacement\x18\x02 \x01(\v2#.e2b.scheduling.v1.NetworkPlacementR\tplacement\"\xb6\x01\n" +
+	"\x1bRestoreCheckpointedResponse\x129\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1f.e2b.scheduling.v1.StateOutcomeR\aoutcome\x12\x16\n" +
+	"\x06record\x18\x02 \x01(\fR\x06record\x12D\n" +
+	"\rcurrent_state\x18\x03 \x01(\x0e2\x1f.e2b.scheduling.v1.SandboxStateR\fcurrentState\"\x92\x01\n" +
+	"\x18WaitForTransitionRequest\x12!\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12.\n" +
+	"\n" +
+	"sandbox_id\x18\x02 \x01(\tB\x0f\xbaH\fr\n" +
+	"2\b^[^{}]+$R\tsandboxId\x12#\n" +
+	"\rtransition_id\x18\x03 \x01(\tR\ftransitionId\"\xc6\x01\n" +
+	"\x19WaitForTransitionResponse\x12E\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2+.e2b.scheduling.v1.WaitForTransitionOutcomeR\aoutcome\x12#\n" +
+	"\rtransition_id\x18\x02 \x01(\tR\ftransitionId\x12#\n" +
+	"\rrefusal_class\x18\x03 \x01(\tR\frefusalClass\x12\x18\n" +
+	"\afailure\x18\x04 \x01(\tR\afailure*\x9b\x03\n" +
 	"\fStateOutcome\x12\x1d\n" +
 	"\x19STATE_OUTCOME_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10STATE_OUTCOME_OK\x10\x01\x12\x1b\n" +
 	"\x17STATE_OUTCOME_NOT_FOUND\x10\x02\x12 \n" +
 	"\x1cSTATE_OUTCOME_LIFECYCLE_HELD\x10\x03\x12$\n" +
 	" STATE_OUTCOME_EXECUTION_MISMATCH\x10\x04\x12\x1b\n" +
-	"\x17STATE_OUTCOME_LOCK_LOST\x10\x05*\x9e\x01\n" +
+	"\x17STATE_OUTCOME_LOCK_LOST\x10\x05\x12\x1f\n" +
+	"\x1bSTATE_OUTCOME_HOLD_CONFLICT\x10\x06\x12\x1a\n" +
+	"\x16STATE_OUTCOME_NOT_HELD\x10\a\x12&\n" +
+	"\"STATE_OUTCOME_EVICTION_IN_PROGRESS\x10\b\x12%\n" +
+	"!STATE_OUTCOME_EVICTION_NOT_NEEDED\x10\t\x12$\n" +
+	" STATE_OUTCOME_INVALID_TRANSITION\x10\n" +
+	"\x12\"\n" +
+	"\x1eSTATE_OUTCOME_RESTORE_CONFLICT\x10\v*\x9e\x01\n" +
 	"\fSandboxState\x12\x1d\n" +
 	"\x19SANDBOX_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SANDBOX_STATE_RUNNING\x10\x01\x12\x19\n" +
 	"\x15SANDBOX_STATE_PAUSING\x10\x02\x12\x19\n" +
 	"\x15SANDBOX_STATE_KILLING\x10\x03\x12\x1e\n" +
-	"\x1aSANDBOX_STATE_SNAPSHOTTING\x10\x042\xfa\x04\n" +
+	"\x1aSANDBOX_STATE_SNAPSHOTTING\x10\x04*z\n" +
+	"\fRemoveAction\x12\x1d\n" +
+	"\x19REMOVE_ACTION_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13REMOVE_ACTION_PAUSE\x10\x01\x12\x16\n" +
+	"\x12REMOVE_ACTION_KILL\x10\x02\x12\x1a\n" +
+	"\x16REMOVE_ACTION_SNAPSHOT\x10\x03*\x97\x02\n" +
+	"\x18WaitForTransitionOutcome\x12+\n" +
+	"'WAIT_FOR_TRANSITION_OUTCOME_UNSPECIFIED\x10\x00\x12(\n" +
+	"$WAIT_FOR_TRANSITION_OUTCOME_FINISHED\x10\x01\x12'\n" +
+	"#WAIT_FOR_TRANSITION_OUTCOME_WAITING\x10\x02\x12(\n" +
+	"$WAIT_FOR_TRANSITION_OUTCOME_RESTORED\x10\x03\x12&\n" +
+	"\"WAIT_FOR_TRANSITION_OUTCOME_FAILED\x10\x04\x12)\n" +
+	"%WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND\x10\x052\xf8\x0e\n" +
 	"\fStateService\x12D\n" +
 	"\x03Add\x12\x1d.e2b.scheduling.v1.AddRequest\x1a\x1e.e2b.scheduling.v1.AddResponse\x12D\n" +
 	"\x03Get\x12\x1d.e2b.scheduling.v1.GetRequest\x1a\x1e.e2b.scheduling.v1.GetResponse\x12M\n" +
@@ -1373,60 +4341,160 @@ const file_e2b_scheduling_v1_state_proto_rawDesc = "" +
 	"\tTeamItems\x12#.e2b.scheduling.v1.TeamItemsRequest\x1a$.e2b.scheduling.v1.TeamItemsResponse0\x01\x12a\n" +
 	"\fExpiredItems\x12&.e2b.scheduling.v1.ExpiredItemsRequest\x1a'.e2b.scheduling.v1.ExpiredItemsResponse0\x01\x12z\n" +
 	"\x15TeamsWithSandboxCount\x12/.e2b.scheduling.v1.TeamsWithSandboxCountRequest\x1a0.e2b.scheduling.v1.TeamsWithSandboxCountResponse\x12V\n" +
-	"\tReconcile\x12#.e2b.scheduling.v1.ReconcileRequest\x1a$.e2b.scheduling.v1.ReconcileResponseBNZGgithub.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling\x92\x03\x02\b\x02b\beditionsp\xe9\a"
+	"\tReconcile\x12#.e2b.scheduling.v1.ReconcileRequest\x1a$.e2b.scheduling.v1.ReconcileResponse\x12\\\n" +
+	"\vBeginUpdate\x12%.e2b.scheduling.v1.BeginUpdateRequest\x1a&.e2b.scheduling.v1.BeginUpdateResponse\x12_\n" +
+	"\fCommitUpdate\x12&.e2b.scheduling.v1.CommitUpdateRequest\x1a'.e2b.scheduling.v1.CommitUpdateResponse\x12\\\n" +
+	"\vAbortUpdate\x12%.e2b.scheduling.v1.AbortUpdateRequest\x1a&.e2b.scheduling.v1.AbortUpdateResponse\x12b\n" +
+	"\rHoldExecution\x12'.e2b.scheduling.v1.HoldExecutionRequest\x1a(.e2b.scheduling.v1.HoldExecutionResponse\x12n\n" +
+	"\x11MoveHeldExecution\x12+.e2b.scheduling.v1.MoveHeldExecutionRequest\x1a,.e2b.scheduling.v1.MoveHeldExecutionResponse\x12w\n" +
+	"\x14ReleaseHeldExecution\x12..e2b.scheduling.v1.ReleaseHeldExecutionRequest\x1a/.e2b.scheduling.v1.ReleaseHeldExecutionResponse\x12t\n" +
+	"\x13RemoveHeldExecution\x12-.e2b.scheduling.v1.RemoveHeldExecutionRequest\x1a..e2b.scheduling.v1.RemoveHeldExecutionResponse\x12b\n" +
+	"\rBeginRemoving\x12'.e2b.scheduling.v1.BeginRemovingRequest\x1a(.e2b.scheduling.v1.BeginRemovingResponse\x12k\n" +
+	"\x10FinishTransition\x12*.e2b.scheduling.v1.FinishTransitionRequest\x1a+.e2b.scheduling.v1.FinishTransitionResponse\x12e\n" +
+	"\x0eRestoreRunning\x12(.e2b.scheduling.v1.RestoreRunningRequest\x1a).e2b.scheduling.v1.RestoreRunningResponse\x12t\n" +
+	"\x13RestoreCheckpointed\x12-.e2b.scheduling.v1.RestoreCheckpointedRequest\x1a..e2b.scheduling.v1.RestoreCheckpointedResponse\x12n\n" +
+	"\x11WaitForTransition\x12+.e2b.scheduling.v1.WaitForTransitionRequest\x1a,.e2b.scheduling.v1.WaitForTransitionResponseBNZGgithub.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling;scheduling\x92\x03\x02\b\x02b\beditionsp\xe9\a"
 
-var file_e2b_scheduling_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_e2b_scheduling_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_e2b_scheduling_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_e2b_scheduling_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_e2b_scheduling_v1_state_proto_goTypes = []any{
 	(StateOutcome)(0),                     // 0: e2b.scheduling.v1.StateOutcome
 	(SandboxState)(0),                     // 1: e2b.scheduling.v1.SandboxState
-	(*AddRequest)(nil),                    // 2: e2b.scheduling.v1.AddRequest
-	(*AddResponse)(nil),                   // 3: e2b.scheduling.v1.AddResponse
-	(*GetRequest)(nil),                    // 4: e2b.scheduling.v1.GetRequest
-	(*GetResponse)(nil),                   // 5: e2b.scheduling.v1.GetResponse
-	(*RemoveRequest)(nil),                 // 6: e2b.scheduling.v1.RemoveRequest
-	(*RemoveResponse)(nil),                // 7: e2b.scheduling.v1.RemoveResponse
-	(*TeamItemsRequest)(nil),              // 8: e2b.scheduling.v1.TeamItemsRequest
-	(*TeamItemsResponse)(nil),             // 9: e2b.scheduling.v1.TeamItemsResponse
-	(*ExpiredItemsRequest)(nil),           // 10: e2b.scheduling.v1.ExpiredItemsRequest
-	(*ExpiredItemsResponse)(nil),          // 11: e2b.scheduling.v1.ExpiredItemsResponse
-	(*TeamsWithSandboxCountRequest)(nil),  // 12: e2b.scheduling.v1.TeamsWithSandboxCountRequest
-	(*TeamsWithSandboxCountResponse)(nil), // 13: e2b.scheduling.v1.TeamsWithSandboxCountResponse
-	(*NodeSandbox)(nil),                   // 14: e2b.scheduling.v1.NodeSandbox
-	(*ReconcileRequest)(nil),              // 15: e2b.scheduling.v1.ReconcileRequest
-	(*SandboxReference)(nil),              // 16: e2b.scheduling.v1.SandboxReference
-	(*ReconcileResponse)(nil),             // 17: e2b.scheduling.v1.ReconcileResponse
-	nil,                                   // 18: e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
-	(*timestamppb.Timestamp)(nil),         // 19: google.protobuf.Timestamp
+	(RemoveAction)(0),                     // 2: e2b.scheduling.v1.RemoveAction
+	(WaitForTransitionOutcome)(0),         // 3: e2b.scheduling.v1.WaitForTransitionOutcome
+	(*AddRequest)(nil),                    // 4: e2b.scheduling.v1.AddRequest
+	(*AddResponse)(nil),                   // 5: e2b.scheduling.v1.AddResponse
+	(*GetRequest)(nil),                    // 6: e2b.scheduling.v1.GetRequest
+	(*GetResponse)(nil),                   // 7: e2b.scheduling.v1.GetResponse
+	(*RemoveRequest)(nil),                 // 8: e2b.scheduling.v1.RemoveRequest
+	(*RemoveResponse)(nil),                // 9: e2b.scheduling.v1.RemoveResponse
+	(*TeamItemsRequest)(nil),              // 10: e2b.scheduling.v1.TeamItemsRequest
+	(*TeamItemsResponse)(nil),             // 11: e2b.scheduling.v1.TeamItemsResponse
+	(*ExpiredItemsRequest)(nil),           // 12: e2b.scheduling.v1.ExpiredItemsRequest
+	(*ExpiredItemsResponse)(nil),          // 13: e2b.scheduling.v1.ExpiredItemsResponse
+	(*TeamsWithSandboxCountRequest)(nil),  // 14: e2b.scheduling.v1.TeamsWithSandboxCountRequest
+	(*TeamsWithSandboxCountResponse)(nil), // 15: e2b.scheduling.v1.TeamsWithSandboxCountResponse
+	(*NodeSandbox)(nil),                   // 16: e2b.scheduling.v1.NodeSandbox
+	(*ReconcileRequest)(nil),              // 17: e2b.scheduling.v1.ReconcileRequest
+	(*SandboxReference)(nil),              // 18: e2b.scheduling.v1.SandboxReference
+	(*ReconcileResponse)(nil),             // 19: e2b.scheduling.v1.ReconcileResponse
+	(*BeginUpdateRequest)(nil),            // 20: e2b.scheduling.v1.BeginUpdateRequest
+	(*BeginUpdateResponse)(nil),           // 21: e2b.scheduling.v1.BeginUpdateResponse
+	(*CommitUpdateRequest)(nil),           // 22: e2b.scheduling.v1.CommitUpdateRequest
+	(*CommitUpdateResponse)(nil),          // 23: e2b.scheduling.v1.CommitUpdateResponse
+	(*AbortUpdateRequest)(nil),            // 24: e2b.scheduling.v1.AbortUpdateRequest
+	(*AbortUpdateResponse)(nil),           // 25: e2b.scheduling.v1.AbortUpdateResponse
+	(*Hold)(nil),                          // 26: e2b.scheduling.v1.Hold
+	(*HoldExecutionRequest)(nil),          // 27: e2b.scheduling.v1.HoldExecutionRequest
+	(*HoldExecutionResponse)(nil),         // 28: e2b.scheduling.v1.HoldExecutionResponse
+	(*MoveHeldExecutionRequest)(nil),      // 29: e2b.scheduling.v1.MoveHeldExecutionRequest
+	(*MoveHeldExecutionResponse)(nil),     // 30: e2b.scheduling.v1.MoveHeldExecutionResponse
+	(*ReleaseHeldExecutionRequest)(nil),   // 31: e2b.scheduling.v1.ReleaseHeldExecutionRequest
+	(*ReleaseHeldExecutionResponse)(nil),  // 32: e2b.scheduling.v1.ReleaseHeldExecutionResponse
+	(*RemoveHeldExecutionRequest)(nil),    // 33: e2b.scheduling.v1.RemoveHeldExecutionRequest
+	(*RemoveHeldExecutionResponse)(nil),   // 34: e2b.scheduling.v1.RemoveHeldExecutionResponse
+	(*RemoveOptions)(nil),                 // 35: e2b.scheduling.v1.RemoveOptions
+	(*StateTransition)(nil),               // 36: e2b.scheduling.v1.StateTransition
+	(*BeginRemovingRequest)(nil),          // 37: e2b.scheduling.v1.BeginRemovingRequest
+	(*BeginRemovingResponse)(nil),         // 38: e2b.scheduling.v1.BeginRemovingResponse
+	(*TransitionResult)(nil),              // 39: e2b.scheduling.v1.TransitionResult
+	(*FinishTransitionRequest)(nil),       // 40: e2b.scheduling.v1.FinishTransitionRequest
+	(*FinishTransitionResponse)(nil),      // 41: e2b.scheduling.v1.FinishTransitionResponse
+	(*RestoreOptions)(nil),                // 42: e2b.scheduling.v1.RestoreOptions
+	(*RestoreRunningRequest)(nil),         // 43: e2b.scheduling.v1.RestoreRunningRequest
+	(*RestoreRunningResponse)(nil),        // 44: e2b.scheduling.v1.RestoreRunningResponse
+	(*NetworkPlacement)(nil),              // 45: e2b.scheduling.v1.NetworkPlacement
+	(*RestoreCheckpointedRequest)(nil),    // 46: e2b.scheduling.v1.RestoreCheckpointedRequest
+	(*RestoreCheckpointedResponse)(nil),   // 47: e2b.scheduling.v1.RestoreCheckpointedResponse
+	(*WaitForTransitionRequest)(nil),      // 48: e2b.scheduling.v1.WaitForTransitionRequest
+	(*WaitForTransitionResponse)(nil),     // 49: e2b.scheduling.v1.WaitForTransitionResponse
+	nil,                                   // 50: e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
+	(*timestamppb.Timestamp)(nil),         // 51: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),           // 52: google.protobuf.Duration
 }
 var file_e2b_scheduling_v1_state_proto_depIdxs = []int32{
 	0,  // 0: e2b.scheduling.v1.AddResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	0,  // 1: e2b.scheduling.v1.GetResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	0,  // 2: e2b.scheduling.v1.RemoveResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
 	1,  // 3: e2b.scheduling.v1.TeamItemsRequest.states:type_name -> e2b.scheduling.v1.SandboxState
-	18, // 4: e2b.scheduling.v1.TeamsWithSandboxCountResponse.counts:type_name -> e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
-	19, // 5: e2b.scheduling.v1.NodeSandbox.start_time:type_name -> google.protobuf.Timestamp
-	14, // 6: e2b.scheduling.v1.ReconcileRequest.sandboxes:type_name -> e2b.scheduling.v1.NodeSandbox
-	16, // 7: e2b.scheduling.v1.ReconcileResponse.orphans:type_name -> e2b.scheduling.v1.SandboxReference
-	2,  // 8: e2b.scheduling.v1.StateService.Add:input_type -> e2b.scheduling.v1.AddRequest
-	4,  // 9: e2b.scheduling.v1.StateService.Get:input_type -> e2b.scheduling.v1.GetRequest
-	6,  // 10: e2b.scheduling.v1.StateService.Remove:input_type -> e2b.scheduling.v1.RemoveRequest
-	8,  // 11: e2b.scheduling.v1.StateService.TeamItems:input_type -> e2b.scheduling.v1.TeamItemsRequest
-	10, // 12: e2b.scheduling.v1.StateService.ExpiredItems:input_type -> e2b.scheduling.v1.ExpiredItemsRequest
-	12, // 13: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:input_type -> e2b.scheduling.v1.TeamsWithSandboxCountRequest
-	15, // 14: e2b.scheduling.v1.StateService.Reconcile:input_type -> e2b.scheduling.v1.ReconcileRequest
-	3,  // 15: e2b.scheduling.v1.StateService.Add:output_type -> e2b.scheduling.v1.AddResponse
-	5,  // 16: e2b.scheduling.v1.StateService.Get:output_type -> e2b.scheduling.v1.GetResponse
-	7,  // 17: e2b.scheduling.v1.StateService.Remove:output_type -> e2b.scheduling.v1.RemoveResponse
-	9,  // 18: e2b.scheduling.v1.StateService.TeamItems:output_type -> e2b.scheduling.v1.TeamItemsResponse
-	11, // 19: e2b.scheduling.v1.StateService.ExpiredItems:output_type -> e2b.scheduling.v1.ExpiredItemsResponse
-	13, // 20: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:output_type -> e2b.scheduling.v1.TeamsWithSandboxCountResponse
-	17, // 21: e2b.scheduling.v1.StateService.Reconcile:output_type -> e2b.scheduling.v1.ReconcileResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	50, // 4: e2b.scheduling.v1.TeamsWithSandboxCountResponse.counts:type_name -> e2b.scheduling.v1.TeamsWithSandboxCountResponse.CountsEntry
+	51, // 5: e2b.scheduling.v1.NodeSandbox.start_time:type_name -> google.protobuf.Timestamp
+	16, // 6: e2b.scheduling.v1.ReconcileRequest.sandboxes:type_name -> e2b.scheduling.v1.NodeSandbox
+	18, // 7: e2b.scheduling.v1.ReconcileResponse.orphans:type_name -> e2b.scheduling.v1.SandboxReference
+	0,  // 8: e2b.scheduling.v1.BeginUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	0,  // 9: e2b.scheduling.v1.CommitUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	0,  // 10: e2b.scheduling.v1.AbortUpdateResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	26, // 11: e2b.scheduling.v1.HoldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	51, // 12: e2b.scheduling.v1.HoldExecutionRequest.until:type_name -> google.protobuf.Timestamp
+	0,  // 13: e2b.scheduling.v1.HoldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	26, // 14: e2b.scheduling.v1.MoveHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 15: e2b.scheduling.v1.MoveHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	26, // 16: e2b.scheduling.v1.ReleaseHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 17: e2b.scheduling.v1.ReleaseHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	26, // 18: e2b.scheduling.v1.RemoveHeldExecutionRequest.hold:type_name -> e2b.scheduling.v1.Hold
+	0,  // 19: e2b.scheduling.v1.RemoveHeldExecutionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	2,  // 20: e2b.scheduling.v1.RemoveOptions.action:type_name -> e2b.scheduling.v1.RemoveAction
+	51, // 21: e2b.scheduling.v1.StateTransition.original_end_time:type_name -> google.protobuf.Timestamp
+	35, // 22: e2b.scheduling.v1.BeginRemovingRequest.options:type_name -> e2b.scheduling.v1.RemoveOptions
+	0,  // 23: e2b.scheduling.v1.BeginRemovingResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	36, // 24: e2b.scheduling.v1.BeginRemovingResponse.transition:type_name -> e2b.scheduling.v1.StateTransition
+	1,  // 25: e2b.scheduling.v1.BeginRemovingResponse.current_state:type_name -> e2b.scheduling.v1.SandboxState
+	2,  // 26: e2b.scheduling.v1.FinishTransitionRequest.action:type_name -> e2b.scheduling.v1.RemoveAction
+	39, // 27: e2b.scheduling.v1.FinishTransitionRequest.result:type_name -> e2b.scheduling.v1.TransitionResult
+	0,  // 28: e2b.scheduling.v1.FinishTransitionResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	52, // 29: e2b.scheduling.v1.RestoreOptions.retry_after:type_name -> google.protobuf.Duration
+	36, // 30: e2b.scheduling.v1.RestoreRunningRequest.transition:type_name -> e2b.scheduling.v1.StateTransition
+	42, // 31: e2b.scheduling.v1.RestoreRunningRequest.options:type_name -> e2b.scheduling.v1.RestoreOptions
+	0,  // 32: e2b.scheduling.v1.RestoreRunningResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	1,  // 33: e2b.scheduling.v1.RestoreRunningResponse.current_state:type_name -> e2b.scheduling.v1.SandboxState
+	36, // 34: e2b.scheduling.v1.RestoreCheckpointedRequest.transition:type_name -> e2b.scheduling.v1.StateTransition
+	45, // 35: e2b.scheduling.v1.RestoreCheckpointedRequest.placement:type_name -> e2b.scheduling.v1.NetworkPlacement
+	0,  // 36: e2b.scheduling.v1.RestoreCheckpointedResponse.outcome:type_name -> e2b.scheduling.v1.StateOutcome
+	1,  // 37: e2b.scheduling.v1.RestoreCheckpointedResponse.current_state:type_name -> e2b.scheduling.v1.SandboxState
+	3,  // 38: e2b.scheduling.v1.WaitForTransitionResponse.outcome:type_name -> e2b.scheduling.v1.WaitForTransitionOutcome
+	4,  // 39: e2b.scheduling.v1.StateService.Add:input_type -> e2b.scheduling.v1.AddRequest
+	6,  // 40: e2b.scheduling.v1.StateService.Get:input_type -> e2b.scheduling.v1.GetRequest
+	8,  // 41: e2b.scheduling.v1.StateService.Remove:input_type -> e2b.scheduling.v1.RemoveRequest
+	10, // 42: e2b.scheduling.v1.StateService.TeamItems:input_type -> e2b.scheduling.v1.TeamItemsRequest
+	12, // 43: e2b.scheduling.v1.StateService.ExpiredItems:input_type -> e2b.scheduling.v1.ExpiredItemsRequest
+	14, // 44: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:input_type -> e2b.scheduling.v1.TeamsWithSandboxCountRequest
+	17, // 45: e2b.scheduling.v1.StateService.Reconcile:input_type -> e2b.scheduling.v1.ReconcileRequest
+	20, // 46: e2b.scheduling.v1.StateService.BeginUpdate:input_type -> e2b.scheduling.v1.BeginUpdateRequest
+	22, // 47: e2b.scheduling.v1.StateService.CommitUpdate:input_type -> e2b.scheduling.v1.CommitUpdateRequest
+	24, // 48: e2b.scheduling.v1.StateService.AbortUpdate:input_type -> e2b.scheduling.v1.AbortUpdateRequest
+	27, // 49: e2b.scheduling.v1.StateService.HoldExecution:input_type -> e2b.scheduling.v1.HoldExecutionRequest
+	29, // 50: e2b.scheduling.v1.StateService.MoveHeldExecution:input_type -> e2b.scheduling.v1.MoveHeldExecutionRequest
+	31, // 51: e2b.scheduling.v1.StateService.ReleaseHeldExecution:input_type -> e2b.scheduling.v1.ReleaseHeldExecutionRequest
+	33, // 52: e2b.scheduling.v1.StateService.RemoveHeldExecution:input_type -> e2b.scheduling.v1.RemoveHeldExecutionRequest
+	37, // 53: e2b.scheduling.v1.StateService.BeginRemoving:input_type -> e2b.scheduling.v1.BeginRemovingRequest
+	40, // 54: e2b.scheduling.v1.StateService.FinishTransition:input_type -> e2b.scheduling.v1.FinishTransitionRequest
+	43, // 55: e2b.scheduling.v1.StateService.RestoreRunning:input_type -> e2b.scheduling.v1.RestoreRunningRequest
+	46, // 56: e2b.scheduling.v1.StateService.RestoreCheckpointed:input_type -> e2b.scheduling.v1.RestoreCheckpointedRequest
+	48, // 57: e2b.scheduling.v1.StateService.WaitForTransition:input_type -> e2b.scheduling.v1.WaitForTransitionRequest
+	5,  // 58: e2b.scheduling.v1.StateService.Add:output_type -> e2b.scheduling.v1.AddResponse
+	7,  // 59: e2b.scheduling.v1.StateService.Get:output_type -> e2b.scheduling.v1.GetResponse
+	9,  // 60: e2b.scheduling.v1.StateService.Remove:output_type -> e2b.scheduling.v1.RemoveResponse
+	11, // 61: e2b.scheduling.v1.StateService.TeamItems:output_type -> e2b.scheduling.v1.TeamItemsResponse
+	13, // 62: e2b.scheduling.v1.StateService.ExpiredItems:output_type -> e2b.scheduling.v1.ExpiredItemsResponse
+	15, // 63: e2b.scheduling.v1.StateService.TeamsWithSandboxCount:output_type -> e2b.scheduling.v1.TeamsWithSandboxCountResponse
+	19, // 64: e2b.scheduling.v1.StateService.Reconcile:output_type -> e2b.scheduling.v1.ReconcileResponse
+	21, // 65: e2b.scheduling.v1.StateService.BeginUpdate:output_type -> e2b.scheduling.v1.BeginUpdateResponse
+	23, // 66: e2b.scheduling.v1.StateService.CommitUpdate:output_type -> e2b.scheduling.v1.CommitUpdateResponse
+	25, // 67: e2b.scheduling.v1.StateService.AbortUpdate:output_type -> e2b.scheduling.v1.AbortUpdateResponse
+	28, // 68: e2b.scheduling.v1.StateService.HoldExecution:output_type -> e2b.scheduling.v1.HoldExecutionResponse
+	30, // 69: e2b.scheduling.v1.StateService.MoveHeldExecution:output_type -> e2b.scheduling.v1.MoveHeldExecutionResponse
+	32, // 70: e2b.scheduling.v1.StateService.ReleaseHeldExecution:output_type -> e2b.scheduling.v1.ReleaseHeldExecutionResponse
+	34, // 71: e2b.scheduling.v1.StateService.RemoveHeldExecution:output_type -> e2b.scheduling.v1.RemoveHeldExecutionResponse
+	38, // 72: e2b.scheduling.v1.StateService.BeginRemoving:output_type -> e2b.scheduling.v1.BeginRemovingResponse
+	41, // 73: e2b.scheduling.v1.StateService.FinishTransition:output_type -> e2b.scheduling.v1.FinishTransitionResponse
+	44, // 74: e2b.scheduling.v1.StateService.RestoreRunning:output_type -> e2b.scheduling.v1.RestoreRunningResponse
+	47, // 75: e2b.scheduling.v1.StateService.RestoreCheckpointed:output_type -> e2b.scheduling.v1.RestoreCheckpointedResponse
+	49, // 76: e2b.scheduling.v1.StateService.WaitForTransition:output_type -> e2b.scheduling.v1.WaitForTransitionResponse
+	58, // [58:77] is the sub-list for method output_type
+	39, // [39:58] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_e2b_scheduling_v1_state_proto_init() }
@@ -1439,8 +4507,8 @@ func file_e2b_scheduling_v1_state_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_e2b_scheduling_v1_state_proto_rawDesc), len(file_e2b_scheduling_v1_state_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   17,
+			NumEnums:      4,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -86,6 +86,7 @@ func TestAbortUpdate_WritesNothingAndReleasesTheLock(t *testing.T) {
 	requireRecord(t, client, key, raw)
 
 	require.ErrorIs(t, storage.AbortUpdate(t.Context(), sbx.TeamID, sbx.SandboxID, token), redislock.ErrLockNotHeld, "a second abort finds the lock released")
+	require.ErrorIs(t, storage.AbortUpdate(t.Context(), sbx.TeamID, sbx.SandboxID, token), sandboxtypes.ErrLockLost, "a released lock is a lost lock")
 }
 
 func TestCommitUpdate_RescoresOnlyAChangedEndTime(t *testing.T) {
@@ -210,8 +211,8 @@ func TestRecordUpdates_InvalidTokenWritesNothing(t *testing.T) {
 
 	for _, invalid := range []sandboxtypes.UpdateToken{"", "not a token", `{"lock":""}`, `{"lock":1}`} {
 		_, err := storage.CommitUpdate(t.Context(), sbx.TeamID, sbx.SandboxID, invalid, cur)
-		require.Error(t, err, "commit %q", invalid)
-		require.Error(t, storage.AbortUpdate(t.Context(), sbx.TeamID, sbx.SandboxID, invalid), "abort %q", invalid)
+		require.ErrorIs(t, err, sandboxtypes.ErrInvalidUpdateToken, "commit %q", invalid)
+		require.ErrorIs(t, storage.AbortUpdate(t.Context(), sbx.TeamID, sbx.SandboxID, invalid), sandboxtypes.ErrInvalidUpdateToken, "abort %q", invalid)
 	}
 	requireRecord(t, client, key, raw)
 	requireMemberScore(t, client, sandboxExpirationMember(sbx), float64(sbx.EndTime.UnixMilli()))
