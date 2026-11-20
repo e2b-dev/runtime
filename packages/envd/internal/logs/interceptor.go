@@ -51,7 +51,30 @@ func formatMethod(method string) string {
 	return fmt.Sprintf("%s %s", servicePart, methodPart)
 }
 
-func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc {
+// Option adjusts how a wrapper logs a call.
+type Option func(*options)
+
+type options struct {
+	redact func(msg any) any
+}
+
+// WithRedact sets the function that turns a message into the value to log.
+func WithRedact(redact func(msg any) any) Option {
+	return func(o *options) { o.redact = redact }
+}
+
+func newOptions(opts []Option) options {
+	o := options{redact: func(msg any) any { return msg }}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	return o
+}
+
+func NewUnaryLogInterceptor(logger *zerolog.Logger, opts ...Option) connect.UnaryInterceptorFunc {
+	o := newOptions(opts)
+
 	interceptor := func(next connect.UnaryFunc) connect.UnaryFunc {
 		return connect.UnaryFunc(func(
 			ctx context.Context,
@@ -70,11 +93,11 @@ func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc
 			}
 
 			if req != nil {
-				l = l.Interface("request", req.Any())
+				l = l.Interface("request", o.redact(req.Any()))
 			}
 
 			if res != nil && err == nil {
-				l = l.Interface("response", res.Any())
+				l = l.Interface("response", o.redact(res.Any()))
 			}
 
 			if res == nil && err == nil {
@@ -96,7 +119,9 @@ func LogServerStreamWithoutEvents[T any, R any](
 	req *connect.Request[R],
 	stream *connect.ServerStream[T],
 	handler func(ctx context.Context, req *connect.Request[R], stream *connect.ServerStream[T]) error,
+	opts ...Option,
 ) error {
+	o := newOptions(opts)
 	ctx = AddRequestIDToContext(ctx)
 
 	l := logger.Debug().
@@ -104,7 +129,7 @@ func LogServerStreamWithoutEvents[T any, R any](
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
 	if req != nil {
-		l = l.Interface("request", req.Any())
+		l = l.Interface("request", o.redact(req.Any()))
 	}
 
 	l.Msg(fmt.Sprintf("%s (server stream start)", formatMethod(req.Spec().Procedure)))
@@ -131,7 +156,9 @@ func LogClientStreamWithoutEvents[T any, R any](
 	logger *zerolog.Logger,
 	stream *connect.ClientStream[T],
 	handler func(ctx context.Context, stream *connect.ClientStream[T]) (*connect.Response[R], error),
+	opts ...Option,
 ) (*connect.Response[R], error) {
+	o := newOptions(opts)
 	ctx = AddRequestIDToContext(ctx)
 
 	logger.Debug().
@@ -150,7 +177,7 @@ func LogClientStreamWithoutEvents[T any, R any](
 	}
 
 	if res != nil && err == nil {
-		logEvent = logEvent.Interface("response", res.Any())
+		logEvent = logEvent.Interface("response", o.redact(res.Any()))
 	}
 
 	if res == nil && err == nil {

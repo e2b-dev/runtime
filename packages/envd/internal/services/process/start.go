@@ -17,7 +17,7 @@ import (
 )
 
 func (s *Service) Start(ctx context.Context, req *connect.Request[rpc.StartRequest], stream *connect.ServerStream[rpc.StartResponse]) error {
-	return logs.LogServerStreamWithoutEvents(ctx, s.logger, req, stream, s.handleStart)
+	return logs.LogServerStreamWithoutEvents(ctx, s.logger, req, stream, s.handleStart, logs.WithRedact(redact))
 }
 
 func (s *Service) handleStart(ctx context.Context, req *connect.Request[rpc.StartRequest], stream *connect.ServerStream[rpc.StartResponse]) error {

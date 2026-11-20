@@ -136,7 +136,7 @@ func (s *Service) clearTerminatedForTag(tag string) {
 func Handle(server *chi.Mux, l *zerolog.Logger, defaults *execcontext.Defaults, workloadFreezer *cgroups.WorkloadFreezer) *Service {
 	service := newService(l, defaults, workloadFreezer)
 
-	interceptors := connect.WithInterceptors(logs.NewUnaryLogInterceptor(l))
+	interceptors := connect.WithInterceptors(logs.NewUnaryLogInterceptor(l, logs.WithRedact(redact)))
 
 	path, h := spec.NewProcessHandler(service, interceptors)
 
