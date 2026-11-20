@@ -3,6 +3,7 @@ package placement
 import (
 	"context"
 	"maps"
+	"regexp"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -23,6 +24,9 @@ import (
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement")
 
 var createRefusals = sharedutils.Must(telemetry.GetCounter(otel.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"), telemetry.ApiOrchestratorCreateRefusals))
+
+// The node reports a guest memory mapping refusal without a typed detail.
+var guestMemoryPoolRefusal = regexp.MustCompile(`^this node cannot map [0-9]+ MiB of guest memory: its memory pool is too small or in use by running sandboxes$`)
 
 // PlacementResult carries the outcome of a placement attempt alongside the error.
 type PlacementResult struct {
@@ -299,6 +303,10 @@ func placeSandbox(
 		statusCode := codes.Internal
 		if ok {
 			statusCode = st.Code()
+		}
+
+		if statusCode == codes.FailedPrecondition && failedNode.IsClusterNode() && guestMemoryPoolRefusal.MatchString(st.Message()) {
+			failedNode.RecordHugePageRefusal()
 		}
 
 		// Remember the first node that got far enough to actually attempt the

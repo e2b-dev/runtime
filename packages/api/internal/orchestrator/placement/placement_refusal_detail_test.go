@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
+	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 )
 
 // countingCreate is a node that refuses every create with err and counts
@@ -115,4 +118,44 @@ func TestPlaceSandbox_RefusedForGoodAfterTheContextEndedIsNoTimeout(t *testing.T
 	require.ErrorIs(t, createErr.LastErr, refused)
 	assert.False(t, result.TimedOut, "a refusal for good reported as a timeout")
 	assert.Nil(t, result.WarmedNode, "a refusal for good surfaced the refusing node as warmed")
+}
+
+func TestPlaceSandbox_RemembersRemotePoolRefusalUntilFreshSample(t *testing.T) {
+	t.Parallel()
+	for _, scope := range []string{"remote", "local"} {
+		t.Run(scope, func(t *testing.T) {
+			t.Parallel()
+			refusal := status.Error(codes.FailedPrecondition, "this node cannot map 512 MiB of guest memory: its memory pool is too small or in use by running sandboxes")
+			first, calls := countingCreate(t, "first", refusal)
+			if scope == "local" {
+				first.ClusterID = consts.LocalClusterID
+			}
+			other := nodemanager.NewTestNode("other", api.NodeStatusReady, 12, 4)
+			nodes := []*nodemanager.Node{first, other}
+			algorithm := NewBestOfK(DefaultBestOfKConfig())
+			place := func(id string) *nodemanager.Node {
+				t.Helper()
+				result, err := PlaceSandbox(t.Context(), algorithm, nodes, nil, testSbxRequest(id), Requirements{}, false, nil)
+				require.NoError(t, err)
+
+				return result.Node
+			}
+			before := time.Now()
+			require.Same(t, other, place("refused"))
+			require.EqualValues(t, 1, calls.Load())
+			first.SetSandboxClient(&nodemanager.MockSandboxClientCustom{CreateFunc: func() error { return nil }})
+			sample := &orchestratorinfo.ServiceInfoResponse{MetricCpuCount: 4}
+			first.UpdateMetricsFromSync(sample, before)
+			if scope == "remote" {
+				require.Same(t, other, place("penalized"))
+				other.RecordHugePageRefusal()
+				require.Same(t, first, place("both-penalized"))
+				other.UpdateMetricsFromSync(&orchestratorinfo.ServiceInfoResponse{MetricCpuCount: 4, MetricCpuAllocated: 12}, time.Now())
+			} else {
+				require.Same(t, first, place("local"))
+			}
+			first.UpdateMetricsFromSync(sample, time.Now())
+			require.Same(t, first, place("refreshed"))
+		})
+	}
 }

@@ -69,6 +69,7 @@ type Node struct {
 
 	metrics             Metrics
 	metricsMu           sync.RWMutex
+	lastHugePageRefusal time.Time
 	lastHugePageAdd     time.Time
 	lastOrdinaryPageAdd time.Time
 
