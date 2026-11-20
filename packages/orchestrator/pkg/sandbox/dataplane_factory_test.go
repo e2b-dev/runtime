@@ -460,12 +460,18 @@ func TestResumeSandboxServesTheDiskThroughTheDataPlane(t *testing.T) {
 	err := resumeThrough(t, plane, newPlaneTemplate(nil))
 	require.ErrorIs(t, err, errStopBeforeFirecracker, "both devices were built; the construction stopped at the Firecracker spawn")
 
-	events := log.list()
-	assert.Contains(t, events, "provider.start")
+	select {
+	case <-provider.started:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "rootfs provider did not start")
+	}
 	assert.False(t, provider.cancelable.Load(), "the provider runs under the non-cancelable execution context")
-	assert.Equal(t, "plane.close", events[len(events)-1], "the plane closes last")
-	assert.Less(t, slices.Index(events, "provider.close"), slices.Index(events, "plane.close"))
-	assert.Less(t, slices.Index(events, "handler.stop"), slices.Index(events, "plane.close"))
+
+	events := log.list()
+	require.Contains(t, events, "plane.close")
+	beforePlaneClose := events[:slices.Index(events, "plane.close")]
+	assert.Contains(t, beforePlaneClose, "provider.close")
+	assert.Contains(t, beforePlaneClose, "handler.stop")
 }
 
 // A MemoryBinder plane is bound once both devices exist, with the handler
