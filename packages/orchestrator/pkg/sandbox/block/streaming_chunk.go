@@ -68,31 +68,76 @@ func NewChunker(
 // ReadAt and Slice take {upstream, ft} as a paired snapshot from the caller.
 // The caller is responsible for keeping them consistent.
 func (c *Chunker) ReadAt(ctx context.Context, b []byte, off int64, upstream storage.RangeOpener, ft *storage.FrameTable) (int, error) {
-	slice, err := c.Slice(ctx, off, int64(len(b)), upstream, ft)
-	if err != nil {
-		return 0, fmt.Errorf("failed to slice cache at %d-%d: %w", off, off+int64(len(b)), err)
+	if err := c.ensureData(ctx, off, int64(len(b)), upstream, ft); err != nil {
+		return 0, fmt.Errorf("failed to ensure cache at %d-%d: %w", off, off+int64(len(b)), err)
 	}
+
+	// Fetching may need its own cache read lock. Acquire the close guard only
+	// after readiness, and retain it until the copy has finished. A completed
+	// prefix is readable even before the entire chunk is marked cached.
+	slice, release, err := c.acquireReadySlice(off, int64(len(b)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to read ready cache at %d-%d: %w", off, off+int64(len(b)), err)
+	}
+	defer release()
 
 	return copy(b, slice), nil
 }
 
 func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage.RangeOpener, ft *storage.FrameTable) ([]byte, error) {
+	if err := c.ensureData(ctx, off, length, upstream, ft); err != nil {
+		return nil, err
+	}
+
+	// The returned slice is borrowed; callers must keep the cache alive while
+	// using it. The guard protects reading the mmap header against Close.
+	slice, release, err := c.acquireReadySlice(off, length)
+	if err != nil {
+		return nil, fmt.Errorf("failed to slice ready cache at %d-%d: %w", off, off+length, err)
+	}
+	defer release()
+
+	return slice, nil
+}
+
+// acquireReadySlice requires ensureData to have completed. It protects the mmap
+// header and lets ReadAt keep Close blocked until the borrowed bytes are copied.
+func (c *Chunker) acquireReadySlice(off, length int64) ([]byte, func(), error) {
+	c.cache.mu.RLock()
+	slice, err := c.cache.Slice(off, length)
+	if errors.As(err, &BytesNotAvailableError{}) {
+		// A streamed prefix can be ready before the full chunk is marked cached.
+		slice, err = c.cache.sliceDirect(off, length)
+	}
+	if err != nil {
+		c.cache.mu.RUnlock()
+
+		return nil, nil, err
+	}
+
+	return slice, c.cache.mu.RUnlock, nil
+}
+
+// ensureData waits for the requested bytes without exposing a borrowed mmap slice.
+func (c *Chunker) ensureData(ctx context.Context, off, length int64, upstream storage.RangeOpener, ft *storage.FrameTable) error {
 	ct := ft.CompressionType()
 	sliceStart := time.Now()
 
 	// Fast path: already cached.
-	b, err := c.cache.Slice(off, length)
+	c.cache.mu.RLock()
+	_, err := c.cache.Slice(off, length)
+	c.cache.mu.RUnlock()
 	if err == nil {
 		c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, storage.SourceMmap, ct))
 		storage.ReportSource(ctx, storage.SourceMmap)
 
-		return b, nil
+		return nil
 	}
 
 	if !errors.As(err, &BytesNotAvailableError{}) {
 		c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), 0, storage.ErrAttrs(c.objType, storage.SourceMmap, ct, err))
 
-		return nil, fmt.Errorf("failed read from cache at offset %d: %w", off, err)
+		return fmt.Errorf("failed read from cache at offset %d: %w", off, err)
 	}
 
 	// Fetch every chunk the range spans (one fetch session per chunk).
@@ -103,7 +148,7 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 		if lerr != nil {
 			c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), 0, storage.ErrAttrs(c.objType, src, ct, lerr))
 
-			return nil, fmt.Errorf("failed to locate chunk for offset %d: %w", cur, lerr)
+			return fmt.Errorf("failed to locate chunk for offset %d: %w", cur, lerr)
 		}
 		chunkEnd := chunkOff + chunkLen
 		rangeEnd := min(end, chunkEnd)
@@ -111,24 +156,16 @@ func (c *Chunker) Slice(ctx context.Context, off, length int64, upstream storage
 		if err != nil {
 			c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), 0, storage.ErrAttrs(c.objType, s, ct, err))
 
-			return nil, fmt.Errorf("failed to ensure data at %d-%d: %w", cur, rangeEnd, err)
+			return fmt.Errorf("failed to ensure data at %d-%d: %w", cur, rangeEnd, err)
 		}
 		src = max(src, s)
 		cur = chunkEnd
 	}
 
-	// sliceDirect skips isCached — the waiter already confirmed the data is in the mmap.
-	b, cacheErr := c.cache.sliceDirect(off, length)
-	if cacheErr != nil {
-		c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), 0, storage.ErrAttrs(c.objType, src, ct, cacheErr))
-
-		return nil, fmt.Errorf("failed to read from cache after ensuring data at %d-%d: %w", off, off+length, cacheErr)
-	}
-
 	c.metrics.ChunkSliceTimerFactory.Record(ctx, time.Since(sliceStart), length, storage.OKAttrs(c.objType, src, ct))
 	storage.ReportSource(ctx, src)
 
-	return b, nil
+	return nil
 }
 
 // getOrCreateSession returns a fetch session for the chunk at [off, off+length),
