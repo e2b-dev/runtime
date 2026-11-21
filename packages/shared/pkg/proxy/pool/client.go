@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -46,9 +48,15 @@ func newProxyClient(
 	l *log.Logger,
 	disableKeepAlives bool,
 	insecureSkipTLSVerify bool,
+	onOutcome OutcomeRecorder,
 	key string,
 	wrap TransportWrap,
 ) *ProxyClient {
+	recordOutcome := func(ctx context.Context, outcome RequestOutcome) {
+		if onOutcome != nil {
+			onOutcome(ctx, outcome)
+		}
+	}
 	activeConnections := smap.New[*tracking.Connection]()
 
 	transport := &http.Transport{
@@ -178,6 +186,7 @@ func newProxyClient(
 			t, ok := pc.getDestination(r)
 			if !ok {
 				logger.L().Error(ctx, "proxy request without sandbox received error", zap.Error(err))
+				recordOutcome(ctx, OutcomeRoutingFailed)
 				cors.Error(w, "Failed to route request to sandbox", http.StatusInternalServerError)
 
 				return
@@ -185,10 +194,18 @@ func newProxyClient(
 
 			if r.Host == "" { // kept around for historical reasons, unsure of usefulness. todo: find out if this is useful.
 				t.RequestLogger.Error(ctx, "error handler called from rewrite because of missing DestinationContext", zap.Error(err))
+				recordOutcome(ctx, OutcomeRoutingFailed)
 				cors.Error(w, "Failed to route request to sandbox", http.StatusInternalServerError)
 
 				return
 			}
+
+			// A client that went away mid-request (cancel, reset, EOF) is not a
+			// server fault: classify it apart from a genuine upstream failure so
+			// the two are separable on dashboards. Matches the Warn/Error split below.
+			clientGone := errors.Is(err, context.Canceled) ||
+				errors.Is(err, syscall.ECONNRESET) ||
+				errors.Is(err, io.EOF)
 
 			if err != nil {
 				if t.SandboxPort == uint64(consts.DefaultEnvdServerPort) {
@@ -200,6 +217,12 @@ func newProxyClient(
 				} else {
 					t.RequestLogger.Warn(ctx, "sandbox error handler called", zap.Error(err))
 				}
+			}
+
+			if clientGone {
+				recordOutcome(ctx, OutcomeClientClosed)
+			} else {
+				recordOutcome(ctx, OutcomeUpstreamUnreachable)
 			}
 
 			if t.DefaultToPortError {
@@ -225,6 +248,11 @@ func newProxyClient(
 			if !ok {
 				return nil
 			}
+
+			// The upstream answered and the response is being forwarded: the
+			// request succeeded as far as the proxy is concerned, whatever the
+			// backend's own status code.
+			recordOutcome(ctx, OutcomeOK)
 
 			if r.StatusCode >= 500 {
 				t.RequestLogger.Warn(

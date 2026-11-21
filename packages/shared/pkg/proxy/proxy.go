@@ -65,6 +65,7 @@ func New(
 		int(maxConnectionAttempts),
 		idleTimeout,
 		disableKeepAlives,
+		pool.WithOutcomeRecorder(o.onOutcome),
 		pool.WithTransportWrap(o.transportWrap),
 	)
 

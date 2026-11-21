@@ -20,6 +20,7 @@ type Option func(*options)
 
 type options struct {
 	probe         bool
+	onOutcome     pool.OutcomeRecorder
 	transportWrap pool.TransportWrap
 }
 
@@ -28,6 +29,14 @@ type options struct {
 func WithProbe() Option {
 	return func(o *options) {
 		o.probe = true
+	}
+}
+
+// WithOutcomeRecorder records each request's terminal outcome through r.
+// Without it outcomes are not recorded.
+func WithOutcomeRecorder(r pool.OutcomeRecorder) Option {
+	return func(o *options) {
+		o.onOutcome = r
 	}
 }
 
