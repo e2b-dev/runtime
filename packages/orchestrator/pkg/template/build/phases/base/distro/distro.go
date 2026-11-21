@@ -125,6 +125,37 @@ var Profiles = []Profile{
 		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
 	},
 	{
+		// UnionTech OS (统信 UOS) Server 20 is an RPM/dnf, systemd distro. Its
+		// /etc/os-release declares ID=uos and no ID_LIKE, so without this profile
+		// a UOS base falls through to the unsupported-distro error.
+		//
+		// Verified against two independent UOS Server 20 images
+		// (macrosan/uos:v20-1050 and ixuzhi/uos-server:1070a): both are
+		// RHEL-shaped, but the two lineages name the account tools package
+		// differently — one ships shadow, the other shadow-utils, and listing
+		// either aborts the dnf transaction on the image that lacks it. Both
+		// base images already ship useradd/usermod, so this profile installs
+		// neither and relies on the base, as the Debian family does; passwd is
+		// still installed and resolves on both.
+		Key:  "uos",
+		Init: InitSystemd,
+		IDs:  []string{"uos"},
+		Packages: []string{
+			"systemd", "passwd", "openssh-server", "sudo", "chrony",
+			"socat", "curl", "ca-certificates", "fuse3", "iptables", "git",
+			"nfs-utils", "less", "nftables", "iputils", "jq", "bash", "tar",
+			"iproute", "findutils",
+		},
+		PkgQueryBody: `rpm -q "$1" >/dev/null 2>&1`,
+		PkgInstall:   `dnf -y install --allowerasing "$@" || microdnf -y install "$@" || yum -y install "$@"`,
+		InitBinary:   "/usr/lib/systemd/systemd",
+		TimeSyncUnit: "chronyd",
+		SSHUnit:      "sshd",
+		AdminGroup:   "wheel",
+		CABundle:     "/etc/ssl/certs/ca-certificates.crt",
+		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
+	},
+	{
 		Key:  "arch",
 		Init: InitSystemd,
 		IDs:  []string{"arch", "archarm"},
