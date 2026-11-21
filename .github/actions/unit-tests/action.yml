@@ -72,8 +72,8 @@ runs:
       if: inputs.package == 'packages/envd'
       shell: bash
       run: |
-        # Install bindfs for FUSE mount tests
-        sudo apt-get update && sudo apt-get install -y bindfs
+        # Install bindfs for FUSE mount tests and socat for port forwarding tests
+        sudo apt-get update && sudo apt-get install -y bindfs socat
 
     - name: Setup orchestrator tests
       if: inputs.package == 'packages/orchestrator'
