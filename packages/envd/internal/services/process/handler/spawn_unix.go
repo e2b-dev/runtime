@@ -17,14 +17,19 @@ import (
 	rpc "github.com/e2b-dev/infra/packages/envd/internal/services/spec/process"
 )
 
+// oomWrapperFormat is the wrapper script: it sets the shell's oom_score_adj and
+// execs the command through the ionice/nice prefix even if the write fails.
+const oomWrapperFormat = `echo %d 2>/dev/null > /proc/$$/oom_score_adj; exec %s"${@}"`
+
 // newCommand builds the child for a start request: the user's command wrapped
 // in a shell that resets oom_score_adj, ioprio (ionice best-effort/4) and
 // nice, running with the user's credentials inside the request's cgroup. The
-// oom_score_adj write is pure /proc and always applied; the priority helpers
-// are used only where the image provides them.
+// oom_score_adj write is best effort, since lowering the score needs
+// CAP_SYS_RESOURCE; the priority helpers are used only where the image
+// provides them.
 func newCommand(ctx context.Context, user *user.User, req *rpc.StartRequest, logger *zerolog.Logger, cgroupManager cgroups.Manager) (*exec.Cmd, *sysState, error) {
 	niceDelta := defaultNice - currentNice()
-	oomWrapperScript := fmt.Sprintf(`echo %d > /proc/$$/oom_score_adj && exec %s"${@}"`, defaultOomScore, ioniceNicePrefix(defaultIoClass, defaultIoPrio, niceDelta, exec.LookPath))
+	oomWrapperScript := fmt.Sprintf(oomWrapperFormat, defaultOomScore, ioniceNicePrefix(defaultIoClass, defaultIoPrio, niceDelta, exec.LookPath))
 	wrapperArgs := append([]string{"-c", oomWrapperScript, "--", req.GetProcess().GetCmd()}, req.GetProcess().GetArgs()...)
 	cmd := exec.CommandContext(ctx, "/bin/sh", wrapperArgs...)
 
