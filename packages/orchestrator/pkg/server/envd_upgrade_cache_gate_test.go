@@ -5,6 +5,8 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,8 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/cfg"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envdbin"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/network"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -245,6 +249,49 @@ func TestUpgradeDefersWhenTheBinaryIsNotCached(t *testing.T) {
 		"a miss must defer as binary_not_cached, not read the mount and not report a failed probe")
 	require.Empty(t, counterPoints(t, reader, telemetry.OrchestratorEnvdUpgradeAttempts, "result"),
 		"a deferral delivered nothing, so it must not appear as an attempt")
+}
+
+func TestUpgradeDefersWhenEnvVarsCannotBeCaptured(t *testing.T) {
+	dir := warmScratchDir(t)
+	src := filepath.Join(dir, "envd")
+	require.NoError(t, os.WriteFile(src, []byte("#!/bin/sh\necho 0.6.14\n"), 0o755))
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", consts.DefaultEnvdServerPort))
+	if err != nil {
+		t.Skipf("envd port is unavailable: %v", err)
+	}
+	upgradeCalls := make(chan struct{}, 1)
+	envdServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/envs":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/upgrade":
+			upgradeCalls <- struct{}{}
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go func() { _ = envdServer.Serve(listener) }()
+	t.Cleanup(func() { _ = envdServer.Close() })
+
+	orchestrator, reader := upgradeGateServer(t, src, filepath.Join(dir, "base"), false)
+	sbx := upgradeSandbox("0.6.13")
+	user := "sandbox"
+	sbx.Config.Envd.DefaultUser = &user
+	sbx.Resources = &sandbox.Resources{Slot: &network.Slot{HostIP: net.ParseIP("127.0.0.1")}}
+
+	upgraded, err := orchestrator.maybeUpgradeEnvd(t.Context(), sbx)
+	require.NoError(t, err)
+	require.False(t, upgraded)
+	select {
+	case <-upgradeCalls:
+		t.Fatal("envd upgrade was triggered without captured environment defaults")
+	default:
+	}
+	require.Equal(t, map[string]int64{"env_vars_unavailable": 1},
+		counterPoints(t, reader, telemetry.OrchestratorEnvdUpgradeGated, "reason"))
+	require.Empty(t, counterPoints(t, reader, telemetry.OrchestratorEnvdUpgradeAttempts, "result"))
 }
 
 // TestUpgradeWithTheCacheFlagOffProbesTheSourceItself is the direction that shows
