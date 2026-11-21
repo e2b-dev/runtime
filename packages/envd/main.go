@@ -213,6 +213,17 @@ func run(stop <-chan struct{}) error {
 	}
 	l := logs.NewLogger(verbose, logWriters...)
 
+	if !isNotFC {
+		// The guest's only IPv4 address is link-local, which software that
+		// requires a routable address to consider the host online (e.g.
+		// Tailscale's network monitor) reads as "no network". Add the RFC 7600
+		// dummy address; a failure must not block startup — egress does not
+		// depend on it.
+		if err := host.EnsureRoutableAddr(); err != nil {
+			l.Warn().Err(err).Msg("failed to add the RFC 7600 dummy address to eth0")
+		}
+	}
+
 	m := chi.NewRouter()
 
 	envLogger := l.With().Str("logger", "envd").Logger()
