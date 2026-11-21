@@ -953,6 +953,9 @@ var (
 	// BuildReservedDiskSpaceMB is the amount of disk space in MB reserved for root on the guest filesystem.
 	// Reserved blocks are only usable by root (uid 0), protecting the guest OS from disk-full conditions.
 	BuildReservedDiskSpaceMB = NewIntFlag("build-reserved-disk-space-mb", 256)
+	// MaxConcurrentTemplateBuilds limits active template builds on one builder.
+	// A value below 1 uses the default limit of four.
+	MaxConcurrentTemplateBuilds = NewIntFlag("max-concurrent-template-builds", 4)
 
 	// BuildBootDiagnosticsFlag inspects the rootfs before each build cold boot and annotates
 	// an envd timeout with what it found. Off means no inspection.

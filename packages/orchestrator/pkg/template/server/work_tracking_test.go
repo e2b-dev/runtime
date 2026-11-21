@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/launchdarkly/go-sdk-common/v3/ldcontext"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
@@ -32,10 +33,11 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
+	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 // cpuTemplate is the raw build-cpu-template flag value; "" leaves the flag unset.
-func newWorkTrackingServer(t *testing.T, fcVersion, cpuTemplate string) (*ServerStore, *storage.MockStorageProvider, *templatemanager.TemplateCreateRequest) {
+func newWorkTrackingServer(t *testing.T, fcVersion, cpuTemplate string, buildLimit ...int) (*ServerStore, *storage.MockStorageProvider, *templatemanager.TemplateCreateRequest) {
 	t.Helper()
 
 	td := ldtestdata.DataSource()
@@ -44,12 +46,17 @@ func newWorkTrackingServer(t *testing.T, fcVersion, cpuTemplate string) (*Server
 	}
 	td.Update(td.Flag(featureflags.BuildFirecrackerVersion.Key()).ValueForAll(ldvalue.String(fcVersion)))
 	td.Update(td.Flag(featureflags.BuildEnvdVersion.Key()).ValueForAll(ldvalue.String("")))
+	if len(buildLimit) > 0 {
+		td.Update(td.Flag(featureflags.MaxConcurrentTemplateBuilds.Key()).ValueForAll(ldvalue.Int(buildLimit[0])))
+	}
 	flags, err := featureflags.NewClientWithDatasource(td)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
 	provider := storage.NewMockStorageProvider(t)
 	meter := noop.NewMeterProvider()
 	buildMetrics, err := metrics.NewBuildMetrics(meter)
+	require.NoError(t, err)
+	buildLimiter, err := utils.NewAdjustableSemaphore(4)
 	require.NoError(t, err)
 	l := logger.NewNopLogger()
 	s := &ServerStore{
@@ -58,6 +65,7 @@ func newWorkTrackingServer(t *testing.T, fcVersion, cpuTemplate string) (*Server
 		buildLogger:     l,
 		featureFlags:    flags,
 		buildCache:      cache.NewBuildCache(t.Context(), meter),
+		buildLimiter:    buildLimiter,
 		templateStorage: provider,
 		wg:              &sync.WaitGroup{},
 		builder: build.NewBuilder(
@@ -74,6 +82,84 @@ func newWorkTrackingServer(t *testing.T, fcVersion, cpuTemplate string) (*Server
 			Source: &templatemanager.TemplateConfig_FromImage{FromImage: "alpine:latest"},
 		},
 	}
+}
+
+func TestTemplateCreateLimitsConcurrentBuilds(t *testing.T) {
+	t.Parallel()
+
+	s, provider, req := newWorkTrackingServer(t, featureflags.DefaultFirecrackerVersion, "", 2)
+	started := make(chan string, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	provider.EXPECT().DeleteObjectsWithPrefix(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, buildID string) error {
+			started <- buildID
+			<-release
+			return nil
+		}).Times(3)
+
+	for i := range 3 {
+		request := *req
+		cfg := *req.Template
+		cfg.BuildID = string(rune('a' + i))
+		request.Template = &cfg
+		_, err := s.TemplateCreate(t.Context(), &request)
+		require.NoError(t, err, "the RPC must return while the build waits")
+	}
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("two builds did not start")
+		}
+	}
+	require.Equal(t, int64(2), s.activeBuilds.Load())
+	select {
+	case <-started:
+		t.Fatal("a third build started above the limit")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("queued build did not start after a slot was released")
+	}
+	s.wg.Wait()
+	require.Zero(t, s.activeBuilds.Load())
+	require.Zero(t, s.info.OutstandingWork())
+}
+
+func TestTemplateBuildDeleteCancelsQueuedBuild(t *testing.T) {
+	t.Parallel()
+
+	s, provider, req := newWorkTrackingServer(t, featureflags.DefaultFirecrackerVersion, "", 1)
+	req.Template.BuildID = "running"
+	started, release := blockTemplateCleanup(t, provider, req.Template.BuildID, nil)
+	_, err := s.TemplateCreate(t.Context(), req)
+	require.NoError(t, err)
+	<-started
+
+	queued := *req
+	queuedConfig := *req.Template
+	queuedConfig.BuildID = "queued"
+	queued.Template = &queuedConfig
+	_, err = s.TemplateCreate(t.Context(), &queued)
+	require.NoError(t, err)
+	provider.EXPECT().DeleteObjectsWithPrefix(mock.Anything, queuedConfig.BuildID).Return(nil).Once()
+	_, err = s.TemplateBuildDelete(t.Context(), &templatemanager.TemplateBuildDeleteRequest{
+		TemplateID: queuedConfig.TemplateID,
+		BuildID:    queuedConfig.BuildID,
+	})
+	require.NoError(t, err)
+	release()
+	s.wg.Wait()
+	info, err := s.buildCache.Get(queuedConfig.BuildID)
+	require.NoError(t, err)
+	require.Equal(t, templatemanager.TemplateBuildState_Failed, info.GetStatus())
+	require.Zero(t, s.info.OutstandingWork())
 }
 
 func blockTemplateCleanup(t *testing.T, provider *storage.MockStorageProvider, buildID string, err error) (<-chan struct{}, func()) {
