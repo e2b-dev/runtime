@@ -17,6 +17,7 @@ var (
 	snapshotDiffBytes  = utils.Must(telemetry.GetHistogram(meter, telemetry.SnapshotDiffBytes))
 	snapshotDiffRatio  = utils.Must(telemetry.GetFloatHistogram(meter, telemetry.SnapshotDiffRatio))
 	snapshotTotalBytes = utils.Must(telemetry.GetHistogram(meter, telemetry.SnapshotTotalBytes))
+	checkpointChangeFootprint = utils.Must(telemetry.GetCounter(meter, telemetry.OrchestratorCheckpointChangeFootprintCounterName))
 )
 
 type SnapshotUseCase string
@@ -25,6 +26,16 @@ const (
 	SnapshotUseCasePause SnapshotUseCase = "pause"
 	SnapshotUseCaseBuild SnapshotUseCase = "build"
 )
+
+// snapshotCleanThresholdBytes is the dirty-bytes ceiling (one typical block)
+// at or below which a per-file snapshot diff counts as "clean" — nothing
+// recovery-relevant changed in that dimension since the diff's baseline.
+const snapshotCleanThresholdBytes = 4096
+
+// snapshotDiffClean reports whether a dirty-byte count is clean (<= one block).
+func snapshotDiffClean(dirtyBytes int64) bool {
+	return dirtyBytes <= snapshotCleanThresholdBytes
+}
 
 func recordSnapshotDiff(
 	ctx context.Context,
@@ -51,6 +62,16 @@ func recordSnapshotDiff(
 	if dm.Empty != nil {
 		emptyBytes = int64(dm.Empty.GetCardinality()) * bs
 	}
+
+	// Change-footprint: one count per file_type per pause, sliced by whether
+	// this dimension was clean. The clean rate is the fs-only-downgrade / skip
+	// opportunity measured on real traffic (answers "how often is a checkpoint
+	// a no-op?"); both dimensions clean on one pause is the full-skip rate.
+	checkpointChangeFootprint.Add(ctx, 1, metric.WithAttributes(
+		ft,
+		attribute.Bool("clean", snapshotDiffClean(dirtyBytes)),
+		team,
+	))
 	for kind, b := range map[string]int64{
 		"dirty": dirtyBytes,
 		"empty": emptyBytes,
