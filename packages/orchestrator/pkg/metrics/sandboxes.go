@@ -19,6 +19,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/envd"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -61,21 +62,75 @@ type SandboxObserver struct {
 
 	sandboxes *sandbox.Map
 
-	meter       metric.Meter
-	cpuTotal    metric.Int64ObservableGauge
-	cpuUsed     metric.Float64ObservableGauge
-	cpuPossible metric.Int64ObservableGauge
-	cpuTarget   metric.Int64ObservableGauge
-	cpuAttempts metric.Int64ObservableGauge
-	cpuPending  metric.Int64ObservableGauge
-	memoryTotal metric.Int64ObservableGauge
-	memoryUsed  metric.Int64ObservableGauge
-	memoryCache metric.Int64ObservableGauge
-	diskTotal   metric.Int64ObservableGauge
-	diskUsed    metric.Int64ObservableGauge
+	meter            metric.Meter
+	cpuTotal         metric.Int64ObservableGauge
+	cpuUsed          metric.Float64ObservableGauge
+	cpuPossible      metric.Int64ObservableGauge
+	cpuTarget        metric.Int64ObservableGauge
+	cpuAttempts      metric.Int64ObservableGauge
+	cpuPending       metric.Int64ObservableGauge
+	memoryTotal      metric.Int64ObservableGauge
+	memoryUsed       metric.Int64ObservableGauge
+	memoryCache      metric.Int64ObservableGauge
+	memWorkingSet    metric.Int64ObservableGauge
+	memReclaimable   metric.Int64ObservableGauge
+	memShareableBase metric.Int64ObservableGauge
+	diskTotal        metric.Int64ObservableGauge
+	diskUsed         metric.Int64ObservableGauge
+
+	featureFlags *featureflags.Client
 }
 
-func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit, serviceVersion, serviceInstanceID string, sandboxes *sandbox.Map) (*SandboxObserver, error) {
+// reclaimableBytes estimates pool memory the node holds for a sandbox that the
+// guest is not actively using — the opportunity a later live reclaim (balloon
+// inflate + host-side punch) could return to the hugepage pool.
+//
+//   - faultedBytes:    host bytes faulted into the pool since resume
+//     (MemoryWorkingSetBytes); an upper bound on current pool residency.
+//   - guestInUseBytes:  the guest's actively-used RAM (envd-reported, excluding
+//     reclaimable page cache). 0/absent yields the whole footprint as the
+//     upper-bound estimate.
+//   - freePageReporting: whether the sandbox's balloon returns freed pages to
+//     the host itself. When true the pool is largely self-reclaiming, so the
+//     standing reclaim opportunity is reported as 0 rather than double-counting
+//     pages the device already discards.
+//
+// shareableBaseBytes is a per-template lower bound on the pool memory a
+// same-template page-sharing scheme could reclaim on this node: with N
+// sandboxes of one template each holding a private copy of the base image, one
+// shared copy would keep one and free the other N-1. Using the SMALLEST
+// base-image footprint among them keeps it a lower bound — it never claims more
+// than every sandbox demonstrably faulted. Fewer than two sandboxes share
+// nothing, so it returns 0.
+func shareableBaseBytes(sourceBytes []int64) int64 {
+	if len(sourceBytes) < 2 {
+		return 0
+	}
+
+	minBytes := sourceBytes[0]
+	for _, b := range sourceBytes[1:] {
+		if b < minBytes {
+			minBytes = b
+		}
+	}
+
+	return int64(len(sourceBytes)-1) * minBytes
+}
+
+func reclaimableBytes(faultedBytes, guestInUseBytes int64, freePageReporting bool) int64 {
+	if freePageReporting {
+		return 0
+	}
+
+	r := faultedBytes - guestInUseBytes
+	if r < 0 {
+		return 0
+	}
+
+	return r
+}
+
+func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit, serviceVersion, serviceInstanceID string, sandboxes *sandbox.Map, featureFlags *featureflags.Client) (*SandboxObserver, error) {
 	deltaTemporality := otlpmetricgrpc.WithTemporalitySelector(func(kind sdkmetric.InstrumentKind) metricdata.Temporality {
 		// Use delta temporality for gauges and cumulative for all other instrument kinds.
 		// This is used to prevent reporting sandbox metrics indefinitely.
@@ -163,22 +218,41 @@ func NewSandboxObserver(ctx context.Context, nodeID, serviceName, serviceCommit,
 		return nil, fmt.Errorf("failed to create disk used gauge: %w", err)
 	}
 
+	memWorkingSet, err := telemetry.GetGaugeInt(meter, telemetry.SandboxMemWorkingSetGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory working-set gauge: %w", err)
+	}
+
+	memReclaimable, err := telemetry.GetGaugeInt(meter, telemetry.SandboxMemReclaimableGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory reclaimable gauge: %w", err)
+	}
+
+	memShareableBase, err := telemetry.GetGaugeInt(meter, telemetry.SandboxMemShareableBaseGaugeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory shareable-base gauge: %w", err)
+	}
+
 	so := &SandboxObserver{
-		exportInterval: sandboxMetricExportPeriod,
-		meterExporter:  externalMeterExporter,
-		sandboxes:      sandboxes,
-		meter:          meter,
-		cpuTotal:       cpuTotal,
-		cpuUsed:        cpuUsed,
-		cpuPossible:    cpuPossible,
-		cpuTarget:      cpuTarget,
-		cpuAttempts:    cpuAttempts,
-		cpuPending:     cpuPending,
-		memoryTotal:    memoryTotal,
-		memoryUsed:     memoryUsed,
-		memoryCache:    memoryCache,
-		diskTotal:      diskTotal,
-		diskUsed:       diskUsed,
+		exportInterval:   sandboxMetricExportPeriod,
+		meterExporter:    externalMeterExporter,
+		sandboxes:        sandboxes,
+		meter:            meter,
+		cpuTotal:         cpuTotal,
+		cpuUsed:          cpuUsed,
+		cpuPossible:      cpuPossible,
+		cpuTarget:        cpuTarget,
+		cpuAttempts:      cpuAttempts,
+		cpuPending:       cpuPending,
+		memoryTotal:      memoryTotal,
+		memoryUsed:       memoryUsed,
+		memoryCache:      memoryCache,
+		diskTotal:        diskTotal,
+		diskUsed:         diskUsed,
+		memWorkingSet:    memWorkingSet,
+		memReclaimable:   memReclaimable,
+		memShareableBase: memShareableBase,
+		featureFlags:     featureFlags,
 	}
 
 	registration, err := so.startObserving()
@@ -198,6 +272,24 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 			// Size the limit from the snapshot it iterates: a limit of 0 blocks the
 			// first Go forever, and with it this callback and the SDK pipeline.
 			sbxs := so.sandboxes.Items()
+
+			// Density observability (off by default): per-template lower bound on
+			// pool memory a same-template page-sharing scheme could reclaim. In
+			// memory only (no RPC): group the resident sandboxes by build and emit
+			// (N-1) x min(base footprint) per build with >= 2 sandboxes.
+			if so.featureFlags != nil && so.featureFlags.BoolFlag(ctx, featureflags.SandboxDensityMetricsFlag) {
+				byBuild := make(map[string][]int64)
+				for _, sbx := range sbxs {
+					byBuild[sbx.Runtime.BuildID] = append(byBuild[sbx.Runtime.BuildID], sbx.MemorySourceBytes())
+				}
+				for buildID, srcBytes := range byBuild {
+					est := shareableBaseBytes(srcBytes)
+					if est == 0 {
+						continue
+					}
+					o.ObserveInt64(so.memShareableBase, est, metric.WithAttributes(attribute.String("build_id", buildID)))
+				}
+			}
 
 			wg := errgroup.Group{}
 			// Run concurrently to prevent blocking if there are many sandboxes other callbacks
@@ -285,6 +377,22 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 						o.ObserveInt64(so.memoryUsed, memoryUsed, attributes)
 					}
 
+					// Density observability (off by default): host-pool footprint
+					// and reclaim estimate. Flag-gated so no new series are produced
+					// until explicitly enabled.
+					if so.featureFlags != nil && so.featureFlags.BoolFlag(ctx, featureflags.SandboxDensityMetricsFlag) {
+						workingSet := sbx.MemoryWorkingSetBytes()
+						o.ObserveInt64(so.memWorkingSet, workingSet, attributes)
+
+						guestInUse := int64(0)
+						if memoryReported {
+							guestInUse = memoryUsed
+						}
+						o.ObserveInt64(so.memReclaimable,
+							reclaimableBytes(workingSet, guestInUse, sbx.FreePageReportingActive()),
+							attributes)
+					}
+
 					ok, err := utils.IsGTEVersion(sbx.Config.Envd.Version, minEnvdVersionForCacheMetrics)
 					if err != nil {
 						logger.L().Error(ctx, "Failed to check envd version for cache metrics", zap.Error(err), logger.WithSandboxID(sbx.Runtime.SandboxID))
@@ -343,7 +451,8 @@ func (so *SandboxObserver) startObserving() (metric.Registration, error) {
 
 			return nil
 		}, so.cpuTotal, so.cpuUsed, so.cpuPossible, so.cpuTarget, so.cpuAttempts, so.cpuPending,
-		so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed)
+		so.memoryTotal, so.memoryUsed, so.memoryCache, so.diskTotal, so.diskUsed,
+		so.memWorkingSet, so.memReclaimable, so.memShareableBase)
 	if err != nil {
 		return nil, err
 	}
