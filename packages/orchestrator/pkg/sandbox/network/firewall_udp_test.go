@@ -165,7 +165,7 @@ func TestFirewall_NonDNSUDP_RuleShape(t *testing.T) { //nolint:paralleltest // m
 		{NonDNSUDPModeDrop, []ruleShape{nonDNSUDPDrop, establishedNonUDPAccept, establishedReplyAccept, allowSetAccept, denySetDrop, nonTCPUserAllow, nonTCPUserDeny}},
 		{NonDNSUDPModeOff, defaultChain},
 	} {
-		require.NoError(t, slot.Firewall.ApplyRules(t.Context(), false, tc.mode, nil, nil))
+		require.NoError(t, slot.Firewall.ApplyRules(t.Context(), false, tc.mode, nil, nil, false))
 		require.Equal(t, tc.want, filterChainShapes(t, slot.NamespaceID()), "mode %s", tc.mode)
 	}
 }
@@ -189,11 +189,11 @@ func TestParseNonDNSUDPMode(t *testing.T) {
 func TestFirewall_NonDNSUDP_BYOPKeepsTCPPath(t *testing.T) { //nolint:paralleltest // mutates the caller's netns via LockOSThread + netns.Set; cannot run in parallel
 	slot := newFirewallTestSlot(t, "fw-non-dns-udp-byop")
 
-	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeOff, nil, nil))
+	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeOff, nil, nil, false))
 	byopChain := []ruleShape{establishedNonUDPAccept, establishedReplyAccept, allowSetAccept, nonTCPDenySetDrop, nonTCPUserAllow, nonTCPUserDeny}
 	require.Equal(t, byopChain, filterChainShapes(t, slot.NamespaceID()))
 
-	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeDrop, nil, nil))
+	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), true, NonDNSUDPModeDrop, nil, nil, false))
 	got := filterChainShapes(t, slot.NamespaceID())
 	require.Equal(t, []ruleShape{nonDNSUDPDrop, establishedNonUDPAccept, establishedReplyAccept, allowSetAccept, nonTCPDenySetDrop, nonTCPUserAllow, nonTCPUserDeny}, got)
 
@@ -309,7 +309,7 @@ func ruleHandles(rules []*nftables.Rule) []uint64 {
 func TestFirewall_DenyEgressReplacesInstalledChain(t *testing.T) { //nolint:paralleltest // mutates the caller's netns via LockOSThread + netns.Set; cannot run in parallel
 	slot := newFirewallTestSlot(t, "fw-deny-egress-descriptor")
 
-	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), false, NonDNSUDPModeDrop, nil, []string{"10.0.0.0/8"}))
+	require.NoError(t, slot.Firewall.ApplyRules(t.Context(), false, NonDNSUDPModeDrop, nil, []string{"10.0.0.0/8"}, false))
 	require.Equal(t, ChainDescriptor{Mode: NonDNSUDPModeDrop, Posture: postureRules}, slot.Firewall.Installed())
 
 	require.NoError(t, slot.DenyEgress(t.Context()))
@@ -324,7 +324,7 @@ func TestFirewall_HarvestSnapshotIsOneChainGeneration(t *testing.T) { //nolint:p
 	fw := slot.Firewall
 	ctx := t.Context()
 
-	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, nil))
+	require.NoError(t, fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, nil, false))
 
 	const rounds = 50
 	done := make(chan error, 1)
@@ -334,7 +334,7 @@ func TestFirewall_HarvestSnapshotIsOneChainGeneration(t *testing.T) { //nolint:p
 			if i%2 == 1 {
 				denied = []string{"10.0.0.0/8"}
 			}
-			if err := fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, denied); err != nil {
+			if err := fw.ApplyRules(ctx, false, NonDNSUDPModeCount, nil, denied, false); err != nil {
 				done <- err
 
 				return
