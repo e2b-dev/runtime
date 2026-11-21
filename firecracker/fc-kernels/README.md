@@ -51,7 +51,21 @@ Then add the version to `kernel_versions.txt` and build.
 
 ## Flavours
 
-A flavour is the same upstream tree and patches built under a different config, named `<version>-<flavour>`: `6.1.158-android` is `6.1.158` with binder, DMA-BUF heaps, Android's networking options, a small patch that answers Android's ashmem ioctls on memfd files instead of an ashmem driver, and PSI (pressure stall information) on by default, so a sandbox can run Android in a container. The other configs build PSI in but leave it off unless the guest cmdline says `psi=1`; Android's low-memory killer daemon needs `/proc/pressure`, and without it the UI never comes up. `build.sh` takes the upstream tag and the `patches/` directory from the stem (`6.1.158`) and everything else — the config, the output directory, and so the published name a template selects — from the full name. Seed a flavour's config from its stem's and settle it the same way as a new version (`sudo env CONFIG_ONLY=1 ./build.sh 6.1.158-android`, per architecture). A flavour is a sibling of its stem, not a patch release: the weekly bump neither seeds from it nor bumps it. A flavour may also carry patches of its own under `patches/<version>-<flavour>/`; they apply after the stem's, and a change there rebuilds only that flavour.
+A flavour is the same upstream tree and patches built under a different config, named `<stem>-<flavour>`: `6.1.190-android` is `6.1.190` with binder, DMA-BUF heaps, Android's networking options, a small patch that answers Android's ashmem ioctls on memfd files instead of an ashmem driver, and PSI (pressure stall information) on by default, so a sandbox can run Android in a container. The other configs build PSI in but leave it off unless the guest cmdline says `psi=1`; Android's low-memory killer daemon needs `/proc/pressure`, and without it the UI never comes up. `build.sh` takes the upstream tag and `patches/<stem>/` from the stem and everything else (the config, the output directory, and so the published name a template selects) from the full name.
+
+A flavour is defined once, for every stem: `flavours/<arch>/<flavour>.config` holds only the lines it changes in a stem's config, and `patches/<flavour>/` the patches it carries on top of the stem's. When `patches/<stem>-<flavour>/` holds patches, they replace `patches/<flavour>/` for that one build, for a stem the shared patches no longer apply to. `scripts/flavour_fragment.py` derives a fragment from a flavoured config and the config it was seeded from; each fragment's header says which pair it came from.
+
+What builds is still one full, resolved config per pin, `configs/<arch>/<stem>-<flavour>.config`, reviewed and committed like any other. When that file does not exist yet, `CONFIG_ONLY=1` seeds it from `configs/<arch>/<stem>.config` with the fragment appended (Kconfig takes a symbol's last assignment, so the fragment wins), resolves it with `olddefconfig` as for any version, and fails without writing it if any fragment line did not survive unchanged: `olddefconfig` quietly turns off a symbol whose dependencies the tree no longer meets, which would ship the flavour without what it exists for. A config that exists is re-settled like any version, and the fragment is checked again. A build never seeds.
+
+So when the bump adds a stem, it adds `<stem>-android` next to it and seeds it the same way, per architecture on that architecture's machine:
+
+```sh
+sudo env CONFIG_ONLY=1 ./build.sh 6.1.190-android
+sudo env CONFIG_ONLY=1 ./build.sh 6.1.190-android arm64
+sudo chown -R "$(id -u):$(id -g)" configs
+```
+
+A fragment line that does not survive is a flavour change to review, not a line to drop. A stem is never seeded from a flavour, and older flavoured pins (`6.1.158-android`) keep building from their own committed configs. To change the flavour itself, edit the fragment and re-seed the newest flavoured config (remove it and run `CONFIG_ONLY=1` again).
 
 ## New kernel in E2B's infra
 _Note: these steps should give you a new kernel on your self-hosted E2B using https://github.com/e2b-dev/infra_

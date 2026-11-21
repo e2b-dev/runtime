@@ -9,7 +9,8 @@ set -euo pipefail
 #
 # arch is one of: x86_64 (default), arm64 (kernel-style names).
 # A version may carry a flavour, 6.1.158-android: the upstream tag and the patches
-# come from its stem (6.1.158), the config and the output from the full name.
+# come from its stem (6.1.158), the config and the output from the full name. The
+# flavour's own patches (patches/android/) apply after the stem's.
 # Output: builds/vmlinux-<version>/<output_arch>/vmlinux.bin where
 # <output_arch> is the Go/OCI name (amd64/arm64) used by the orchestrator.
 #
@@ -20,6 +21,11 @@ set -euo pipefail
 # than silently taking upstream defaults at build time. It needs an explicit
 # version — it overwrites the config it reads, and doing that to every pinned
 # version at once is never what anyone means.
+#
+# A flavour on a stem it has no config for yet, 6.1.190-android, is seeded from
+# the stem's config plus flavours/<arch>/<flavour>.config, and CONFIG_ONLY=1
+# fails unless every line of that fragment survives olddefconfig unchanged. A
+# build never seeds: it reads the committed config like any other version.
 
 HOST_ARCH="$(uname -m)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,6 +84,34 @@ version_stem() {
   echo "${1%%-*}"
 }
 
+# The flavour a pin is built under: android for 6.1.158-android, empty for 6.1.158.
+version_flavour() {
+  [[ "$1" != *-* ]] || echo "${1#*-}"
+}
+
+# The lines of a flavour fragment the resolved config does not carry, each with
+# the value it resolved to. A symbol the config leaves out is n, as Kconfig reads
+# it: olddefconfig drops "is not set" for a symbol whose dependencies are off.
+fragment_lost() {
+  local fragment="$1" config="$2"
+  awk '
+    {
+      if (match($0, /^CONFIG_[A-Za-z0-9_]+=/)) {
+        sym = substr($0, 1, RLENGTH - 1); val = substr($0, RLENGTH + 1)
+      } else if ($0 ~ /^# CONFIG_[A-Za-z0-9_]+ is not set$/) {
+        sym = $2; val = "n"
+      } else {
+        next
+      }
+    }
+    FILENAME == ARGV[1] { have[sym] = val; next }
+    {
+      got = (sym in have) ? have[sym] : "n"
+      if (got != val) print "  " $0 " (resolved to " got ")"
+    }
+  ' "$config" "$fragment"
+}
+
 # The salt Kconfig carries into the vmlinux as an ELF note, naming what the
 # binary was built from. It is a plain string symbol, so olddefconfig keeps
 # whatever the config it reads says: a config seeded from another version names
@@ -123,10 +157,21 @@ build_version() {
 
   echo "Starting build for kernel version: $version (${target_arch})"
 
-  cp "$SCRIPT_DIR/configs/${target_arch}/${version}.config" .config
-
-  local stem tag=""
+  local stem flavour fragment="" tag=""
   stem="$(version_stem "$version")"
+  flavour="$(version_flavour "$version")"
+  [ -z "$flavour" ] || fragment="$SCRIPT_DIR/flavours/${target_arch}/${flavour}.config"
+  [ -f "$fragment" ] || fragment=""
+
+  if [[ "${CONFIG_ONLY:-}" == "1" && -n "$fragment" && ! -f "$SCRIPT_DIR/configs/${target_arch}/${version}.config" ]]; then
+    # Kconfig takes the last assignment of a symbol, so the fragment wins
+    # wherever it and the stem's config disagree.
+    echo "Seeding $version from configs/${target_arch}/${stem}.config and flavours/${target_arch}/${flavour}.config"
+    cat "$SCRIPT_DIR/configs/${target_arch}/${stem}.config" "$fragment" >.config
+  else
+    cp "$SCRIPT_DIR/configs/${target_arch}/${version}.config" .config
+  fi
+
   # get_tag greps, so no match is a non-zero exit, not just empty output.
   tag="$(get_tag "$stem")" || true
   if [ -z "$tag" ]; then
@@ -139,8 +184,16 @@ build_version() {
   git clean -fdq
 
   apply_patches "$stem"
-  # A flavour may carry patches of its own, applied after its stem's.
-  [ "$version" = "$stem" ] || apply_patches "$version"
+  # A flavour may carry patches of its own, applied after its stem's: those in
+  # patches/<flavour>/, which every stem shares, unless patches/<version>/ holds
+  # a set for this stem alone, for when the shared one no longer applies.
+  if [ -n "$flavour" ]; then
+    if compgen -G "$SCRIPT_DIR/patches/$version/*.patch" >/dev/null; then
+      apply_patches "$version"
+    else
+      apply_patches "$flavour"
+    fi
+  fi
 
   local make_opts="" cross=""
   if [[ "$target_arch" == "arm64" ]]; then
@@ -165,6 +218,18 @@ build_version() {
   make $make_opts olddefconfig
 
   if [[ "${CONFIG_ONLY:-}" == "1" ]]; then
+    # olddefconfig quietly overrides a value whose dependencies the tree does not
+    # meet, which would ship the flavour without what it exists for.
+    if [ -n "$fragment" ]; then
+      local lost
+      lost="$(fragment_lost "$fragment" .config)"
+      if [ -n "$lost" ]; then
+        echo "The $version tree does not keep these flavours/${target_arch}/${flavour}.config lines:" >&2
+        echo "$lost" >&2
+        return 1
+      fi
+      echo "Every flavours/${target_arch}/${flavour}.config line survived on $version"
+    fi
     echo "Writing the resolved config back to configs/${target_arch}/${version}.config"
     cp .config "$SCRIPT_DIR/configs/${target_arch}/${version}.config"
     return 0

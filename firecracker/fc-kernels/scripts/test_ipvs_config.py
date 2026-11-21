@@ -10,10 +10,12 @@ VERSIONS = [
     for line in (ROOT / "kernel_versions.txt").read_text(encoding="utf-8").splitlines()
     if (version := line.partition("#")[0].strip())
 ]
+# A pin without a config on some arch fails test_flavours.py, not every test here.
 CONFIGS = [
-    ROOT / "configs" / arch / f"{version}.config"
+    config
     for arch in ("x86_64", "arm64")
     for version in VERSIONS
+    if (config := ROOT / "configs" / arch / f"{version}.config").is_file()
 ] + sorted((ROOT / "configs").glob("*.config"))
 IPVS_SINCE = (6, 1, 189)
 
