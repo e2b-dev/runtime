@@ -158,6 +158,38 @@ func TestPlaceSandbox_HardFailureNotWrapped(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, result.TimedOut, "a live-context failure must not be reported as a timeout")
 	assert.Nil(t, result.WarmedNode, "a live-context failure must not surface a warming node")
+	assert.EqualValues(t, 1, node.PlacementMetrics.FailsCount(), "a live-context failure must count against the node")
+}
+
+// TestPlaceSandbox_CutCreateNotCountedAgainstNode verifies that a create cut by
+// its own context (the caller left) is NOT counted as a node failure: the node
+// keeps a zero createFails and is not excluded, because a client disconnect says
+// nothing about the node's health. See issue #3683.
+func TestPlaceSandbox_CutCreateNotCountedAgainstNode(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	node := nodemanager.NewTestNode("node-cut", api.NodeStatusReady, 0, 8)
+	// The create cancels the request context and then fails - a client that
+	// disconnected (or whose deadline fired) while the create was in flight.
+	node.SetSandboxClient(erroringClient(cancel, status.Error(codes.Canceled, "context canceled")))
+
+	result, err := PlaceSandbox(
+		ctx,
+		failIfCalled(t),
+		[]*nodemanager.Node{node},
+		node,
+		testSbxRequest("sbx-cut"),
+		CPURequirement{},
+		false,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.True(t, result.TimedOut, "a cut create must be reported as a timeout")
+	assert.Zero(t, node.PlacementMetrics.FailsCount(), "a cut create must not count against the node")
+	assert.Zero(t, node.PlacementMetrics.InProgressCount(), "a cut create must drop its in-progress reservation")
 }
 
 // TestPlaceSandbox_ResourceExhaustedNotPinned verifies that a node which refused
