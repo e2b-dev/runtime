@@ -27,11 +27,12 @@ var _ sandbox.MapSubscriber = (*Proxy)(nil)
 var _ network.EgressProxy = (*Proxy)(nil)
 
 type Proxy struct {
-	logger       logger.Logger
-	sandboxes    *sandbox.Map
-	metrics      *Metrics
-	limiter      *connlimit.ConnectionLimiter
-	featureFlags *featureflags.Client
+	logger         logger.Logger
+	sandboxes      *sandbox.Map
+	metrics        *Metrics
+	limiter        *connlimit.ConnectionLimiter
+	classification *classificationAdmission
+	featureFlags   *featureflags.Client
 
 	// Separate ports for different traffic types to avoid protocol detection blocking
 	// on server-first protocols like SSH.
@@ -47,15 +48,16 @@ type Proxy struct {
 
 func New(logger logger.Logger, networkConfig network.Config, sandboxes *sandbox.Map, meterProvider metric.MeterProvider, featureFlags *featureflags.Client) *Proxy {
 	p := &Proxy{
-		httpPort:     networkConfig.SandboxTCPFirewallHTTPPort,
-		tlsPort:      networkConfig.SandboxTCPFirewallTLSPort,
-		otherPort:    networkConfig.SandboxTCPFirewallOtherPort,
-		egressTOS:    networkConfig.EgressTOS(),
-		logger:       logger,
-		sandboxes:    sandboxes,
-		metrics:      NewMetrics(meterProvider),
-		limiter:      connlimit.NewConnectionLimiter(),
-		featureFlags: featureFlags,
+		httpPort:       networkConfig.SandboxTCPFirewallHTTPPort,
+		tlsPort:        networkConfig.SandboxTCPFirewallTLSPort,
+		otherPort:      networkConfig.SandboxTCPFirewallOtherPort,
+		egressTOS:      networkConfig.EgressTOS(),
+		logger:         logger,
+		sandboxes:      sandboxes,
+		metrics:        NewMetrics(meterProvider),
+		limiter:        connlimit.NewConnectionLimiter(),
+		classification: newClassificationAdmission(),
+		featureFlags:   featureFlags,
 	}
 
 	p.proxyRules = []proxyRule{
@@ -76,12 +78,16 @@ func (p *Proxy) OnStopping(_ context.Context, _ *sandbox.Sandbox) {}
 
 func (p *Proxy) OnNetworkRelease(_ context.Context, sbx *sandbox.Sandbox) error {
 	p.limiter.Remove(sbx.LifecycleID)
+	p.classification.limiter.Remove(sbx.LifecycleID)
 
 	return nil
 }
 
 func (p *Proxy) Start(ctx context.Context) error {
 	p.proxy = &tcpproxy.Proxy{}
+	httpAddr := fmt.Sprintf("0.0.0.0:%d", p.httpPort)
+	tlsAddr := fmt.Sprintf("0.0.0.0:%d", p.tlsPort)
+	otherAddr := fmt.Sprintf("0.0.0.0:%d", p.otherPort)
 
 	p.proxy.ListenFunc = func(network, laddr string) (net.Listener, error) {
 		lc := net.ListenConfig{}
@@ -90,11 +96,30 @@ func (p *Proxy) Start(ctx context.Context) error {
 			return nil, err
 		}
 
-		return &resilientListener{
+		listener := &resilientListener{
 			Listener: ln,
 			ctx:      ctx,
 			logger:   p.logger,
-		}, nil
+		}
+		if laddr == httpAddr || laddr == tlsAddr {
+			protocol := ProtocolHTTP
+			if laddr == tlsAddr {
+				protocol = ProtocolTLS
+			}
+			listener.onAccept = func(conn net.Conn) bool {
+				sbx, err := p.sandboxes.GetByHostPort(conn.RemoteAddr().String())
+				if err != nil {
+					p.metrics.RecordError(ctx, ErrorTypeSandboxLookup, protocol)
+					return false
+				}
+				if !p.classification.admit(conn, sbx.LifecycleID) {
+					p.metrics.RecordError(ctx, ErrorTypeLimitExceeded, protocol)
+					return false
+				}
+				return true
+			}
+		}
+		return listener, nil
 	}
 
 	// Three separate addresses for different traffic types.
@@ -102,17 +127,15 @@ func (p *Proxy) Start(ctx context.Context) error {
 	// - dport 80 → httpAddr (HTTP Host header inspection)
 	// - dport 443 → tlsAddr (TLS SNI inspection)
 	// - other dports → otherAddr (CIDR-only, no protocol inspection)
-	httpAddr := fmt.Sprintf("0.0.0.0:%d", p.httpPort)
-	tlsAddr := fmt.Sprintf("0.0.0.0:%d", p.tlsPort)
-	otherAddr := fmt.Sprintf("0.0.0.0:%d", p.otherPort)
 
 	deps := proxyDeps{
-		metrics:      p.metrics,
-		limiter:      p.limiter,
-		logger:       p.logger,
-		sandboxes:    p.sandboxes,
-		featureFlags: p.featureFlags,
-		egressTOS:    p.egressTOS,
+		metrics:        p.metrics,
+		limiter:        p.limiter,
+		classification: p.classification,
+		logger:         p.logger,
+		sandboxes:      p.sandboxes,
+		featureFlags:   p.featureFlags,
+		egressTOS:      p.egressTOS,
 	}
 
 	// HTTP listener (port 80 traffic): inspect Host header for domain allowlist
@@ -244,12 +267,13 @@ type handlerFunc func(ctx context.Context, c egressConn)
 // connections with. Grouped for the same reason as egressConn: one new
 // collaborator is one field, not an edit at all three listeners.
 type proxyDeps struct {
-	metrics      *Metrics
-	limiter      *connlimit.ConnectionLimiter
-	logger       logger.Logger
-	sandboxes    *sandbox.Map
-	featureFlags *featureflags.Client
-	egressTOS    network.EgressTOS
+	metrics        *Metrics
+	limiter        *connlimit.ConnectionLimiter
+	classification *classificationAdmission
+	logger         logger.Logger
+	sandboxes      *sandbox.Map
+	featureFlags   *featureflags.Client
+	egressTOS      network.EgressTOS
 }
 
 var _ tcpproxy.Target = (*connectionHandler)(nil)
@@ -279,6 +303,12 @@ func (t *connectionHandler) HandleConn(conn net.Conn) {
 	// Get the underlying connection for sandbox lookup and original dst.
 	// tcpproxy may wrap in *tcpproxy.Conn for peeked bytes.
 	rawConn := tcpproxy.UnderlyingConn(conn)
+	if t.deps.classification != nil && t.protocol != ProtocolOther {
+		if !t.deps.classification.complete(rawConn) {
+			_ = conn.Close()
+			return
+		}
+	}
 
 	// Look up sandbox by source address
 	sourceAddr := rawConn.RemoteAddr().String()
