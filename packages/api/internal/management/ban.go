@@ -11,9 +11,9 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 )
 
 var ErrInvalidProjectBan = errors.New("invalid project ban state")

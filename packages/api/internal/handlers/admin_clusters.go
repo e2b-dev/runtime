@@ -7,7 +7,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )

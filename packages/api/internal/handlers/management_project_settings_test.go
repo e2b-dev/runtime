@@ -21,10 +21,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	dbapi "github.com/e2b-dev/infra/packages/api/internal/db/readmodel"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
 func TestProjectSettingsApplyOnlyNewerRevisions(t *testing.T) {
@@ -35,7 +36,7 @@ func TestProjectSettingsApplyOnlyNewerRevisions(t *testing.T) {
 	store, auth := newProjectSettingsStore(db)
 	row, err := db.AuthDB.GetTeamByTeamID(t.Context(), teamID)
 	require.NoError(t, err)
-	require.Nil(t, authtypes.NewTeam(row).ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic)
+	require.Nil(t, dbapi.NewTeam(row).ProjectSettings.SandboxSettings.DefaultAllowPublicTraffic)
 
 	for _, tc := range []struct {
 		revision     int64
@@ -60,7 +61,7 @@ func TestProjectSettingsApplyOnlyNewerRevisions(t *testing.T) {
 
 		row, err := db.AuthDB.GetTeamByTeamID(t.Context(), teamID)
 		require.NoError(t, err)
-		cached, err := json.Marshal(authtypes.NewTeam(row))
+		cached, err := json.Marshal(dbapi.NewTeam(row))
 		require.NoError(t, err)
 		var team authtypes.Team
 		require.NoError(t, json.Unmarshal(cached, &team))

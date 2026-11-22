@@ -11,10 +11,10 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	authqueries "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 )
 
 const teamSlugUniqueConstraint = "teams_slug_unique"

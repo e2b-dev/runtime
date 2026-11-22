@@ -10,9 +10,9 @@ package management
 import (
 	"go.opentelemetry.io/otel/metric"
 
-	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
+	"github.com/e2b-dev/infra/packages/api/internal/authservice"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )
 
@@ -20,12 +20,12 @@ import (
 type Service struct {
 	db        *authdb.Client
 	projectDB *sqlcdb.Client
-	cache     sharedauth.Service
+	cache     authservice.Service
 	// clusters is nil without a cluster service.
 	clusters clustersgrpc.ClusterServiceClient
 	applyLag applyLag
 }
 
-func NewService(db *authdb.Client, projectDB *sqlcdb.Client, cache sharedauth.Service, clusters clustersgrpc.ClusterServiceClient, meterProvider metric.MeterProvider) *Service {
+func NewService(db *authdb.Client, projectDB *sqlcdb.Client, cache authservice.Service, clusters clustersgrpc.ClusterServiceClient, meterProvider metric.MeterProvider) *Service {
 	return &Service{db: db, projectDB: projectDB, cache: cache, clusters: clusters, applyLag: newApplyLag(meterProvider)}
 }

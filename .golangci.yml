@@ -62,11 +62,11 @@ linters:
 
   exclusions:
     rules:
-      - path: '^packages/db/pkg/dberrors/dberrors\.go$'
+      - path: '^packages/shared/pkg/postgres/dberrors/dberrors\.go$'
         linters:
           - forbidigo
       - path: '.*_test\.go$'
-        text: "Use github.com/e2b-dev/infra/packages/db/pkg/dberrors.IsNotFoundError instead."
+        text: "Use github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors.IsNotFoundError instead."
         linters:
           - forbidigo
       # Pre-existing packages with non-recommended names ("types", "utils").
@@ -88,10 +88,10 @@ linters:
       forbid:
         - pattern: '.*\.ErrNoRows$'
           pkg: "^database/sql$"
-          msg: "Use github.com/e2b-dev/infra/packages/db/pkg/dberrors.IsNotFoundError instead."
+          msg: "Use github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors.IsNotFoundError instead."
         - pattern: '.*\.ErrNoRows$'
           pkg: '^github\.com/jackc/pgx/v5$'
-          msg: "Use github.com/e2b-dev/infra/packages/db/pkg/dberrors.IsNotFoundError instead."
+          msg: "Use github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors.IsNotFoundError instead."
         #        - pattern: os\.Getenv
         #          msg: "Add your field to the configuration model instead."
         - pattern: 'zap\.New$'

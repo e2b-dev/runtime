@@ -11,8 +11,8 @@ inputs:
       go.work
       packages/*/go.mod
       packages/*/go.sum
-      tests/integration/go.mod
-      tests/integration/go.sum
+      packages/api/integration/go.mod
+      packages/api/integration/go.sum
 
 runs:
   using: "composite"

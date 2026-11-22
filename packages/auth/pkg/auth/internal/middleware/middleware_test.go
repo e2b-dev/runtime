@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/authcontext"
+	"github.com/e2b-dev/infra/packages/auth/pkg/teamdata"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 )
 
 func TestAdminValidationFunction(t *testing.T) {
@@ -43,7 +43,7 @@ func TestAdminTeamAuthenticatorSetsTeamContext(t *testing.T) {
 
 	ctx := t.Context()
 	teamID := uuid.New()
-	team := types.NewTeam(authqueries.GetTeamByTeamIDRow{ID: teamID})
+	team := &types.Team{Team: &teamdata.Team{ID: teamID}}
 
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 	req.Header.Set(HeaderTeamID, teamID.String())

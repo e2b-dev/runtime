@@ -1,0 +1,83 @@
+version: "2"
+
+overrides:
+  go:
+    overrides:
+      - db_type: "uuid"
+        go_type:
+          import: "github.com/google/uuid"
+          type: "UUID"
+      - db_type: "uuid"
+        nullable: true
+        go_type:
+          import: "github.com/google/uuid"
+          type: "UUID"
+          pointer: true
+      - db_type: "timestamptz"
+        go_type: "time.Time"
+      - db_type: "timestamptz"
+        nullable: true
+        go_type:
+          import: "time"
+          type: "Time"
+          pointer: true
+
+sql:
+  - engine: "postgresql"
+    queries:
+      - "queries/**"
+    schema:
+      - "migrations"
+      - "schema/sqlc_overrides.sql"
+    gen:
+      go:
+        emit_pointers_for_null_types: true
+        package: "queries"
+        omit_unused_structs: true
+        out: "queries/"
+        sql_package: "pgx/v5"
+        overrides:
+          - column: "public.env_builds.status_group"
+            go_type: "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types.BuildStatusGroup"
+          - column: "public.env_builds.reason"
+            go_type: "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types.BuildReason"
+          - column: "public.snapshots.config"
+            go_type:
+              import: "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+              type: "PausedSandboxConfig"
+              pointer: true
+            nullable: true
+          - db_type: "pg_catalog.numeric"
+            go_type: "github.com/shopspring/decimal.Decimal"
+          - db_type: "pg_catalog.numeric"
+            nullable: true
+            go_type: "*github.com/shopspring/decimal.Decimal"
+          - db_type: "jsonb"
+            go_type: "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types.JSONBStringMap"
+            nullable: true
+          - db_type: "jsonb"
+            go_type: "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types.JSONBStringMap"
+
+  - engine: "postgresql"
+    queries: "pkg/auth/sql_queries/**"
+    schema:
+      - "migrations"
+      - "schema/sqlc_overrides.sql"
+    gen:
+      go:
+        emit_pointers_for_null_types: true
+        package: "authqueries"
+        omit_unused_structs: true
+        out: "pkg/auth/queries/"
+        sql_package: "pgx/v5"
+
+  - engine: "postgresql"
+    queries: "pkg/testutils/*.sql"
+    schema:
+      - "migrations"
+      - "schema/sqlc_overrides.sql"
+    gen:
+      go:
+        package: "queries"
+        out: "pkg/testutils/queries"
+        sql_package: "pgx/v5"

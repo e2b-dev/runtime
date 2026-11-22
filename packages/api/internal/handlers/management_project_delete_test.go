@@ -12,9 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
+	"github.com/e2b-dev/infra/packages/api/internal/authservice"
+	authqueries "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	redisutils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
@@ -147,7 +148,7 @@ func TestDeleteProjectLeavesALateKeyRefusedByAuth(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	auth, err := sharedauth.NewAuthService(ctx, redisutils.SetupInstance(t), db.AuthDB, sharedauth.ProviderConfig{}, http.DefaultClient)
+	auth, err := authservice.NewAuthService(ctx, redisutils.SetupInstance(t), db.AuthDB, sharedauth.ProviderConfig{}, http.DefaultClient)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, auth.Close(context.WithoutCancel(ctx))) })
 	store, _ := newManagementStore(t, db)
@@ -231,7 +232,7 @@ func TestDeleteProjectEvictsTheDeletedKeysCachedAuth(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	ctx := t.Context()
-	auth, err := sharedauth.NewAuthService(ctx, redisutils.SetupInstance(t), db.AuthDB, sharedauth.ProviderConfig{}, http.DefaultClient)
+	auth, err := authservice.NewAuthService(ctx, redisutils.SetupInstance(t), db.AuthDB, sharedauth.ProviderConfig{}, http.DefaultClient)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, auth.Close(context.WithoutCancel(ctx))) })
 	store, _ := newManagementStore(t, db)

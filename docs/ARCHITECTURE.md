@@ -93,7 +93,7 @@ flowchart TB
 | Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation and sandbox state services on the API's Redis data; the API calls it behind a flag that is off by default |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
-`packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
+`packages/auth` (authentication library), `packages/api/internal/db` (Postgres migrations + sqlc queries),
 `packages/clickhouse` (ClickHouse schema + clients), `packages/otel-collector` (collector config),
 `packages/nomad-nodepool-apm` (autoscaler plugin), `packages/local-dev` (local stack).
 
@@ -121,7 +121,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   binding a JWT to its intended target. An issuer may omit `audiences` only with no
   `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
   and temporal-claim verification remain required.
-  Backed by an auth DB (Postgres) with a Redis team cache.
+  Backed by an API-owned Postgres store with a Redis team cache. The shared auth library does not query Postgres.
 - **Telemetry names**: `GET /unstable/management/telemetry/names` returns the display names of
   assigned teams, from the regional database, and of clusters not being deleted, from the cluster
   service (none without one). Cluster registration stores the telemetry client ID on the cluster
@@ -326,7 +326,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
   works jobs that need the orchestrator connections, and one that carries the API's own
   writes to the cluster service. Its job arguments live in
-  `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted
+  `packages/api/internal/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
   and the job retries rather than kill a live team's sandboxes; a missing team row does not
@@ -839,7 +839,7 @@ answers 408.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, max_ram_mb, start_memory_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start; `max_ram_mb` is NULL for a build whose memory cannot grow, else the most memory its sandboxes can grow to, while `ram_mb` is the boot RAM; `start_memory_mb` is the memory a start from the build runs at when it names none, boot RAM for a template build and the paused sandbox's whole size for a snapshot build, NULL when unknown), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
+| **PostgreSQL** | `packages/api/internal/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, max_ram_mb, start_memory_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start; `max_ram_mb` is NULL for a build whose memory cannot grow, else the most memory its sandboxes can grow to, while `ram_mb` is the boot RAM; `start_memory_mb` is the memory a start from the build runs at when it names none, boot RAM for a template build and the paused sandbox's whole size for a snapshot build, NULL when unknown), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -850,8 +850,12 @@ certificate, key and CA bundle and reloads them every minute. Plaintext is
 limited to gRPC health probes. An isolated local run can explicitly set
 `E2B_TLS_GRPC_MODE=off`.
 
-The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
-`_migrations` table, and `packages/db/schema/schema.sql` declares the `public`
+Only the API service opens this database at runtime. The API module also owns the
+`cmd/migrate` and `cmd/seed-*` commands and the integration tests that use it
+during setup and validation.
+
+The API's schema lives in `packages/api/internal/db/migrations`, tracked in PostgreSQL's
+`_migrations` table, and `packages/api/internal/db/schema/schema.sql` declares the `public`
 and `projection` schemas those migrations build. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.
 Any existing `_dashboard_migrations` table is retained as historical bookkeeping and
@@ -1549,12 +1553,12 @@ packages/
   nomad-nodepool-apm/   Nomad autoscaler metric and deployment-aware target plugins
   local-dev/            docker-compose local stack + DB seeding
 spec/                   OpenAPI specs (public, edge, hyperloop) — codegen sources
-tests/integration/      Integration tests against a live deployment
+packages/api/integration/      Integration tests against a live deployment
 embed/                  E2B Embed: the whole stack on one machine (Compose, Terraform, Kubernetes)
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/api/internal/db/queries/`.
 Run `make generate` after changing any of them.
 Scheduling contracts exist in this checkout only as generated Go code in
 `packages/shared/pkg/grpc/contracts/scheduling/`; their protos are not part of this checkout, so `make generate`

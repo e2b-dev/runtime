@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 )
 
@@ -25,7 +25,7 @@ func TestSnapshotCacheFormatMark(t *testing.T) {
 	key := func(id string) string { return snapshotCacheKeyPrefix + ":" + id }
 	seed := func(t *testing.T, id string, info SnapshotInfo) {
 		t.Helper()
-		data, err := json.Marshal(info)
+		data, err := json.Marshal(info) //nolint:musttag // Snapshot rows use their Go field names in the shared cache format.
 		require.NoError(t, err)
 		require.NoError(t, redisClient.Set(t.Context(), key(id), data, time.Minute).Err())
 	}
@@ -41,7 +41,7 @@ func TestSnapshotCacheFormatMark(t *testing.T) {
 		data, err := redisClient.Get(t.Context(), key("old-format")).Bytes()
 		require.NoError(t, err)
 		var stored SnapshotInfo
-		require.NoError(t, json.Unmarshal(data, &stored))
+		require.NoError(t, json.Unmarshal(data, &stored)) //nolint:musttag // Snapshot rows use their Go field names in the shared cache format.
 		assert.Equal(t, SnapshotInfoFormat, stored.Format)
 		assert.True(t, stored.NotFound)
 	})

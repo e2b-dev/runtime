@@ -7,7 +7,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 )
 
 // unjitteredJobID is a job ID whose jitter is zero: 20 % 41 - 20.

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth/internal/authcontext"
+	"github.com/e2b-dev/infra/packages/auth/pkg/teamdata"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 )
 
 func TestEnforceBlockedTeam(t *testing.T) {
@@ -45,7 +45,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "not blocked passes",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: false}),
+			team:           &types.Team{Team: &teamdata.Team{IsBlocked: false}},
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -53,7 +53,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and allowlisted get passes",
 			method:         http.MethodGet,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
+			team:           &types.Team{Team: &teamdata.Team{IsBlocked: true, BlockedReason: &reason}},
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -61,7 +61,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and allowlisted delete passes",
 			method:         http.MethodDelete,
 			fullPath:       "/sandboxes/:sandboxID",
-			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
+			team:           &types.Team{Team: &teamdata.Team{IsBlocked: true, BlockedReason: &reason}},
 			wantHandlerRan: true,
 			wantStatus:     http.StatusOK,
 		},
@@ -69,7 +69,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and non-allowlisted post denied",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes",
-			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason}),
+			team:           &types.Team{Team: &teamdata.Team{IsBlocked: true, BlockedReason: &reason}},
 			wantHandlerRan: false,
 			wantStatus:     http.StatusForbidden,
 			wantBodyHas:    "team is blocked: " + reason,
@@ -78,7 +78,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 			name:           "blocked and method mismatch on allowlisted path denied",
 			method:         http.MethodPost,
 			fullPath:       "/sandboxes/:sandboxID",
-			team:           types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true}),
+			team:           &types.Team{Team: &teamdata.Team{IsBlocked: true}},
 			wantHandlerRan: false,
 			wantStatus:     http.StatusForbidden,
 			wantBodyHas:    "team is blocked",
@@ -103,7 +103,7 @@ func TestEnforceBlockedTeam(t *testing.T) {
 func TestEnforceBlockedTeam_AllowlistParameterization(t *testing.T) {
 	t.Parallel()
 
-	team := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true})
+	team := &types.Team{Team: &teamdata.Team{IsBlocked: true}}
 	const method, path = http.MethodGet, "/teams/:teamID/members"
 
 	permissive := BlockedTeamAllowlist{method: {path: {}}}
@@ -126,10 +126,10 @@ func TestCheckTeamAccess(t *testing.T) {
 		http.MethodGet: {"/sandboxes": {}},
 	}
 
-	cleanTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{})
-	bannedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBanned: true})
-	blockedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBlocked: true, BlockedReason: &reason})
-	bannedAndBlockedTeam := types.NewTeam(authqueries.GetTeamByTeamIDRow{IsBanned: true, IsBlocked: true, BlockedReason: &reason})
+	cleanTeam := &types.Team{Team: &teamdata.Team{}}
+	bannedTeam := &types.Team{Team: &teamdata.Team{IsBanned: true}}
+	blockedTeam := &types.Team{Team: &teamdata.Team{IsBlocked: true, BlockedReason: &reason}}
+	bannedAndBlockedTeam := &types.Team{Team: &teamdata.Team{IsBanned: true, IsBlocked: true, BlockedReason: &reason}}
 
 	wantForbidden := func(t *testing.T, err error) {
 		t.Helper()
@@ -246,7 +246,7 @@ func TestEnforceReadOnlyMember(t *testing.T) {
 		http.MethodGet: {"/templates/:templateID/files/:hash": {}},
 	}
 	withRole := func(role string) *types.Team {
-		team := types.NewTeam(authqueries.GetTeamByTeamIDRow{})
+		team := &types.Team{Team: &teamdata.Team{}}
 		team.Role = role
 
 		return team

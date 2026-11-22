@@ -23,11 +23,14 @@ import (
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/authservice"
 	sandboxcountscache "github.com/e2b-dev/infra/packages/api/internal/cache/sandboxcounts"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/outbox"
@@ -40,10 +43,6 @@ import (
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/sandboxlogs"
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/pool"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	sharedclusters "github.com/e2b-dev/infra/packages/shared/pkg/clusters/discovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
@@ -56,6 +55,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs/loki"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/pool"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/kube"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery/nomad"
@@ -236,7 +237,7 @@ type APIStore struct {
 	templateCache             *templatecache.TemplateCache
 	templateBuildsCache       *templatecache.TemplatesBuildCache
 	snapshotCache             *snapshotcache.SnapshotCache
-	authService               sharedauth.Service
+	authService               authservice.Service
 	managementService         *management.Service
 	teamService               *team.Service
 	riverClient               *river.Client[pgx.Tx] // set by NewOutbox
@@ -451,7 +452,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 	authClient := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
-	authService, err := sharedauth.NewAuthService(ctx, redisClient, authDB, config.AuthProvider, authClient)
+	authService, err := authservice.NewAuthService(ctx, redisClient, authDB, config.AuthProvider, authClient)
 	if err != nil {
 		logger.L().Fatal(ctx, "Initializing auth service", zap.Error(err))
 	}

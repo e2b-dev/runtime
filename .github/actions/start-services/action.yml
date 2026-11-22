@@ -70,7 +70,7 @@ runs:
 
         set -x
         make migrate
-        make -C tests/integration seed
+        make -C packages/api/integration seed
 
         make -C packages/clickhouse migrate-host
       shell: bash

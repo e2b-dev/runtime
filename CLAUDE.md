@@ -139,7 +139,7 @@ Client → Client-Proxy → API (REST) ⟷ PostgreSQL
 - Storage: `pkg/storage/` (GCS/S3 clients)
 - Feature flags: `pkg/featureflags/` (LaunchDarkly)
 
-**Database (`packages/db/`)** - PostgreSQL layer
+**Database (`packages/api/internal/db/`)** - PostgreSQL layer
 - Migrations: `migrations/*.sql` (goose)
 - Queries: `queries/*.sql` (sqlc)
 - Generated code: `queries/` (plus `pkg/auth/queries/`)
@@ -169,9 +169,9 @@ The codebase uses several code generators:
    - Run: `make generate/api`
 
 3. **SQL** (`sqlc`)
-   - Queries: `packages/db/queries/*.sql`
+   - Queries: `packages/api/internal/db/queries/*.sql`
    - Generates: Type-safe DB code
-   - Run: `make generate/db`
+   - Run: `make generate/api`
 
 4. **Mocks** (`mockery`)
    - Config: `.mockery.yaml`
@@ -180,8 +180,8 @@ The codebase uses several code generators:
 ### Testing Patterns
 
 - **Unit tests**: Use `testify/assert` and `testify/require`: `require` for checks that stop the test, `assert` for checks that let it continue
-- **Database tests**: `packages/db/pkg/testutils.SetupDatabase` gives each test its own database on the PostgreSQL server `PG_TEST_DATABASE_URL` names (see [DEV-LOCAL.md](DEV-LOCAL.md#unit-tests-that-need-postgresql))
-- **Integration tests**: `tests/integration/` with shared test utilities
+- **Database tests**: `packages/api/internal/db/pkg/testutils.SetupDatabase` gives each test its own database on the PostgreSQL server `PG_TEST_DATABASE_URL` names (see [DEV-LOCAL.md](DEV-LOCAL.md#unit-tests-that-need-postgresql))
+- **Integration tests**: `packages/api/integration/` with shared test utilities
 - **Mocking**: Generated mocks in `mocks/` directories
 - **Race detection**: Tests run with `-race` flag
 
@@ -202,11 +202,11 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 - After editing proto files, run `make generate/orchestrator` and `make generate/shared`
 
 ### Database Migrations
-- Migrations: `packages/db/migrations/`
-- Schema: `packages/db/schema/schema.sql` declares what the migrations build; change it in the same commit as the migration. Migrations generated from it carry a `Code generated` header.
-- Create: `cd packages/db && make create-migration NAME=your-migration-name` — this generates the file with a correct `YYYYMMDDHHMMSS` timestamp. Do NOT hand-create migration files; placeholder timestamps like `120000`/`000000` cause same-day version collisions and are rejected by the out-of-order-migrations CI check.
+- Migrations: `packages/api/internal/db/migrations/`
+- Schema: `packages/api/internal/db/schema/schema.sql` declares what the migrations build; change it in the same commit as the migration. Migrations generated from it carry a `Code generated` header.
+- Create: `cd packages/api && make create-migration NAME=your-migration-name` — this generates the file with a correct `YYYYMMDDHHMMSS` timestamp. Do NOT hand-create migration files; placeholder timestamps like `120000`/`000000` cause same-day version collisions and are rejected by the out-of-order-migrations CI check.
 - Apply: `make migrate` (requires POSTGRES_CONNECTION_STRING)
-- Code generation: `make generate/db` (regenerates sqlc code)
+- Code generation: `make generate/api` (regenerates sqlc code)
 
 ### Environment Variables
 - Local development defaults: `packages/<service>/.env.local`; see [DEV-LOCAL.md](DEV-LOCAL.md).

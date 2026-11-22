@@ -59,7 +59,7 @@ jobs:
 
       - name: Build and vet packages (pure Go)
         run: |
-          for pkg in api client-proxy envd shared db; do
+          for pkg in api auth client-proxy envd shared; do
             echo "::group::packages/$pkg"
             pushd "packages/$pkg" > /dev/null
             GOARCH=arm64 go build ./...
@@ -144,11 +144,6 @@ jobs:
             redis: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404-arm
-          - package: packages/db
-            test_path: ./...
-            postgres: true
-            sudo: false
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
           # envd mounts via bindfs (FUSE, no modprobe); this shard doubles as
           # the FUSE-on-Blacksmith canary — if it fails, pin it back to
           # infra-runner-arm.
@@ -162,6 +157,7 @@ jobs:
             runner: infra-runner-arm
           - package: packages/shared
             test_path: ./pkg/...
+            postgres: true
             redis: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404-arm

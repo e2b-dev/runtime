@@ -82,7 +82,7 @@
 
   <rect x="832" y="44" width="106" height="44" class="node node-ext"/>
   <text x="885" y="58" class="name" text-anchor="middle">runtime mirror</text>
-  <text x="885" y="70" class="sub" text-anchor="middle">shared, db, local-dev</text>
+  <text x="885" y="70" class="sub" text-anchor="middle">api/cmd/seed-local</text>
   <text x="885" y="82" class="sub sub-xs" text-anchor="middle">external, pinned commit</text>
 
   <line x1="16" y1="108" x2="1046" y2="108" class="sep"/>

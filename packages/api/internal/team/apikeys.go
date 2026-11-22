@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/authservice"
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
+	authqueries "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -49,7 +49,7 @@ func CreateAPIKey(ctx context.Context, authDB *authdb.Client, teamID uuid.UUID, 
 	}, nil
 }
 
-func DeleteAPIKey(ctx context.Context, authDB *authdb.Client, authService sharedauth.Service, teamID uuid.UUID, apiKeyID uuid.UUID) (bool, error) {
+func DeleteAPIKey(ctx context.Context, authDB *authdb.Client, authService authservice.Service, teamID uuid.UUID, apiKeyID uuid.UUID) (bool, error) {
 	hashes, err := authDB.DeleteTeamAPIKey(ctx, authqueries.DeleteTeamAPIKeyParams{
 		ID:     apiKeyID,
 		TeamID: teamID,
