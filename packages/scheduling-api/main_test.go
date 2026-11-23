@@ -17,7 +17,8 @@ import (
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
@@ -27,8 +28,8 @@ import (
 const hangTimeout = 30 * time.Second
 
 var (
-	reservationServiceName = scheduling.ReservationService_ServiceDesc.ServiceName
-	stateServiceName       = scheduling.StateService_ServiceDesc.ServiceName
+	reservationServiceName = reservationpb.ReservationService_ServiceDesc.ServiceName
+	stateServiceName       = statepb.StateService_ServiceDesc.ServiceName
 )
 
 func TestServe(t *testing.T) {
@@ -58,19 +59,19 @@ func TestServe(t *testing.T) {
 		watches[service] = watch
 	}
 
-	client := scheduling.NewReservationServiceClient(conn)
+	client := reservationpb.NewReservationServiceClient(conn)
 	team, sandbox := uuid.NewString(), "sbx-"+uuid.NewString()
-	reserved, err := client.Reserve(callCtx, scheduling.ReserveRequest_builder{TeamId: team, SandboxId: sandbox, Limit: 10}.Build())
+	reserved, err := client.Reserve(callCtx, reservationpb.ReserveRequest_builder{TeamId: team, SandboxId: sandbox, Limit: 10}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserved.GetOutcome())
-	_, err = client.FinishStart(callCtx, scheduling.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox, Result: []byte("result")}.Build())
+	require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserved.GetOutcome())
+	_, err = client.FinishStart(callCtx, reservationpb.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox, Result: []byte("result")}.Build())
 	require.NoError(t, err)
-	waited, err := client.WaitForStart(callCtx, scheduling.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+	waited, err := client.WaitForStart(callCtx, reservationpb.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, waited.GetOutcome())
+	require.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, waited.GetOutcome())
 	require.Equal(t, []byte("result"), waited.GetResult())
 
-	state := scheduling.NewStateServiceClient(conn)
+	state := statepb.NewStateServiceClient(conn)
 	teamID := uuid.New()
 	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	record, err := json.Marshal(sandboxtypes.Sandbox{
@@ -82,15 +83,15 @@ func TestServe(t *testing.T) {
 		State:       sandboxtypes.StateRunning,
 	})
 	require.NoError(t, err)
-	added, err := state.Add(callCtx, scheduling.AddRequest_builder{Record: record}.Build())
+	added, err := state.Add(callCtx, statepb.AddRequest_builder{Record: record}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, added.GetOutcome())
-	got, err := state.Get(callCtx, scheduling.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandbox}.Build())
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, added.GetOutcome())
+	got, err := state.Get(callCtx, statepb.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandbox}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, got.GetOutcome())
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, got.GetOutcome())
 	require.JSONEq(t, string(record), string(got.GetRecord()), "Get returns the added record")
 
-	items, err := state.TeamItems(callCtx, scheduling.TeamItemsRequest_builder{TeamId: teamID.String()}.Build())
+	items, err := state.TeamItems(callCtx, statepb.TeamItemsRequest_builder{TeamId: teamID.String()}.Build())
 	require.NoError(t, err)
 	var streamed [][]byte
 	for {
@@ -104,27 +105,27 @@ func TestServe(t *testing.T) {
 	require.Len(t, streamed, 1, "TeamItems streams the added record")
 	require.JSONEq(t, string(record), string(streamed[0]))
 
-	begun, err := state.BeginRemoving(callCtx, scheduling.BeginRemovingRequest_builder{
+	begun, err := state.BeginRemoving(callCtx, statepb.BeginRemovingRequest_builder{
 		TeamId:    teamID.String(),
 		SandboxId: sandbox,
-		Options:   scheduling.RemoveOptions_builder{Action: scheduling.RemoveAction_REMOVE_ACTION_KILL}.Build(),
+		Options:   statepb.RemoveOptions_builder{Action: statepb.RemoveAction_REMOVE_ACTION_KILL}.Build(),
 	}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, begun.GetOutcome())
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, begun.GetOutcome())
 	transitionID := begun.GetTransition().GetId()
 	require.NotEmpty(t, transitionID, "this call started the kill")
-	finished, err := state.FinishTransition(callCtx, scheduling.FinishTransitionRequest_builder{
+	finished, err := state.FinishTransition(callCtx, statepb.FinishTransitionRequest_builder{
 		TeamId:       teamID.String(),
 		SandboxId:    sandbox,
 		TransitionId: transitionID,
-		Action:       scheduling.RemoveAction_REMOVE_ACTION_KILL,
-		Result:       scheduling.TransitionResult_builder{}.Build(),
+		Action:       statepb.RemoveAction_REMOVE_ACTION_KILL,
+		Result:       statepb.TransitionResult_builder{}.Build(),
 	}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, finished.GetOutcome())
-	transitionWait, err := state.WaitForTransition(callCtx, scheduling.WaitForTransitionRequest_builder{TeamId: teamID.String(), SandboxId: sandbox, TransitionId: transitionID}.Build())
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, finished.GetOutcome())
+	transitionWait, err := state.WaitForTransition(callCtx, statepb.WaitForTransitionRequest_builder{TeamId: teamID.String(), SandboxId: sandbox, TransitionId: transitionID}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED, transitionWait.GetOutcome())
+	require.Equal(t, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED, transitionWait.GetOutcome())
 
 	stop()
 	for service, watch := range watches {

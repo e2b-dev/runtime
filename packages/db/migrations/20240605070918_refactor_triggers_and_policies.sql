@@ -49,8 +49,6 @@ $extra_for_post_user_signup$ SECURITY DEFINER SET search_path = public;
 
 ALTER TABLE public.access_tokens ALTER COLUMN access_token SET DEFAULT public.generate_access_token();
 
-ALTER FUNCTION public.extra_for_post_user_signup(uuid, uuid) OWNER TO trigger_user;
-
 CREATE OR REPLACE FUNCTION public.post_user_signup()
     RETURNS TRIGGER
     LANGUAGE plpgsql
@@ -75,8 +73,6 @@ BEGIN
     RETURN NEW;
 END
 $post_user_signup$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.post_user_signup() OWNER TO trigger_user;
 
 CREATE OR REPLACE TRIGGER post_user_signup
     AFTER INSERT ON auth.users

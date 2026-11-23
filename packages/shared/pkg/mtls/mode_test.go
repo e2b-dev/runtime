@@ -148,11 +148,11 @@ func TestStaticSourcesNeverChange(t *testing.T) {
 
 	var mode ModeSource = StaticMode(ModePermissive)
 	assert.Equal(t, ModePermissive, mode.Mode(t.Context()))
-	assert.Equal(t, SourceFallback, sourceOf(mode))
+	assert.Equal(t, SourceStatic, sourceOf(mode))
 
 	var client ClientModeSource = StaticClientMode(ClientOn)
 	assert.Equal(t, ClientOn, client.ClientMode(t.Context()))
-	assert.Equal(t, SourceFallback, sourceOf(client))
+	assert.Equal(t, SourceStatic, sourceOf(client))
 }
 
 func TestFlagModeSourceStartsOnTheFallbackAndFollowsTheFlag(t *testing.T) {
@@ -336,7 +336,7 @@ func TestModeAndSourceAreReadTogether(t *testing.T) {
 
 	mode, source = modeWithSource(t.Context(), StaticMode(ModeOff))
 	assert.Equal(t, ModeOff, mode)
-	assert.Equal(t, SourceFallback, source, "a static source has no flag behind it")
+	assert.Equal(t, SourceStatic, source, "a static source has no flag behind it")
 
 	hop := NewFlagClientModeSource(flags, "hop-mode", ClientOff)
 	flags.set("hop-mode", "on")

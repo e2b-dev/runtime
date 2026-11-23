@@ -74,3 +74,19 @@ func TestEnvVars_ReplaceUserVarsClearsOmittedKeys(t *testing.T) {
 		"FOO":         "1",
 	}, e.All())
 }
+
+func TestEnvVars_UserVars(t *testing.T) {
+	t.Parallel()
+	e := NewEnvVars()
+
+	e.Store("E2B_SANDBOX", "true")
+	require.True(t, e.StoreUser("FOO", "1"))
+	require.True(t, e.StoreUser("EMPTY", ""))
+
+	got := e.UserVars()
+	assert.Equal(t, map[string]string{"FOO": "1", "EMPTY": ""}, got)
+
+	got["FOO"] = "changed"
+	v, _ := e.Load("FOO")
+	assert.Equal(t, "1", v, "the result is a copy")
+}

@@ -7,6 +7,7 @@ package authqueries
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -134,7 +135,7 @@ func (q *Queries) InsertManagedTeam(ctx context.Context, arg InsertManagedTeamPa
 
 const lockManagedTeam = `-- name: LockManagedTeam :one
 
-SELECT slug, cluster_id FROM public.teams
+SELECT slug, cluster_id, deleted_at FROM public.teams
 WHERE id = $1::uuid
 FOR UPDATE
 `
@@ -142,18 +143,16 @@ FOR UPDATE
 type LockManagedTeamRow struct {
 	Slug      string
 	ClusterID *uuid.UUID
+	DeletedAt *time.Time
 }
 
 // Project reconciliation for the control-plane management interface. The caller
 // supplies the id, so create and reconcile are one request and these are its
 // branches.
-// Taken first, so the branch is decided by whether the project exists rather
-// than by an insert failing. Returns the slug and the cluster so a reconcile
-// can tell whether either moves.
 func (q *Queries) LockManagedTeam(ctx context.Context, id uuid.UUID) (LockManagedTeamRow, error) {
 	row := q.db.QueryRow(ctx, lockManagedTeam, id)
 	var i LockManagedTeamRow
-	err := row.Scan(&i.Slug, &i.ClusterID)
+	err := row.Scan(&i.Slug, &i.ClusterID, &i.DeletedAt)
 	return i, err
 }
 
@@ -162,18 +161,16 @@ UPDATE public.teams
 SET
     name = $1::text,
     slug = $2::text,
-    email = $3::text,
-    cluster_id = COALESCE($4::uuid, cluster_id)
-WHERE id = $5::uuid
+    email = $3::text
+WHERE id = $4::uuid
 RETURNING id, name, slug, email, cluster_id
 `
 
 type UpdateManagedTeamParams struct {
-	Name      string
-	Slug      string
-	Email     string
-	ClusterID *uuid.UUID
-	ID        uuid.UUID
+	Name  string
+	Slug  string
+	Email string
+	ID    uuid.UUID
 }
 
 type UpdateManagedTeamRow struct {
@@ -191,7 +188,6 @@ func (q *Queries) UpdateManagedTeam(ctx context.Context, arg UpdateManagedTeamPa
 		arg.Name,
 		arg.Slug,
 		arg.Email,
-		arg.ClusterID,
 		arg.ID,
 	)
 	var i UpdateManagedTeamRow

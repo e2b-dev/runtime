@@ -37,6 +37,7 @@ import (
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	managementv1 "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/secretsstore/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
@@ -277,7 +278,7 @@ func TestPostSecretsSendsOnlyDerivedProjectAndValue(t *testing.T) {
 	require.NoError(t, err)
 
 	ginCtx, recorder, teamID := newSecretsRequest(t, http.MethodPost, "/secrets", string(body))
-	store.PostSecrets(ginCtx)
+	store.PostSecrets(ginCtx, api.PostSecretsParams{})
 
 	require.Equal(t, http.StatusCreated, recorder.Code)
 	require.Equal(t, 1, backend.callCount())
@@ -549,7 +550,7 @@ func TestSecretsValueForwardedUntouched(t *testing.T) {
 		require.NoError(t, err)
 
 		ginCtx, recorder, _ := newSecretsRequest(t, http.MethodPost, "/secrets", string(body))
-		store.PostSecrets(ginCtx)
+		store.PostSecrets(ginCtx, api.PostSecretsParams{})
 
 		require.Equal(t, http.StatusCreated, recorder.Code)
 		require.Len(t, backend.createRequests, 1)
@@ -587,7 +588,7 @@ func TestPostSecretsProjectSecretsLimit(t *testing.T) {
 
 			backend := &fakeSecretsBackend{secret: backendSecret()}
 			store := newSecretsStore(t, startSecretsBackend(t, backend), true)
-			store.PostSecrets(ginCtx)
+			store.PostSecrets(ginCtx, api.PostSecretsParams{})
 
 			require.Equal(t, http.StatusCreated, recorder.Code)
 			require.Len(t, backend.createRequests, 1)
@@ -680,6 +681,7 @@ func TestSecretsBackendErrorMapping(t *testing.T) {
 			store.GetSecretsSecretID(ginCtx, "my-secret")
 
 			require.Equal(t, test.wantStatus, recorder.Code)
+			require.Empty(t, recorder.Header().Values(apierrors.ShouldRetryHeader), "only secret creation sends a retry hint")
 			requireNoSentinel(t, "backend failure response", recorder.Body.String(), sentinelBackendMessage)
 
 			for _, ginErr := range ginCtx.Errors {
@@ -716,7 +718,7 @@ func TestSecretsLimitErrorResponse(t *testing.T) {
 			requestBody, err := json.Marshal(api.NewSecret{Name: "my-secret", Value: sentinelSecretValue})
 			require.NoError(t, err)
 			ginCtx, recorder, _ := newSecretsRequest(t, http.MethodPost, "/secrets", string(requestBody))
-			store.PostSecrets(ginCtx)
+			store.PostSecrets(ginCtx, api.PostSecretsParams{})
 
 			require.Equal(t, http.StatusConflict, recorder.Code)
 			requireNoSentinel(t, "quota error response", recorder.Body.String(), sentinelBackendMessage, sentinelSecretValue)
@@ -822,7 +824,7 @@ func TestSecretsMutationsAreAttemptedOnce(t *testing.T) {
 			store := newSecretsStore(t, startSecretsBackend(t, backend), true)
 
 			createCtx, _, _ := newSecretsRequest(t, http.MethodPost, "/secrets", `{"name":"my-secret","value":"v"}`)
-			store.PostSecrets(createCtx)
+			store.PostSecrets(createCtx, api.PostSecretsParams{})
 			require.Len(t, backend.createRequests, 1, "a create is attempted exactly once")
 
 			updateCtx, _, _ := newSecretsRequest(t, http.MethodPost, "/secrets/my-secret", `{"value":"v"}`)
@@ -959,7 +961,7 @@ func TestSecretsManagementClientIsLazyAndFailsFast(t *testing.T) {
 	ginCtx, recorder, _ := newSecretsRequest(t, http.MethodPost, "/secrets", `{"name":"my-secret","value":"v"}`)
 
 	start := time.Now()
-	store.PostSecrets(ginCtx)
+	store.PostSecrets(ginCtx, api.PostSecretsParams{})
 	elapsed := time.Since(start)
 
 	require.Equal(t, http.StatusBadGateway, recorder.Code)
@@ -1205,7 +1207,7 @@ func Test_SecretsHandlers_CacheControl(t *testing.T) {
 		method, target string
 		serve          func(store *APIStore, c *gin.Context)
 	}{
-		"create": {http.MethodPost, "/secrets", func(store *APIStore, c *gin.Context) { store.PostSecrets(c) }},
+		"create": {http.MethodPost, "/secrets", func(store *APIStore, c *gin.Context) { store.PostSecrets(c, api.PostSecretsParams{}) }},
 		"list":   {http.MethodGet, "/secrets", func(store *APIStore, c *gin.Context) { store.GetSecrets(c, api.GetSecretsParams{}) }},
 		"get":    {http.MethodGet, "/secrets/my-secret", func(store *APIStore, c *gin.Context) { store.GetSecretsSecretID(c, "my-secret") }},
 		"update": {http.MethodPost, "/secrets/my-secret", func(store *APIStore, c *gin.Context) { store.PostSecretsSecretID(c, "my-secret") }},

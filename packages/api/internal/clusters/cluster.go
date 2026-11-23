@@ -70,6 +70,32 @@ var (
 // field and builds a fixed-size template.
 var ResizableTemplateBuildsMinVersion = semver.New(0, 16, 202610191109, "", "")
 
+// TemplateMemoryMaximumMinVersion is the first orchestrator release whose
+// template builder honours TemplateConfig.maxMemoryMB; an older one drops the
+// field and builds a template whose memory cannot grow.
+var TemplateMemoryMaximumMinVersion = semver.New(0, 30, 202611091759, "", "")
+
+// SandboxMemoryResizeMinVersion is the first orchestrator release that both
+// plugs SandboxConfig.memory_mb at start and reserves only boot RAM plus that
+// size in huge pages. An older one either drops the field and starts the
+// sandbox at its previous size, or reserves the template's whole maximum while
+// the API counts the size it asked for.
+var SandboxMemoryResizeMinVersion = semver.New(0, 30, 202611161749, "", "")
+
+// TemplateBuilderMinVersion is the oldest builder that honours every sizing
+// field a build sets, or nil when it sets none.
+func TemplateBuilderMinVersion(maxVCpu, maxMemoryMB *int64) *semver.Version {
+	var minVersion *semver.Version
+	if maxVCpu != nil {
+		minVersion = ResizableTemplateBuildsMinVersion
+	}
+	if maxMemoryMB != nil && (minVersion == nil || minVersion.LessThan(TemplateMemoryMaximumMinVersion)) {
+		minVersion = TemplateMemoryMaximumMinVersion
+	}
+
+	return minVersion
+}
+
 // InstanceAtLeast reports whether an instance's service version is at or above
 // minVersion. An empty or unparsable version fails the check. Compared without
 // the pre-release: distributions stamp a suffix onto the shared release
@@ -224,6 +250,7 @@ func (c *Cluster) Start(ctx context.Context, mode initialSyncMode) {
 		return
 	}
 
+	ctx = logger.ContextWithFields(ctx, logger.WithClusterID(c.ID))
 	go c.synchronization.Start(ctx, instancesSyncInterval, instancesSyncTimeout, mode == syncImmediately)
 }
 

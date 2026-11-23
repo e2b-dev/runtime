@@ -162,6 +162,6 @@ func TestAnalyticsHopIsNotBuiltOffTheHopPath(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Nil(t, tlsConfig.hops.Analytics)
-	assert.Equal(t, int64(-1), servicetest.HopMode(t, metrics, "analytics", "off", mtls.SourceFallback))
-	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "orchestrator", "off", mtls.SourceFallback), "the other hops still report")
+	assert.Equal(t, int64(-1), servicetest.HopMode(t, metrics, "analytics", "off", mtls.SourceStatic))
+	assert.Equal(t, int64(1), servicetest.HopMode(t, metrics, "orchestrator", "off", mtls.SourceStatic), "the other hops still report")
 }

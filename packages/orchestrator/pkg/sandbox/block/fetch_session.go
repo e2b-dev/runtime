@@ -16,6 +16,9 @@ type fetchSession struct {
 	chunkOff int64
 	chunkLen int64
 	cache    *Cache
+	// readAhead marks a fetch started ahead of a sequential reader rather
+	// than for a read waiting on it. Set before the fetch starts.
+	readAhead bool
 
 	mu   sync.Mutex
 	cond sync.Cond // broadcast on progress; lazily initialized with mu
@@ -43,6 +46,14 @@ func (s *fetchSession) Source() storage.Source {
 // contains reports whether the session covers the byte range [off, off+length).
 func (s *fetchSession) contains(off, length int64) bool {
 	return s.chunkOff <= off && s.chunkOff+s.chunkLen >= off+length
+}
+
+// err returns the error the session failed with, nil while it runs or after it succeeded.
+func (s *fetchSession) err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.fetchErr
 }
 
 // terminated reports whether the session reached a terminal state.

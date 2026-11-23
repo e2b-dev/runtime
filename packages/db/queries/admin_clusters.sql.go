@@ -26,20 +26,6 @@ func (q *Queries) CountAdminClusterTeams(ctx context.Context, clusterID uuid.UUI
 	return total, err
 }
 
-const countAdminClusterTemplates = `-- name: CountAdminClusterTemplates :one
-SELECT COUNT(*)::bigint AS total
-FROM public.envs
-WHERE cluster_id = $1::uuid
-  AND deleted_at IS NULL
-`
-
-func (q *Queries) CountAdminClusterTemplates(ctx context.Context, clusterID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countAdminClusterTemplates, clusterID)
-	var total int64
-	err := row.Scan(&total)
-	return total, err
-}
-
 const countLiveTeamsByCluster = `-- name: CountLiveTeamsByCluster :many
 SELECT cluster_id::uuid AS cluster_id, COUNT(*)::bigint AS team_count
 FROM public.teams
@@ -54,7 +40,7 @@ type CountLiveTeamsByClusterRow struct {
 }
 
 // The cluster records themselves come from the cluster service; this counts
-// each cluster's live teams for the admin cluster list.
+// each cluster's live teams.
 func (q *Queries) CountLiveTeamsByCluster(ctx context.Context) ([]CountLiveTeamsByClusterRow, error) {
 	rows, err := q.db.Query(ctx, countLiveTeamsByCluster)
 	if err != nil {

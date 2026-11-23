@@ -94,9 +94,10 @@ func (a *APIStore) PostSandboxesSandboxIDPause(c *gin.Context, sandboxID api.San
 	pause.LogInitiated(ctx, sandboxID, teamID.String(), pause.ReasonRequest, filesystemOnly)
 
 	err = a.pauseWithinRateLimit(ctx, backend, teamID, sandboxID, sandbox.RemoveOpts{
-		Action:             sandbox.StateActionPause,
-		FilesystemOnly:     filesystemOnly,
-		RequireEnvdHealthy: requireEnvdHealthy,
+		WaitForLifecycleHold: true,
+		Action:               sandbox.StateActionPause,
+		FilesystemOnly:       filesystemOnly,
+		RequireEnvdHealthy:   requireEnvdHealthy,
 	})
 	var transErr *sandbox.InvalidStateTransitionError
 	var limitErr pauseRateLimitedError

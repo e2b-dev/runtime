@@ -78,6 +78,9 @@ type PutOptions struct {
 	Compression any
 	FrameSink   FrameSink
 	Checksum    bool
+	// Overwrite marks a blob put whose object may already hold other content,
+	// so a cache in front of the store must not keep its older copy.
+	Overwrite bool
 }
 
 func WithFrameSink(s FrameSink) PutOption { return func(o *PutOptions) { o.FrameSink = s } }
@@ -101,6 +104,8 @@ func WithMetadata(metadata ObjectMetadata) PutOption {
 func WithCompression(cfg any) PutOption {
 	return func(o *PutOptions) { o.Compression = cfg }
 }
+
+func WithOverwrite() PutOption { return func(o *PutOptions) { o.Overwrite = true } }
 
 func Apply(opts []PutOption) PutOptions {
 	var p PutOptions

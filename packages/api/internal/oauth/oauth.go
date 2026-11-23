@@ -23,9 +23,10 @@ type Verifier interface {
 }
 
 type Claims struct {
-	Subject string
-	OrgID   string
-	Scopes  []string
+	ClusterID string
+	Subject   string
+	OrgID     string
+	Scopes    []string
 }
 
 type tokenClaims struct {

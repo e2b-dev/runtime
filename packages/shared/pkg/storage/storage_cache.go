@@ -45,6 +45,7 @@ type cache struct {
 	chunkSize int64
 	inner     StorageProvider
 	flags     *featureflags.Client
+	index     CacheIndexRecorder
 
 	tracer trace.Tracer
 }
@@ -71,6 +72,7 @@ func WrapInNFSCache(
 	rootPath string,
 	inner StorageProvider,
 	flags *featureflags.Client,
+	opts ...CacheOption,
 ) StorageProvider {
 	cacheTracer := tracer
 
@@ -79,13 +81,18 @@ func WrapInNFSCache(
 		cacheTracer = noop.NewTracerProvider().Tracer("github.com/e2b-dev/infra/packages/shared/pkg/storage")
 	}
 
-	return &cache{
+	c := &cache{
 		rootPath:  rootPath,
 		inner:     inner,
 		chunkSize: MemoryChunkSize,
 		flags:     flags,
 		tracer:    cacheTracer,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 func (c cache) DeleteObjectsWithPrefix(ctx context.Context, prefix string) error {
@@ -130,6 +137,7 @@ func (c cache) OpenBlob(ctx context.Context, path string) (Blob, error) {
 		inner:     innerObject,
 		flags:     c.flags,
 		tracer:    c.tracer,
+		index:     newIndexToucher(c.index, path),
 	}, nil
 }
 
@@ -157,6 +165,7 @@ func (c cache) OpenSeekable(ctx context.Context, path string) (Seekable, error) 
 		flags:     c.flags,
 		tracer:    c.tracer,
 		objType:   objType,
+		index:     newIndexToucher(c.index, path),
 	}, nil
 }
 

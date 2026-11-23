@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage/cacheindex"
 )
 
 // otherFilesBytesEstimate is the flat size charged for a build's non-chunk data
@@ -32,6 +33,13 @@ type Cleaner struct {
 	logger.Logger
 
 	metrics *Metrics
+
+	// index is the last-use index, nil when index mode is off. handled holds
+	// the builds this run's index pass kept or deleted, which sampling skips.
+	index   *cacheindex.Index
+	handled sync.Map
+	// folderAge replaces buildAge in index mode (tests).
+	folderAge func(path string) time.Duration
 
 	// cacheBytesEstimate is the whole cache's estimated size after the scan:
 	// CacheBytes, scaled up by rootBuilds/scanned when build sampling is on.
@@ -102,6 +110,10 @@ type Options struct {
 	// RunBudget bounds a run's wall time from its start: once spent, no more
 	// deletes are queued and no more sample batches start. 0 = no budget.
 	RunBudget time.Duration
+
+	// IndexMode is IndexOff (or empty) or IndexOn; it only takes effect with
+	// an index set (SetIndex).
+	IndexMode string
 }
 
 // Why a run's delete phase stopped, as logged in "deletion selected".
@@ -111,6 +123,8 @@ const (
 	stopExhausted = "exhausted"
 	stopBudget    = "budget"
 	stopCanceled  = "canceled"
+	// stopIndexError: index mode lost Redis mid-run; the run samples the rest.
+	stopIndexError = "index_error"
 )
 
 // batched reports whether a run scans further samples while its target is unmet.
@@ -202,6 +216,11 @@ func (o Options) Validate() error {
 	if o.RunBudget < 0 {
 		errs = append(errs, errors.New("run-budget must be >= 0"))
 	}
+	switch o.IndexMode {
+	case "", IndexOff, IndexOn:
+	default:
+		errs = append(errs, fmt.Errorf("index-mode must be %q or %q", IndexOff, IndexOn))
+	}
 
 	return errors.Join(errs...)
 }
@@ -227,12 +246,50 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// The index build follows the deletes, so its listing never takes their
+	// budget, and precedes the completion record, so the run time includes it.
+	indexed := c.useIndex()
+	finish := func() {
+		if indexed {
+			c.buildIndexIfDue(ctx, deadline)
+		}
+		c.logCleanComplete(ctx, start)
+	}
+
+	if indexed {
+		switch stop := c.cleanFromIndex(ctx, deadline); stop {
+		case stopExhausted, stopIndexError:
+			if !deadline.IsZero() && !time.Now().Before(deadline) {
+				// No budget left to list and scan: end short rather than overrun.
+				c.metrics.recordUnderTarget(ctx)
+				c.Info(ctx, "run budget spent by the cache index pass; not sampling", zap.String("index_stop_reason", stop))
+				finish()
+
+				return nil
+			}
+			// The index ran out or Redis failed: sampling frees what is left.
+			c.TargetBytesToDelete -= min(c.BytesFreed.Load(), c.TargetBytesToDelete)
+			c.Info(ctx, "sampling after the cache index", zap.String("index_stop_reason", stop),
+				zap.Uint64("target_bytes_left", c.TargetBytesToDelete))
+		default:
+			finish()
+
+			return nil
+		}
+	}
+
 	names, batchSize, total, err := c.list(ctx, root)
 	if err != nil {
 		return err
 	}
+	names = slices.DeleteFunc(names, c.indexHandled)
 	c.cleanBatches(ctx, names, batchSize, total, deadline)
+	finish()
 
+	return nil
+}
+
+func (c *Cleaner) logCleanComplete(ctx context.Context, start time.Time) {
 	dur := time.Since(start)
 	c.metrics.recordLastRunDuration(ctx, dur)
 	c.Info(ctx, "clean complete",
@@ -240,8 +297,6 @@ func (c *Cleaner) Clean(ctx context.Context) error {
 		zap.Uint64("bytes_freed_estimate", c.BytesFreed.Load()),
 		zap.Uint64("cache_bytes_estimate", c.cacheBytesEstimate),
 		zap.Duration("duration", dur))
-
-	return nil
 }
 
 // cleanBatches scans and deletes names one batch at a time. A scan always runs to

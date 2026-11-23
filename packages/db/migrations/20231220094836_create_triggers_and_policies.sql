@@ -4,26 +4,6 @@
 -- Add base tier
 INSERT INTO public.tiers (id, name, vcpu, ram_mb, disk_mb, concurrent_instances) VALUES ('base_v1', 'Base tier', 2, 512, 512, 20);
 
--- Create user for triggers. Roles are server-wide: another database on the
--- same server may have created it already.
-DO $role$
-BEGIN
-    CREATE USER trigger_user;
-EXCEPTION WHEN duplicate_object THEN
-    NULL;
-END
-$role$;
-GRANT trigger_user TO postgres;
-
-GRANT CREATE, USAGE ON SCHEMA public TO trigger_user;
-GRANT USAGE ON SCHEMA extensions TO trigger_user;
-GRANT USAGE ON SCHEMA auth TO trigger_user;
-
-GRANT SELECT, INSERT, TRIGGER ON public.teams TO trigger_user;
-GRANT INSERT ON public.users_teams TO trigger_user;
-GRANT INSERT ON public.team_api_keys TO trigger_user;
-GRANT INSERT ON public.access_tokens TO trigger_user;
-
 --
 CREATE OR REPLACE FUNCTION public.generate_default_team_trigger()
     RETURNS TRIGGER
@@ -39,8 +19,6 @@ BEGIN
     RETURN NEW;
 END
 $create_default_team$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.generate_default_team_trigger() OWNER TO trigger_user;
 
 CREATE OR REPLACE TRIGGER create_default_team
     AFTER INSERT ON auth.users
@@ -62,8 +40,6 @@ BEGIN
 END
 $generate_teams_api_keys$ SECURITY DEFINER SET search_path = public;
 
-ALTER FUNCTION public.generate_teams_api_keys_trigger() OWNER TO trigger_user;
-
 CREATE OR REPLACE TRIGGER team_api_keys_trigger
     AFTER INSERT ON public.teams
     FOR EACH ROW EXECUTE FUNCTION generate_teams_api_keys_trigger();
@@ -84,8 +60,6 @@ BEGIN
     RETURN NEW;
 END;
 $generate_access_token$ SECURITY DEFINER SET search_path = public;
-
-ALTER FUNCTION public.generate_access_token_trigger() OWNER TO trigger_user;
 
 
 CREATE OR REPLACE TRIGGER create_access_token

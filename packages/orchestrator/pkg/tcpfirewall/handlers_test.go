@@ -423,6 +423,7 @@ func TestAlwaysDeniedCIDRs(t *testing.T) {
 		{"172.31.255.255 is denied", "172.31.255.255", true},
 		{"169.254.1.1 is denied (link-local)", "169.254.1.1", true},
 		{"127.0.0.1 is denied (loopback)", "127.0.0.1", true},
+		{"168.63.129.16 is denied (Azure host endpoint)", "168.63.129.16", true},
 
 		// IPs NOT in denied CIDRs (public IPs)
 		{"8.8.8.8 is allowed (Google DNS)", "8.8.8.8", false},
@@ -440,6 +441,8 @@ func TestAlwaysDeniedCIDRs(t *testing.T) {
 		// Edge cases around CIDR boundaries
 		{"172.15.255.255 is allowed (just before 172.16.0.0/12)", "172.15.255.255", false},
 		{"172.32.0.0 is allowed (just after 172.16.0.0/12)", "172.32.0.0", false},
+		{"168.63.129.15 is allowed (just before 168.63.129.16/32)", "168.63.129.15", false},
+		{"168.63.129.17 is allowed (just after 168.63.129.16/32)", "168.63.129.17", false},
 	}
 
 	for _, tt := range tests {

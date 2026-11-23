@@ -19,7 +19,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -83,26 +84,26 @@ func TestInvalidRequests(t *testing.T) {
 	team := uuid.NewString()
 
 	for name, tc := range map[string]struct {
-		call  func(context.Context, scheduling.ReservationServiceClient) error
+		call  func(context.Context, reservationpb.ReservationServiceClient) error
 		field string
 	}{
-		"invalid team_id": {func(ctx context.Context, c scheduling.ReservationServiceClient) error {
-			_, err := c.Reserve(ctx, scheduling.ReserveRequest_builder{TeamId: "team", SandboxId: "sbx", Limit: 10}.Build())
+		"invalid team_id": {func(ctx context.Context, c reservationpb.ReservationServiceClient) error {
+			_, err := c.Reserve(ctx, reservationpb.ReserveRequest_builder{TeamId: "team", SandboxId: "sbx", Limit: 10}.Build())
 
 			return err
 		}, "team_id"},
-		"empty sandbox_id": {func(ctx context.Context, c scheduling.ReservationServiceClient) error {
-			_, err := c.FinishStart(ctx, scheduling.FinishStartRequest_builder{TeamId: team, SandboxId: ""}.Build())
+		"empty sandbox_id": {func(ctx context.Context, c reservationpb.ReservationServiceClient) error {
+			_, err := c.FinishStart(ctx, reservationpb.FinishStartRequest_builder{TeamId: team, SandboxId: ""}.Build())
 
 			return err
 		}, "sandbox_id"},
-		"sandbox_id with a brace": {func(ctx context.Context, c scheduling.ReservationServiceClient) error {
-			_, err := c.WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: team, SandboxId: "a{b"}.Build())
+		"sandbox_id with a brace": {func(ctx context.Context, c reservationpb.ReservationServiceClient) error {
+			_, err := c.WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: team, SandboxId: "a{b"}.Build())
 
 			return err
 		}, "sandbox_id"},
-		"empty claim_id": {func(ctx context.Context, c scheduling.ReservationServiceClient) error {
-			_, err := c.ReleaseKillClaim(ctx, scheduling.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: "sbx"}.Build())
+		"empty claim_id": {func(ctx context.Context, c reservationpb.ReservationServiceClient) error {
+			_, err := c.ReleaseKillClaim(ctx, reservationpb.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: "sbx"}.Build())
 
 			return err
 		}, "claim_id"},
@@ -138,9 +139,9 @@ func TestReserve(t *testing.T) {
 	}}
 	team := uuid.New()
 
-	resp, err := newClient(t, fake).Reserve(callContext(t), scheduling.ReserveRequest_builder{TeamId: team.String(), SandboxId: "sbx", Limit: 7}.Build())
+	resp, err := newClient(t, fake).Reserve(callContext(t), reservationpb.ReserveRequest_builder{TeamId: team.String(), SandboxId: "sbx", Limit: 7}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, resp.GetOutcome())
+	assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, resp.GetOutcome())
 	assert.Equal(t, reserveCall{teamID: team, sandboxID: "sbx", limit: 7}, <-calls)
 }
 
@@ -211,24 +212,24 @@ func TestWaitForStartWaiting(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), server.UnaryDeadline+hangTimeout)
 	defer cancel()
-	resp, err := newClient(t, fake).WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
+	resp, err := newClient(t, fake).WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
 	left := <-remaining
 	assert.Positive(t, left, "the wait has a deadline")
 	assert.LessOrEqual(t, left, server.MaxWait, "the wait ends at most maxWait after it starts")
 }
 
-func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage) scheduling.ReservationServiceClient {
+func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage) reservationpb.ReservationServiceClient {
 	t.Helper()
 
-	return scheduling.NewReservationServiceClient(newConn(t, reservations, &fakeState{}))
+	return reservationpb.NewReservationServiceClient(newConn(t, reservations, &fakeState{}))
 }
 
-func newStateClient(t *testing.T, storage sandboxtypes.Storage, options ...grpc.DialOption) scheduling.StateServiceClient {
+func newStateClient(t *testing.T, storage sandboxtypes.Storage, options ...grpc.DialOption) statepb.StateServiceClient {
 	t.Helper()
 
-	return scheduling.NewStateServiceClient(newConn(t, &fakeStorage{}, storage, options...))
+	return statepb.NewStateServiceClient(newConn(t, &fakeStorage{}, storage, options...))
 }
 
 func newConn(t *testing.T, reservations sandboxtypes.ReservationStorage, storage sandboxtypes.Storage, options ...grpc.DialOption) *grpc.ClientConn {
@@ -259,6 +260,6 @@ func callContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func reserveRequest() *scheduling.ReserveRequest {
-	return scheduling.ReserveRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx", Limit: 10}.Build()
+func reserveRequest() *reservationpb.ReserveRequest {
+	return reservationpb.ReserveRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx", Limit: 10}.Build()
 }

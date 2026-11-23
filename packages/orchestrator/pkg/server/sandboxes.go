@@ -924,7 +924,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 		entry := &orchestrator.RunningSandbox{
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(startedAt),
-			EndTime:     timestamppb.New(sbx.GetEndAt()),
 			SandboxId:   sbx.Runtime.SandboxID,
 			TeamId:      sbx.Runtime.TeamID,
 			ExecutionId: sbx.Runtime.ExecutionID,
@@ -944,7 +943,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 		sandboxes = append(sandboxes, &orchestrator.RunningSandbox{
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(e.StartedAt),
-			EndTime:     timestamppb.New(e.EndAt),
 			SandboxId:   e.SandboxID,
 			TeamId:      e.TeamID,
 			ExecutionId: e.ExecutionID,
@@ -3889,7 +3887,7 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 	span.SetAttributes(attribute.Bool("envd.upgraded", true))
 
 	// Record the handover outcome the new envd reported on /init (fleet
-	// visibility into what it re-adopted). Per item (proc|retained|watcher) as
+	// visibility into what it re-adopted). Per item (proc|retained|watcher|env_vars) as
 	// ok/failed so failed/(ok+failed) is the handover error rate — a non-zero
 	// failed means the swap dropped or degraded something (a lost watch, an
 	// unrecoverable exit code, a bad process config), which envd otherwise only
@@ -3904,6 +3902,9 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 		recordItem("proc", h.Procs-h.ProcsFailed, h.ProcsFailed)
 		recordItem("retained", h.Retained-h.RetainedFailed, h.RetainedFailed)
 		recordItem("watcher", h.Watchers-h.WatchersFailed, h.WatchersFailed)
+		// Zero from an envd whose blob predates the field, and from a sandbox with no
+		// variables; the post-upgrade /init is the other way they are restored.
+		recordItem("env_vars", h.EnvVars, 0)
 
 		span.SetAttributes(
 			attribute.Int("envd.handover.procs", h.Procs),
@@ -3912,12 +3913,14 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 			attribute.Int("envd.handover.retained_failed", h.RetainedFailed),
 			attribute.Int("envd.handover.watchers", h.Watchers),
 			attribute.Int("envd.handover.watchers_failed", h.WatchersFailed),
+			attribute.Int("envd.handover.env_vars", h.EnvVars),
 		)
 		sbxlogger.I(sbx).Info(upCtx, "envd auto-upgrade: complete",
 			zap.String("to", toVersion),
 			zap.Int("procs", h.Procs), zap.Int("procs_failed", h.ProcsFailed),
 			zap.Int("retained", h.Retained), zap.Int("retained_failed", h.RetainedFailed),
-			zap.Int("watchers", h.Watchers), zap.Int("watchers_failed", h.WatchersFailed))
+			zap.Int("watchers", h.Watchers), zap.Int("watchers_failed", h.WatchersFailed),
+			zap.Int("env_vars", h.EnvVars))
 	} else {
 		sbxlogger.I(sbx).Info(upCtx, "envd auto-upgrade: complete", zap.String("to", toVersion))
 	}

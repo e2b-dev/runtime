@@ -63,50 +63,24 @@ SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NOT NULL;
 
--- name: LockTeamCluster :one
+-- name: LockTeamClusterSync :exec
+-- Serializes the syncs of one team's cluster to the cluster service, so each
+-- reads the team only after the sync before it has finished.
+SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || sqlc.arg(team_id)::uuid::text, 0));
+
+-- name: GetLiveTeamCluster :one
+-- A deleted team holds no cluster, whatever its row still says.
 SELECT cluster_id
 FROM public.teams
 WHERE id = sqlc.arg(team_id)::uuid
-FOR UPDATE;
+  AND deleted_at IS NULL;
 
--- name: AssignTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = sqlc.arg(team_id)::uuid
-    FOR UPDATE
-),
-assigned AS (
-    UPDATE public.teams AS team
-    SET cluster_id = sqlc.arg(cluster_id)::uuid
-    FROM locked_team
-    WHERE team.id = sqlc.arg(team_id)::uuid
-      AND (
-          NOT sqlc.arg(preserve_existing)::boolean
-          OR locked_team.cluster_id IS NULL
-          OR locked_team.cluster_id = sqlc.arg(cluster_id)::uuid
-      )
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM assigned) AS assigned
-FROM locked_team;
-
--- name: DetachTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = sqlc.arg(team_id)::uuid
-    FOR UPDATE
-),
-detached AS (
-    UPDATE public.teams AS team
-    SET cluster_id = NULL
-    FROM locked_team
-    WHERE team.id = sqlc.arg(team_id)::uuid
-      AND locked_team.cluster_id = sqlc.arg(cluster_id)::uuid
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM detached) AS detached
-FROM locked_team;
+-- name: ListLiveTeamClusters :many
+-- A page of the live teams on a remote cluster, after the given team.
+SELECT id, cluster_id::uuid AS cluster_id
+FROM public.teams
+WHERE cluster_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND id > sqlc.arg(after)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_size)::int;

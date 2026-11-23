@@ -47,7 +47,7 @@ func awaitCheckpointCrossedMarkStopping(t *testing.T, s *Server, sbx *sandbox.Sa
 		_, live := s.sandboxFactory.Sandboxes.Get(sbx.Runtime.SandboxID)
 
 		return !live
-	}, 2*time.Second, time.Millisecond, msg)
+	}, markStoppingWait, time.Millisecond, msg)
 	require.Eventually(t, func() bool {
 		return sbx.GetStopReason() == sandbox.StopReasonCheckpointing
 	}, 2*time.Second, time.Millisecond)
@@ -60,7 +60,7 @@ func awaitCheckpointCrossedMarkStopping(t *testing.T, s *Server, sbx *sandbox.Sa
 func TestCheckpoint_EnvdUnresponsiveRefusesBeforeAnyRoute(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
+	s, reader := envdProbeCheckpointServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt", 71)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -97,7 +97,7 @@ func TestCheckpoint_EnvdUnresponsiveRefusesBeforeAnyRoute(t *testing.T) {
 func TestCheckpoint_EnvdHealthyAdmits(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
+	s, reader := envdProbeCheckpointServer(t, new(envdAnsweringProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt-healthy", 72)
 	registerEnvd(t, sbx, &envdAnswer{status: http.StatusNoContent})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -123,8 +123,8 @@ func TestCheckpoint_EnvdHealthyAdmits(t *testing.T) {
 func TestCheckpoint_FilesystemOnlyIsProbed(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
-	s.featureFlags = envdProbeFlagClientWith(t, new(envdProbeMs), true)
+	s, reader := envdProbeCheckpointServer(t, new(envdFailingProbeMs))
+	s.featureFlags = envdProbeFlagClientWith(t, new(envdFailingProbeMs), true)
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt-fs-only", 73)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -189,7 +189,7 @@ func TestCheckpoint_EnvdProbeFlagOffRunsTodaysOrder(t *testing.T) {
 func TestCheckpoint_EnvdProbeMissDuringAnInPlaceCheckpointAnswersInProgress(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
+	s, reader := envdProbeCheckpointServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt-inplace", 83)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -217,7 +217,7 @@ func TestCheckpoint_EnvdProbeMissDuringAnInPlaceCheckpointAnswersInProgress(t *t
 func TestCheckpoint_EnvdProbeRunsAfterTheStartGate(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
+	s, reader := envdProbeCheckpointServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt-gate", 77)
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
 	s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx)
@@ -243,7 +243,7 @@ func TestCheckpoint_EnvdProbeRunsAfterTheStartGate(t *testing.T) {
 func TestCheckpoint_FilesystemOnlyDisabledIsRefusedBeforeTheProbe(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbeCheckpointServer(t, new(envdProbeMs))
+	s, reader := envdProbeCheckpointServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-envd-ckpt-fs-only-off", 81)
 	answer := &envdAnswer{unreachable: true, begun: make(chan struct{})}
 	registerEnvd(t, sbx, answer)

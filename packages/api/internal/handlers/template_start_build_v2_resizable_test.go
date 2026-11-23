@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/require"
@@ -156,4 +157,71 @@ func resizableBuildStore(t *testing.T, builder clusters.TestBuilder) (*APIStore,
 	})
 
 	return store, db
+}
+
+func TestPostV2TemplatesTemplateIDBuildsBuildIDMemoryMaximum(t *testing.T) {
+	t.Parallel()
+
+	cpuFloor := clusters.ResizableTemplateBuildsMinVersion.String()
+	memoryFloor := clusters.TemplateMemoryMaximumMinVersion.String()
+	for _, tt := range []struct {
+		name     string
+		register string
+		builder  string
+		status   int
+		maxMem   *int32
+		// startMB is the start size the registered build row records.
+		startMB *int64
+	}{
+		{"memory maximum needs a builder at its own floor", `,"memoryMB":1024,"maxMemoryMB":2048`, cpuFloor, http.StatusServiceUnavailable, nil, new(int64(1024))},
+		{"memory maximum is sent to the builder", `,"memoryMB":1024,"maxMemoryMB":2048`, memoryFloor, http.StatusAccepted, new(int32(2048)), new(int64(1024))},
+		{"memory and CPU maximums need the higher floor", `,"memoryMB":1024,"maxMemoryMB":2048,"maxCpuCount":4`, cpuFloor, http.StatusServiceUnavailable, nil, new(int64(1024))},
+		{"maximum equal to memory is no region", `,"memoryMB":1024,"maxMemoryMB":1024`, "0.1.0", http.StatusAccepted, nil, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &captureTemplateClient{}
+			store, db := resizableBuildStore(t, clusters.TestBuilder{Version: tt.builder, Client: &clusters.GRPCClient{Template: client}})
+			team := templateClusterTeam(t, db, nil)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v3/templates", strings.NewReader(`{"name":"growable","cpuCount":2`+tt.register+`}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, c, team)
+			store.PostV3Templates(c, api.PostV3TemplatesParams{})
+			registered, err := api.ParsePostV3TemplatesResponse(w.Result())
+			require.NoError(t, err)
+			require.Equal(t, http.StatusAccepted, registered.StatusCode(), string(registered.Body))
+			templateID, buildID := registered.JSON202.TemplateID, registered.JSON202.BuildID
+
+			var startMB *int64
+			require.NoError(t, db.SqlcClient.TestsRawSQLQuery(t.Context(), `SELECT start_memory_mb FROM public.env_builds WHERE id = $1`, func(rows pgx.Rows) error {
+				require.True(t, rows.Next())
+
+				return rows.Scan(&startMB)
+			}, buildID))
+			require.Equal(t, tt.startMB, startMB, "a build with a maximum records boot RAM as its start size, any other none")
+
+			w = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(w)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/v2/templates/%s/builds/%s", templateID, buildID), strings.NewReader(`{"fromImage":"alpine","steps":[]}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			auth.SetTeamInfoForTest(t, c, team)
+			store.PostV2TemplatesTemplateIDBuildsBuildID(c, templateID, buildID, api.PostV2TemplatesTemplateIDBuildsBuildIDParams{})
+			require.Equal(t, tt.status, c.Writer.Status(), w.Body.String())
+
+			if tt.status != http.StatusAccepted {
+				require.Nil(t, client.created(), "a rejected build must not reach the builder")
+
+				return
+			}
+
+			created := client.created()
+			require.NotNil(t, created)
+			require.Equal(t, int32(1024), created.GetMemoryMB())
+			require.Equal(t, tt.maxMem, created.MaxMemoryMB)
+		})
+	}
 }

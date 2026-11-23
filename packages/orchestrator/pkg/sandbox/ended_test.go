@@ -25,7 +25,6 @@ func endedTestSandbox(executionID string) *Sandbox {
 		},
 	}
 	sbx.SetStartedAt(time.Unix(1000, 0))
-	sbx.SetEndAt(time.Unix(2000, 0))
 
 	return sbx
 }
@@ -50,7 +49,6 @@ func TestEndedSandboxes(t *testing.T) {
 		assert.Equal(t, int64(2), got.Vcpu)
 		assert.Equal(t, int64(512), got.RamMB)
 		assert.Equal(t, time.Unix(1000, 0), got.StartedAt)
-		assert.Equal(t, time.Unix(2000, 0), got.EndAt)
 		assert.Equal(t, fc.GuestEventCrashNoRestart, got.GuestEvent)
 
 		// Listing is no acknowledgement: it stays for the next sync.

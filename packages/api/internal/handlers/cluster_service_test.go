@@ -120,6 +120,18 @@ func clusterServiceFor(t *testing.T, db *testutils.Database) *clienttests.MockCl
 
 	records := recordsOf(db)
 	clusterService := clienttests.NewMockClusterServiceClient(t)
+	clusterService.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, req *clustersgrpc.CheckProjectCreationRequest, _ ...grpc.CallOption) (*clustersgrpc.CheckProjectCreationResponse, error) {
+			cluster, ok := records.get(uuid.MustParse(req.GetClusterId()))
+			switch {
+			case !ok:
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			case cluster.HasDeletionRequestedAt():
+				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED)
+			default:
+				return clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil
+			}
+		}).Maybe()
 	clusterService.EXPECT().GetCluster(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, req *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
 			cluster, ok := records.get(uuid.MustParse(req.GetClusterId()))
@@ -233,23 +245,21 @@ func TestLocalOnlyIsRefusedWhileATeamIsAssignedToARemoteCluster(t *testing.T) {
 
 // Without a cluster service the pool never loads a remote cluster, so an
 // assignment to one would leave the team unable to run sandboxes.
-func TestRemoteClusterAssignmentsAnswer503WithoutAClusterService(t *testing.T) {
+func TestLocalOnlyProjectCannotBeCreatedOnOrMovedToARemoteCluster(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	store.clusterService = nil
+	withClusterService(t, db, store, nil)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	projectID := testutils.CreateTestTeam(t, db)
 	project := newProjectFixture()
 	upsert := project.request()
 	upsert.ClusterId = &clusterID
 
-	assigned := callManagementAssignProjectCluster(t, store, projectID, clusterID)
 	upserted := callUpsertProject(t, store, project.id, upsert)
 
-	require.Equal(t, http.StatusServiceUnavailable, assigned.Code, assigned.Body.String())
 	require.Equal(t, http.StatusServiceUnavailable, upserted.Code, upserted.Body.String())
-	require.Nil(t, teamCluster(t, db, projectID))
+	require.Equal(t, http.StatusCreated, callUpsertProject(t, store, project.id, project.request()).Code)
+	require.Equal(t, http.StatusConflict, callUpsertProject(t, store, project.id, upsert).Code)
 }

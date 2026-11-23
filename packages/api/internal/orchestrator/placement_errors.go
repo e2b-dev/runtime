@@ -49,6 +49,7 @@ var PlacementErrorCodes = []string{
 	errCodeFeatureUnsupported,
 	errCodeSandboxCreateFailed,
 	errCodeSandboxCreateRefused,
+	errCodeSandboxMemoryRecordMismatch,
 	errCodeInternalServer,
 }
 
@@ -85,9 +86,11 @@ func createRefusal(st *status.Status) *orchestrator.UserError {
 // refusalHTTPStatus is the status a refusal for good answers with: the
 // node's own, trusted as a client error only for a field the request
 // carried. The auto-pause policy is one, and the node marks its refusal
-// with the pause refusal's detail; a create's vcpu comes from the template
-// build row and max_vcpus is never set from REST, so any other 4xx is a
-// stored-data defect, answered as 500 like a status outside 400..599.
+// with the pause refusal's detail; a memory refusal is decided before this
+// (placementAPIError), by whether the caller named the size. A create's vcpu
+// comes from the template build row and max_vcpus is never set from REST, so
+// any other 4xx is a stored-data defect, answered as 500 like a status
+// outside 400..599.
 func refusalHTTPStatus(st *status.Status, refusal *orchestrator.UserError) int {
 	code := int(refusal.GetHttpStatus())
 	if code == http.StatusBadRequest && unsupportedPauseRefusal(st) {
@@ -98,6 +101,38 @@ func refusalHTTPStatus(st *status.Status, refusal *orchestrator.UserError) int {
 	}
 
 	return code
+}
+
+// The node's refusals of a memory_mb it cannot take, by the reason it names
+// ("memory hotplug refused (<reason>): ..."), and the error code each answers with.
+var memoryRefusalCodes = map[string]string{
+	"memory hotplug refused (shrink)":          errCodeSandboxMemoryShrinkUnsupported,
+	"memory hotplug refused (invalid_request)": errCodeSandboxMemoryOutOfRange,
+}
+
+// memoryRefusalCode is the sandbox_memory_* error code of a node's 400 refusal
+// of the requested memory, or "" for any other refusal.
+func memoryRefusalCode(refusal *orchestrator.UserError) string {
+	if refusal.GetHttpStatus() != http.StatusBadRequest {
+		return ""
+	}
+	for prefix, code := range memoryRefusalCodes {
+		if strings.HasPrefix(refusal.GetMessage(), prefix) {
+			return code
+		}
+	}
+
+	return ""
+}
+
+// memoryRefusalMessage is the client message for a node's memory refusal: the
+// node's own text names its internal sizes, so the API states the rule instead.
+func memoryRefusalMessage(code string) string {
+	if code == errCodeSandboxMemoryShrinkUnsupported {
+		return "it is below the memory the sandbox's snapshot holds, and a sandbox's memory can only grow"
+	}
+
+	return "it is not the template's memoryMB plus whole 128 MiB slots within its maxMemoryMB"
 }
 
 // unsupportedPauseRefusal reports a status that carries the orchestrator's
@@ -126,9 +161,31 @@ func createRefusedByMessage(st *status.Status) bool {
 	return false
 }
 
+// memoryRefusalCodeOf is memoryRefusalCode for a placement error: the code a
+// node's refusal of memory_mb answers with, or "" for any other error.
+func memoryRefusalCodeOf(err error) string {
+	var createErr placement.SandboxCreateError
+	if !errors.As(err, &createErr) {
+		return ""
+	}
+	st, ok := status.FromError(createErr.LastErr)
+	if !ok {
+		return ""
+	}
+	refusal := createRefusal(st)
+	if refusal == nil {
+		return ""
+	}
+
+	return memoryRefusalCode(refusal)
+}
+
 // placementAPIError translates a typed PlaceSandbox error into the
-// customer-facing HTTP status, semantic error code and message.
-func placementAPIError(err error) *api.APIError {
+// customer-facing HTTP status, semantic error code and message. memoryNamed
+// is whether the caller's request named memoryMB: a node's refusal of the size
+// is the caller's error only then; for a size the API sent from its own record
+// it is a stored-data defect.
+func placementAPIError(err error, memoryNamed bool) *api.APIError {
 	apiErr := func(httpCode int, errorCode string, message string) *api.APIError {
 		return &api.APIError{
 			Code:      httpCode,
@@ -178,6 +235,15 @@ func placementAPIError(err error) *api.APIError {
 			// own wording for the client. The text-match shim for nodes
 			// that predate it stays behind the safe codes.
 			if refusal := createRefusal(st); refusal != nil {
+				if code := memoryRefusalCode(refusal); code != "" {
+					if memoryNamed {
+						return apiErr(http.StatusBadRequest, code, "memoryMB does not fit the sandbox: "+memoryRefusalMessage(code))
+					}
+
+					return apiErr(http.StatusInternalServerError, errCodeSandboxMemoryRecordMismatch,
+						placementMessagePrefix+": the memory recorded for this sandbox does not match its snapshot; if the problem persists, contact us")
+				}
+
 				return apiErr(refusalHTTPStatus(st, refusal), errCodeSandboxCreateRefused, fmt.Sprintf("%s: %s", placementMessagePrefix, refusal.GetMessage()))
 			}
 			if _, safe := safePlacementCreateCodes[st.Code()]; safe {

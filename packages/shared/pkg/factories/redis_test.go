@@ -161,6 +161,14 @@ func TestNewRedisClientRefusesPlaintextPassword(t *testing.T) {
 		require.ErrorContains(t, err, "plaintext")
 	})
 
+	t.Run("a client that connects lazily meets the same rule", func(t *testing.T) {
+		t.Parallel()
+
+		// Skipping the startup ping must not skip the checks before it.
+		_, err := NewRedisClient(t.Context(), RedisConfig{RedisClusterURL: "redis.example:6379", RedisPassword: "secret", LazyConnect: true})
+		require.ErrorContains(t, err, "plaintext")
+	})
+
 	t.Run("a password with TLS is allowed", func(t *testing.T) {
 		t.Parallel()
 

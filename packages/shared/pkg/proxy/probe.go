@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -11,23 +12,53 @@ import (
 // without forwarding the request. A proxy built WithProbe answers a request
 // carrying "true" with the same header set to "true" when the sandbox is
 // here, "false" when it is not, and leaves it out when it cannot tell. A
-// sandbox it routes is answered 204 instead of being forwarded; every other
-// answer is the page the request would get anyway.
+// sandbox it routes is answered 204 instead of being forwarded, and one it
+// does not have 404; every other answer is the page the request would get
+// anyway.
 const HeaderProbe = "X-E2b-Sandbox-Probe"
+
+// ProbeAnswer is what a proxy told a HeaderProbe request.
+type ProbeAnswer string
+
+const (
+	// ProbeFound: the sandbox was routed, answered 204 with "true".
+	ProbeFound ProbeAnswer = "found"
+	// ProbeClaimed: the sandbox is here but was not routed, answered with
+	// its error page and "true".
+	ProbeClaimed ProbeAnswer = "claimed"
+	// ProbeNotFound: the sandbox is not here, answered "false".
+	ProbeNotFound ProbeAnswer = "not_found"
+	// ProbeUnknown: the proxy cannot tell, answered without the header.
+	ProbeUnknown ProbeAnswer = "unknown"
+	// ProbeCanceled: the request ended before it was routed.
+	ProbeCanceled ProbeAnswer = "canceled"
+)
+
+// ProbeObserver is told the answer to every HeaderProbe request.
+type ProbeObserver func(ctx context.Context, answer ProbeAnswer)
 
 // Option configures a Proxy.
 type Option func(*options)
 
 type options struct {
 	probe         bool
+	observeProbe  ProbeObserver
 	transportWrap pool.TransportWrap
 }
 
-// WithProbe makes the proxy answer HeaderProbe requests. Without it the
-// header is forwarded like any other.
-func WithProbe() Option {
+// WithProbe makes the proxy answer HeaderProbe requests and, when observe is
+// not nil, report each answer to it. Without it the header is forwarded like
+// any other.
+func WithProbe(observe ProbeObserver) Option {
 	return func(o *options) {
 		o.probe = true
+		o.observeProbe = observe
+	}
+}
+
+func (o options) observe(ctx context.Context, answer ProbeAnswer) {
+	if o.observeProbe != nil {
+		o.observeProbe(ctx, answer)
 	}
 }
 

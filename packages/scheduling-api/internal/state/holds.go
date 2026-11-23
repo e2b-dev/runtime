@@ -7,12 +7,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
-func (s *Server) HoldExecution(ctx context.Context, req *scheduling.HoldExecutionRequest) (*scheduling.HoldExecutionResponse, error) {
+func (s *Server) HoldExecution(ctx context.Context, req *statepb.HoldExecutionRequest) (*statepb.HoldExecutionResponse, error) {
 	hold, err := parseHold(req.GetHold())
 	if err != nil {
 		return nil, err
@@ -30,10 +30,10 @@ func (s *Server) HoldExecution(ctx context.Context, req *scheduling.HoldExecutio
 		return nil, storeError(ctx, err, logger.WithTeamID(hold.TeamID.String()), logger.WithSandboxID(hold.SandboxID))
 	}
 
-	return scheduling.HoldExecutionResponse_builder{Outcome: outcome}.Build(), nil
+	return statepb.HoldExecutionResponse_builder{Outcome: outcome}.Build(), nil
 }
 
-func (s *Server) MoveHeldExecution(ctx context.Context, req *scheduling.MoveHeldExecutionRequest) (*scheduling.MoveHeldExecutionResponse, error) {
+func (s *Server) MoveHeldExecution(ctx context.Context, req *statepb.MoveHeldExecutionRequest) (*statepb.MoveHeldExecutionResponse, error) {
 	hold, err := parseHold(req.GetHold())
 	if err != nil {
 		return nil, err
@@ -48,10 +48,10 @@ func (s *Server) MoveHeldExecution(ctx context.Context, req *scheduling.MoveHeld
 		return nil, storeError(ctx, err, logger.WithTeamID(hold.TeamID.String()), logger.WithSandboxID(hold.SandboxID))
 	}
 
-	return scheduling.MoveHeldExecutionResponse_builder{Outcome: outcome, Moved: moved}.Build(), nil
+	return statepb.MoveHeldExecutionResponse_builder{Outcome: outcome, Moved: moved}.Build(), nil
 }
 
-func (s *Server) ReleaseHeldExecution(ctx context.Context, req *scheduling.ReleaseHeldExecutionRequest) (*scheduling.ReleaseHeldExecutionResponse, error) {
+func (s *Server) ReleaseHeldExecution(ctx context.Context, req *statepb.ReleaseHeldExecutionRequest) (*statepb.ReleaseHeldExecutionResponse, error) {
 	hold, err := parseHold(req.GetHold())
 	if err != nil {
 		return nil, err
@@ -63,10 +63,10 @@ func (s *Server) ReleaseHeldExecution(ctx context.Context, req *scheduling.Relea
 		return nil, storeError(ctx, err, logger.WithTeamID(hold.TeamID.String()), logger.WithSandboxID(hold.SandboxID))
 	}
 
-	return scheduling.ReleaseHeldExecutionResponse_builder{Outcome: outcome}.Build(), nil
+	return statepb.ReleaseHeldExecutionResponse_builder{Outcome: outcome}.Build(), nil
 }
 
-func (s *Server) RemoveHeldExecution(ctx context.Context, req *scheduling.RemoveHeldExecutionRequest) (*scheduling.RemoveHeldExecutionResponse, error) {
+func (s *Server) RemoveHeldExecution(ctx context.Context, req *statepb.RemoveHeldExecutionRequest) (*statepb.RemoveHeldExecutionResponse, error) {
 	hold, err := parseHold(req.GetHold())
 	if err != nil {
 		return nil, err
@@ -77,8 +77,8 @@ func (s *Server) RemoveHeldExecution(ctx context.Context, req *scheduling.Remove
 	if !ok {
 		return nil, storeError(ctx, err, logger.WithTeamID(hold.TeamID.String()), logger.WithSandboxID(hold.SandboxID))
 	}
-	if outcome != scheduling.StateOutcome_STATE_OUTCOME_OK {
-		return scheduling.RemoveHeldExecutionResponse_builder{Outcome: outcome}.Build(), nil
+	if outcome != statepb.StateOutcome_STATE_OUTCOME_OK {
+		return statepb.RemoveHeldExecutionResponse_builder{Outcome: outcome}.Build(), nil
 	}
 
 	record, err := json.Marshal(removed)
@@ -86,10 +86,10 @@ func (s *Server) RemoveHeldExecution(ctx context.Context, req *scheduling.Remove
 		return nil, storeError(ctx, err, logger.WithTeamID(hold.TeamID.String()), logger.WithSandboxID(hold.SandboxID))
 	}
 
-	return scheduling.RemoveHeldExecutionResponse_builder{Outcome: outcome, Record: record}.Build(), nil
+	return statepb.RemoveHeldExecutionResponse_builder{Outcome: outcome, Record: record}.Build(), nil
 }
 
-func parseHold(hold *scheduling.Hold) (sandboxtypes.Hold, error) {
+func parseHold(hold *statepb.Hold) (sandboxtypes.Hold, error) {
 	if hold == nil {
 		return sandboxtypes.Hold{}, status.Error(codes.InvalidArgument, "hold: must be set")
 	}

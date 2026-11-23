@@ -123,6 +123,8 @@ type EnvBuild struct {
 	FilesystemOnly     bool
 	EnvdUnresponsive   pgtype.Bool
 	MaxVcpu            pgtype.Int8
+	MaxRamMb           pgtype.Int8
+	StartMemoryMb      pgtype.Int8
 }
 
 type EnvBuildAssignment struct {

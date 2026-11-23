@@ -1,14 +1,19 @@
 package orchestrator
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/posthog/posthog-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 
+	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/db/pkg/types"
 )
@@ -178,5 +183,51 @@ func TestCreatedInstancePropertiesEgressProxy(t *testing.T) {
 				assert.NotContains(t, fmt.Sprint(value), proxyPassword, "property %q leaks the proxy password", key)
 			}
 		})
+	}
+}
+
+type memoryRecordingCollector struct {
+	analyticscollector.AnalyticsCollectorClient
+
+	started *analyticscollector.InstanceStartedEvent
+	stopped *analyticscollector.InstanceStoppedEvent
+}
+
+func (r *memoryRecordingCollector) InstanceStarted(_ context.Context, in *analyticscollector.InstanceStartedEvent, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	r.started = in
+
+	return &emptypb.Empty{}, nil
+}
+
+func (r *memoryRecordingCollector) InstanceStopped(_ context.Context, in *analyticscollector.InstanceStoppedEvent, _ ...grpc.CallOption) (*emptypb.Empty, error) {
+	r.stopped = in
+
+	return &emptypb.Empty{}, nil
+}
+
+// Usage is billed from the stop event's ram_mb, so a sandbox that grew above
+// boot RAM reports the whole memory it ran with.
+func TestAnalyticsReportsTheWholeMemory(t *testing.T) {
+	t.Parallel()
+
+	posthog, err := analyticscollector.NewPosthogClient(t.Context(), "")
+	require.NoError(t, err)
+	rec := &memoryRecordingCollector{}
+	o := &Orchestrator{posthogClient: posthog, analytics: analyticscollector.NewAnalyticsWithClient(rec)}
+
+	start := time.Now().Add(-time.Minute)
+	for _, tt := range []struct {
+		memoryMB int64
+		want     int64
+	}{{memoryMB: 0, want: 1024}, {memoryMB: 3072, want: 3072}} {
+		sbx := sandbox.Sandbox{SandboxID: "sbx-1", TeamID: uuid.New(), ExecutionID: uuid.NewString(), RamMB: 1024, MemoryMB: tt.memoryMB, StartTime: start, EndTime: start.Add(time.Hour)}
+
+		o.analyticsInsert(t.Context(), sbx)
+		o.analyticsRemove(t.Context(), sbx, sandbox.StateActionKill)
+
+		require.NotNil(t, rec.started)
+		require.NotNil(t, rec.stopped)
+		assert.Equal(t, tt.want, rec.started.GetRamMb())
+		assert.Equal(t, tt.want, rec.stopped.GetRamMb())
 	}
 }

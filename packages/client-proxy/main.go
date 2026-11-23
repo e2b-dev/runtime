@@ -160,6 +160,7 @@ func run() int {
 		apiGRPCAddress = strings.TrimSpace(config.APIEdgeGRPCAddress)
 		apiGRPCUseTLS = true
 		apiGRPCOAuthConfig = e2bproxy.GRPCOAuthConfig{
+			TokenFile:    config.APIEdgeGRPCTokenFile,
 			ClientID:     config.APIEdgeGRPCOAuthClientID,
 			ClientSecret: config.APIEdgeGRPCOAuthClientSecret,
 			TokenURL:     config.APIEdgeGRPCOAuthTokenURL,

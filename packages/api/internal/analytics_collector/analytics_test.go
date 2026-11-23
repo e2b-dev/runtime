@@ -428,6 +428,9 @@ func TestClientWithoutAPIKeyDropsQuietly(t *testing.T) {
 	p.IdentifyAnalyticsTeam(t.Context(), "team-a", "Team A")
 	assert.True(t, p.teamIdentified("team-a", "Team A"), "the identify counted as failed")
 
+	p.CountAnalyticsTeamEvent(t.Context(), "team-a", "listed sandboxes", posthog.NewProperties())
+	assert.Zero(t, p.rollups.keysCounted(), "nothing would send the count")
+
 	require.NoError(t, p.Close())
 }
 

@@ -87,6 +87,8 @@ new_build as (
         cpu_model_name,
         cpu_flags,
         max_vcpu,
+        max_ram_mb,
+        start_memory_mb,
         filesystem_only
     )
     VALUES (
@@ -108,9 +110,22 @@ new_build as (
         (SELECT eb.cpu_model_name FROM "public"."env_builds" eb WHERE eb.id = @source_build_id),
         (SELECT eb.cpu_flags FROM "public"."env_builds" eb WHERE eb.id = @source_build_id),
         (SELECT eb.max_vcpu FROM "public"."env_builds" eb WHERE eb.id = @source_build_id),
+        -- A build an older writer made without the maximum falls back to the
+        -- snapshot's newest build that has one, so the next pause heals it.
+        COALESCE(
+            (SELECT eb.max_ram_mb FROM "public"."env_builds" eb WHERE eb.id = @source_build_id),
+            (SELECT eb.max_ram_mb
+               FROM "public"."env_builds" eb
+               JOIN "public"."env_build_assignments" eba ON eba.build_id = eb.id
+              WHERE eba.env_id = (SELECT template_id FROM snapshot)
+                AND eb.max_ram_mb IS NOT NULL
+              ORDER BY eb.created_at DESC
+              LIMIT 1)
+        ),
+        sqlc.narg(start_memory_mb),
         @build_filesystem_only
     )
-    RETURNING id as build_id
+    RETURNING id as build_id, max_ram_mb
 ),
 
 -- Create the build assignment edge (explicit, not relying on trigger)
@@ -124,4 +139,7 @@ build_assignment as (
     RETURNING build_id, env_id as template_id
 )
 
-SELECT build_id, template_id FROM build_assignment;
+-- max_ram_mb tells the caller whether the build has a memory maximum, so a
+-- pause that records no start_memory_mb for one can be reported.
+SELECT build_assignment.build_id, build_assignment.template_id, new_build.max_ram_mb
+FROM build_assignment, new_build;

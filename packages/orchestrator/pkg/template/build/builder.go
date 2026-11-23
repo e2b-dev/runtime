@@ -328,7 +328,7 @@ func runBuild(
 
 	templateStorage := builder.templateStorage
 	if path, ok := builder.useNFSCache(ctx); ok {
-		templateStorage = storage.WrapInNFSCache(ctx, path, templateStorage, builder.featureFlags)
+		templateStorage = storage.WrapInNFSCache(ctx, path, templateStorage, builder.featureFlags, builder.templateCache.NFSCacheOptions()...)
 		span.SetAttributes(attribute.Bool("use_cache", true))
 	} else {
 		span.SetAttributes(attribute.Bool("use_cache", false))
@@ -417,7 +417,7 @@ func runBuild(
 	optimizeBuilder := optimize.New(
 		bc,
 		builder.sandboxFactory,
-		builder.templateStorage,
+		templateStorage,
 		builder.templateCache,
 		builder.proxy,
 		layerExecutor,

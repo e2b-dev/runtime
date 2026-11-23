@@ -18,8 +18,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -246,7 +246,7 @@ func (f *fakeStorage) WaitForTransition(ctx context.Context, _ uuid.UUID, _ stri
 }
 
 type teamItemsStream struct {
-	grpc.ServerStreamingServer[scheduling.TeamItemsResponse]
+	grpc.ServerStreamingServer[statepb.TeamItemsResponse]
 
 	context func() context.Context
 }
@@ -256,7 +256,7 @@ func (s teamItemsStream) Context() context.Context {
 }
 
 type expiredItemsStream struct {
-	grpc.ServerStreamingServer[scheduling.ExpiredItemsResponse]
+	grpc.ServerStreamingServer[statepb.ExpiredItemsResponse]
 
 	context func() context.Context
 }
@@ -265,7 +265,7 @@ func (s expiredItemsStream) Context() context.Context {
 	return s.context()
 }
 
-type outcomeCall func(ctx context.Context, client scheduling.StateServiceClient) (scheduling.StateOutcome, error)
+type outcomeCall func(ctx context.Context, client statepb.StateServiceClient) (statepb.StateOutcome, error)
 
 func outcomeCalls(t *testing.T) map[string]outcomeCall {
 	t.Helper()
@@ -274,32 +274,32 @@ func outcomeCalls(t *testing.T) map[string]outcomeCall {
 	record := encode(t, minimalRecord(team, "sbx"))
 
 	return map[string]outcomeCall{
-		"Add": func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-			resp, err := c.Add(ctx, scheduling.AddRequest_builder{Record: record}.Build())
+		"Add": func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+			resp, err := c.Add(ctx, statepb.AddRequest_builder{Record: record}.Build())
 
 			return resp.GetOutcome(), err
 		},
-		"Get": func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-			resp, err := c.Get(ctx, scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+		"Get": func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+			resp, err := c.Get(ctx, statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 
 			return resp.GetOutcome(), err
 		},
-		"Remove": func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-			resp, err := c.Remove(ctx, scheduling.RemoveRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+		"Remove": func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+			resp, err := c.Remove(ctx, statepb.RemoveRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 
 			return resp.GetOutcome(), err
 		},
 	}
 }
 
-type rpcCall func(ctx context.Context, client scheduling.StateServiceClient) error
+type rpcCall func(ctx context.Context, client statepb.StateServiceClient) error
 
 func errorCalls(t *testing.T) map[string]rpcCall {
 	t.Helper()
 
 	calls := map[string]rpcCall{
-		"TeamItems": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			stream, err := c.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+		"TeamItems": func(ctx context.Context, c statepb.StateServiceClient) error {
+			stream, err := c.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
 			if err != nil {
 				return err
 			}
@@ -307,8 +307,8 @@ func errorCalls(t *testing.T) map[string]rpcCall {
 
 			return err
 		},
-		"ExpiredItems": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			stream, err := c.ExpiredItems(ctx, scheduling.ExpiredItemsRequest_builder{}.Build())
+		"ExpiredItems": func(ctx context.Context, c statepb.StateServiceClient) error {
+			stream, err := c.ExpiredItems(ctx, statepb.ExpiredItemsRequest_builder{}.Build())
 			if err != nil {
 				return err
 			}
@@ -316,14 +316,14 @@ func errorCalls(t *testing.T) map[string]rpcCall {
 
 			return err
 		},
-		"TeamsWithSandboxCount": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.TeamsWithSandboxCount(ctx, scheduling.TeamsWithSandboxCountRequest_builder{}.Build())
+		"TeamsWithSandboxCount": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.TeamsWithSandboxCount(ctx, statepb.TeamsWithSandboxCountRequest_builder{}.Build())
 
 			return err
 		},
 	}
 	for name, call := range outcomeCalls(t) {
-		calls[name] = func(ctx context.Context, c scheduling.StateServiceClient) error {
+		calls[name] = func(ctx context.Context, c statepb.StateServiceClient) error {
 			_, err := call(ctx, c)
 
 			return err
@@ -338,12 +338,12 @@ func TestOutcomeMapping(t *testing.T) {
 
 	sentinels := []struct {
 		err  error
-		want scheduling.StateOutcome
+		want statepb.StateOutcome
 	}{
-		{sandboxtypes.ErrNotFound, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND},
-		{sandboxtypes.ErrLifecycleHeld, scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD},
-		{sandboxtypes.ErrExecutionMismatch, scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH},
-		{sandboxtypes.ErrLockLost, scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST},
+		{sandboxtypes.ErrNotFound, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND},
+		{sandboxtypes.ErrLifecycleHeld, statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD},
+		{sandboxtypes.ErrExecutionMismatch, statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH},
+		{sandboxtypes.ErrLockLost, statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST},
 	}
 	for name, call := range outcomeCalls(t) {
 		for _, sentinel := range sentinels {
@@ -371,7 +371,7 @@ func TestOutcomeMapping(t *testing.T) {
 		for name, call := range outcomeCalls(t) {
 			outcome, err := call(callContext(t), newClient(t, newFake()))
 			require.NoError(t, err, name)
-			assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, outcome, name)
+			assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, outcome, name)
 		}
 	})
 }
@@ -384,16 +384,16 @@ func TestGetReturnsRecordOnlyWhenOK(t *testing.T) {
 
 	fake := newFake()
 	fake.record = full
-	resp, err := newClient(t, fake).Get(callContext(t), scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+	resp, err := newClient(t, fake).Get(callContext(t), statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 	require.NoError(t, err)
 	assert.Equal(t, encode(t, full), resp.GetRecord())
 	assert.Equal(t, full, decode(t, resp.GetRecord()))
 
 	missing := newFake()
 	missing.err = sandboxtypes.ErrNotFound
-	resp, err = newClient(t, missing).Get(callContext(t), scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+	resp, err = newClient(t, missing).Get(callContext(t), statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, resp.GetOutcome())
 	assert.Empty(t, resp.GetRecord())
 }
 
@@ -404,16 +404,16 @@ func TestAddDecodesRecord(t *testing.T) {
 	requireNoZeroField(t, full)
 
 	fake := newFake()
-	resp, err := newClient(t, fake).Add(callContext(t), scheduling.AddRequest_builder{Record: encode(t, full)}.Build())
+	resp, err := newClient(t, fake).Add(callContext(t), statepb.AddRequest_builder{Record: encode(t, full)}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 	assert.Equal(t, full, fake.snapshot().added, "the store receives the caller's record")
 
 	withUnknown := []byte(`{"sandboxID":"sbx","teamID":"` + full.TeamID.String() + `","executionID":"` + uuid.NewString() + `","futureField":{"x":1}}`)
 	fake = newFake()
-	resp, err = newClient(t, fake).Add(callContext(t), scheduling.AddRequest_builder{Record: withUnknown}.Build())
+	resp, err = newClient(t, fake).Add(callContext(t), statepb.AddRequest_builder{Record: withUnknown}.Build())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome(), "unknown fields are ignored")
+	assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome(), "unknown fields are ignored")
 	assert.Equal(t, "sbx", fake.snapshot().added.SandboxID)
 }
 
@@ -455,7 +455,7 @@ func TestCancelledCaller(t *testing.T) {
 			<-started
 			cancel()
 		}()
-		stream, err := client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+		stream, err := client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
 		require.NoError(t, err)
 		_, _, err = readTeamItems(t, stream)
 		requireCode(t, err, codes.Canceled)
@@ -465,22 +465,22 @@ func TestCancelledCaller(t *testing.T) {
 	record := encode(t, minimalRecord(team, "sbx"))
 	handlerCalls := map[string]func(ctx context.Context, s *state.Server) error{
 		"Add": func(ctx context.Context, s *state.Server) error {
-			_, err := s.Add(ctx, scheduling.AddRequest_builder{Record: record}.Build())
+			_, err := s.Add(ctx, statepb.AddRequest_builder{Record: record}.Build())
 
 			return err
 		},
 		"Get": func(ctx context.Context, s *state.Server) error {
-			_, err := s.Get(ctx, scheduling.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+			_, err := s.Get(ctx, statepb.GetRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 
 			return err
 		},
 		"Remove": func(ctx context.Context, s *state.Server) error {
-			_, err := s.Remove(ctx, scheduling.RemoveRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
+			_, err := s.Remove(ctx, statepb.RemoveRequest_builder{TeamId: team.String(), SandboxId: "sbx"}.Build())
 
 			return err
 		},
 		"TeamsWithSandboxCount": func(ctx context.Context, s *state.Server) error {
-			_, err := s.TeamsWithSandboxCount(ctx, scheduling.TeamsWithSandboxCountRequest_builder{}.Build())
+			_, err := s.TeamsWithSandboxCount(ctx, statepb.TeamsWithSandboxCountRequest_builder{}.Build())
 
 			return err
 		},
@@ -506,7 +506,7 @@ func TestCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.err = errors.New("backend gave up")
 		stream := teamItemsStream{context: func() context.Context { return ctx }}
-		err := state.NewServer(fake, hangTimeout).TeamItems(scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build(), stream)
+		err := state.NewServer(fake, hangTimeout).TeamItems(statepb.TeamItemsRequest_builder{TeamId: team.String()}.Build(), stream)
 		st := requireCode(t, err, codes.Canceled)
 		assert.NotContains(t, st.Message(), "backend gave up")
 	})
@@ -519,7 +519,7 @@ func TestCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.err = errors.New("backend gave up")
 		stream := expiredItemsStream{context: func() context.Context { return ctx }}
-		err := state.NewServer(fake, hangTimeout).ExpiredItems(scheduling.ExpiredItemsRequest_builder{}.Build(), stream)
+		err := state.NewServer(fake, hangTimeout).ExpiredItems(statepb.ExpiredItemsRequest_builder{}.Build(), stream)
 		st := requireCode(t, err, codes.Canceled)
 		assert.NotContains(t, st.Message(), "backend gave up")
 	})
@@ -536,29 +536,29 @@ func TestInvalidRequests(t *testing.T) {
 		return encode(t, sbx)
 	}
 	add := func(record []byte) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.Add(ctx, scheduling.AddRequest_builder{Record: record}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.Add(ctx, statepb.AddRequest_builder{Record: record}.Build())
 
 			return err
 		}
 	}
 	get := func(teamID, sandboxID string) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.Get(ctx, scheduling.GetRequest_builder{TeamId: teamID, SandboxId: sandboxID}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.Get(ctx, statepb.GetRequest_builder{TeamId: teamID, SandboxId: sandboxID}.Build())
 
 			return err
 		}
 	}
 	remove := func(teamID, sandboxID string) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.Remove(ctx, scheduling.RemoveRequest_builder{TeamId: teamID, SandboxId: sandboxID}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.Remove(ctx, statepb.RemoveRequest_builder{TeamId: teamID, SandboxId: sandboxID}.Build())
 
 			return err
 		}
 	}
-	teamItems := func(teamID string, states ...scheduling.SandboxState) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			stream, err := c.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: teamID, States: states}.Build())
+	teamItems := func(teamID string, states ...statepb.SandboxState) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			stream, err := c.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: teamID, States: states}.Build())
 			if err != nil {
 				return err
 			}
@@ -567,11 +567,11 @@ func TestInvalidRequests(t *testing.T) {
 			return err
 		}
 	}
-	reconcile := func(mutate func(*scheduling.NodeSandbox)) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			sbx := scheduling.NodeSandbox_builder{SandboxId: "sbx", TeamId: team.String(), ClusterId: uuid.NewString()}.Build()
+	reconcile := func(mutate func(*statepb.NodeSandbox)) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			sbx := statepb.NodeSandbox_builder{SandboxId: "sbx", TeamId: team.String(), ClusterId: uuid.NewString()}.Build()
 			mutate(sbx)
-			_, err := c.Reconcile(ctx, scheduling.ReconcileRequest_builder{Sandboxes: []*scheduling.NodeSandbox{sbx}}.Build())
+			_, err := c.Reconcile(ctx, statepb.ReconcileRequest_builder{Sandboxes: []*statepb.NodeSandbox{sbx}}.Build())
 
 			return err
 		}
@@ -603,10 +603,10 @@ func TestInvalidRequests(t *testing.T) {
 		"Remove empty sandbox":      remove(team.String(), ""),
 		"Remove braced sandbox":     remove(team.String(), "a}b"),
 		"TeamItems team not a UUID": teamItems("team-1"),
-		"TeamItems unknown state":   teamItems(team.String(), scheduling.SandboxState_SANDBOX_STATE_RUNNING, scheduling.SandboxState(99)),
-		"TeamItems unspecified":     teamItems(team.String(), scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED),
-		"Reconcile bad team":        reconcile(func(s *scheduling.NodeSandbox) { s.SetTeamId("team-1") }),
-		"Reconcile bad cluster":     reconcile(func(s *scheduling.NodeSandbox) { s.SetClusterId("") }),
+		"TeamItems unknown state":   teamItems(team.String(), statepb.SandboxState_SANDBOX_STATE_RUNNING, statepb.SandboxState(99)),
+		"TeamItems unspecified":     teamItems(team.String(), statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED),
+		"Reconcile bad team":        reconcile(func(s *statepb.NodeSandbox) { s.SetTeamId("team-1") }),
+		"Reconcile bad cluster":     reconcile(func(s *statepb.NodeSandbox) { s.SetClusterId("") }),
 	}
 	for name, call := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -622,18 +622,18 @@ func TestInvalidRequests(t *testing.T) {
 func TestStatesMapping(t *testing.T) {
 	t.Parallel()
 
-	known := map[sandboxtypes.State]scheduling.SandboxState{
-		sandboxtypes.StateRunning:      scheduling.SandboxState_SANDBOX_STATE_RUNNING,
-		sandboxtypes.StatePausing:      scheduling.SandboxState_SANDBOX_STATE_PAUSING,
-		sandboxtypes.StateKilling:      scheduling.SandboxState_SANDBOX_STATE_KILLING,
-		sandboxtypes.StateSnapshotting: scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
+	known := map[sandboxtypes.State]statepb.SandboxState{
+		sandboxtypes.StateRunning:      statepb.SandboxState_SANDBOX_STATE_RUNNING,
+		sandboxtypes.StatePausing:      statepb.SandboxState_SANDBOX_STATE_PAUSING,
+		sandboxtypes.StateKilling:      statepb.SandboxState_SANDBOX_STATE_KILLING,
+		sandboxtypes.StateSnapshotting: statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
 	}
-	require.Len(t, scheduling.SandboxState_name, len(known)+1, "every sandboxtypes.State has one enum value besides UNSPECIFIED")
+	require.Len(t, statepb.SandboxState_name, len(known)+1, "every sandboxtypes.State has one enum value besides UNSPECIFIED")
 
 	for want, value := range known {
 		fake := newFake()
-		stream, err := newClient(t, fake).TeamItems(callContext(t), scheduling.TeamItemsRequest_builder{
-			TeamId: uuid.NewString(), States: []scheduling.SandboxState{value},
+		stream, err := newClient(t, fake).TeamItems(callContext(t), statepb.TeamItemsRequest_builder{
+			TeamId: uuid.NewString(), States: []statepb.SandboxState{value},
 		}.Build())
 		require.NoError(t, err)
 		_, _, err = readTeamItems(t, stream)
@@ -642,7 +642,7 @@ func TestStatesMapping(t *testing.T) {
 	}
 
 	fake := newFake()
-	stream, err := newClient(t, fake).TeamItems(callContext(t), scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+	stream, err := newClient(t, fake).TeamItems(callContext(t), statepb.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
 	require.NoError(t, err)
 	_, _, err = readTeamItems(t, stream)
 	require.NoError(t, err)
@@ -671,7 +671,7 @@ func TestTeamItemsChunks(t *testing.T) {
 			for i := range tt.items {
 				fake.items = append(fake.items, minimalRecord(team, fmt.Sprintf("sbx-%d", i)))
 			}
-			stream, err := newClient(t, fake).TeamItems(callContext(t), scheduling.TeamItemsRequest_builder{TeamId: team.String()}.Build())
+			stream, err := newClient(t, fake).TeamItems(callContext(t), statepb.TeamItemsRequest_builder{TeamId: team.String()}.Build())
 			require.NoError(t, err)
 			records, messages, err := readTeamItems(t, stream)
 			require.NoError(t, err)
@@ -691,7 +691,7 @@ func TestReconcile(t *testing.T) {
 		t.Parallel()
 
 		fake := newFake()
-		resp, err := newClient(t, fake).Reconcile(callContext(t), scheduling.ReconcileRequest_builder{NodeId: "node"}.Build())
+		resp, err := newClient(t, fake).Reconcile(callContext(t), statepb.ReconcileRequest_builder{NodeId: "node"}.Build())
 		require.NoError(t, err)
 		assert.Empty(t, resp.GetOrphans())
 		assert.Equal(t, 1, fake.callCount())
@@ -719,9 +719,9 @@ func TestReconcile(t *testing.T) {
 		}
 		requireNoZeroField(t, reported[0])
 
-		wire := make([]*scheduling.NodeSandbox, 0, len(reported))
+		wire := make([]*statepb.NodeSandbox, 0, len(reported))
 		for _, sbx := range reported {
-			wire = append(wire, scheduling.NodeSandbox_builder{
+			wire = append(wire, statepb.NodeSandbox_builder{
 				SandboxId:   sbx.SandboxID,
 				ExecutionId: sbx.ExecutionID,
 				TeamId:      sbx.TeamID.String(),
@@ -736,11 +736,11 @@ func TestReconcile(t *testing.T) {
 				DiskKept:    sbx.DiskKept,
 			}.Build())
 		}
-		wire = append(wire, scheduling.NodeSandbox_builder{SandboxId: "no-start", TeamId: uuid.NewString(), ClusterId: uuid.Nil.String()}.Build())
+		wire = append(wire, statepb.NodeSandbox_builder{SandboxId: "no-start", TeamId: uuid.NewString(), ClusterId: uuid.Nil.String()}.Build())
 
 		fake := newFake()
 		fake.orphans = []sandboxtypes.NodeSandbox{reported[0]}
-		resp, err := newClient(t, fake).Reconcile(callContext(t), scheduling.ReconcileRequest_builder{NodeId: "node-1", Sandboxes: wire}.Build())
+		resp, err := newClient(t, fake).Reconcile(callContext(t), statepb.ReconcileRequest_builder{NodeId: "node-1", Sandboxes: wire}.Build())
 		require.NoError(t, err)
 
 		seen := fake.snapshot()
@@ -788,21 +788,21 @@ func TestRecordMessageBoundaries(t *testing.T) {
 		{"records above the cap in a row", []int{big, big, small}, []int{1, 1, 1}},
 		{"a record above the cap after a full count", append(slices.Repeat([]int{small}, 256), big), []int{256, 1}},
 	}
-	streams := map[string]func(ctx context.Context, t *testing.T, client scheduling.StateServiceClient) [][][]byte{
-		"TeamItems": func(ctx context.Context, t *testing.T, client scheduling.StateServiceClient) [][][]byte {
+	streams := map[string]func(ctx context.Context, t *testing.T, client statepb.StateServiceClient) [][][]byte{
+		"TeamItems": func(ctx context.Context, t *testing.T, client statepb.StateServiceClient) [][][]byte {
 			t.Helper()
 
-			stream, err := client.TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+			stream, err := client.TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
 			require.NoError(t, err)
 			messages, err := readMessages(t, stream)
 			require.NoError(t, err)
 
 			return messages
 		},
-		"ExpiredItems": func(ctx context.Context, t *testing.T, client scheduling.StateServiceClient) [][][]byte {
+		"ExpiredItems": func(ctx context.Context, t *testing.T, client statepb.StateServiceClient) [][][]byte {
 			t.Helper()
 
-			stream, err := client.ExpiredItems(ctx, scheduling.ExpiredItemsRequest_builder{}.Build())
+			stream, err := client.ExpiredItems(ctx, statepb.ExpiredItemsRequest_builder{}.Build())
 			require.NoError(t, err)
 			messages, err := readMessages(t, stream)
 			require.NoError(t, err)

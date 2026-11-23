@@ -9,12 +9,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
-func (s *Server) BeginUpdate(ctx context.Context, req *scheduling.BeginUpdateRequest) (*scheduling.BeginUpdateResponse, error) {
+func (s *Server) BeginUpdate(ctx context.Context, req *statepb.BeginUpdateRequest) (*statepb.BeginUpdateResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -25,8 +25,8 @@ func (s *Server) BeginUpdate(ctx context.Context, req *scheduling.BeginUpdateReq
 	if !ok {
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
-	if outcome != scheduling.StateOutcome_STATE_OUTCOME_OK {
-		return scheduling.BeginUpdateResponse_builder{Outcome: outcome}.Build(), nil
+	if outcome != statepb.StateOutcome_STATE_OUTCOME_OK {
+		return statepb.BeginUpdateResponse_builder{Outcome: outcome}.Build(), nil
 	}
 
 	record, err := json.Marshal(sbx)
@@ -46,10 +46,10 @@ func (s *Server) BeginUpdate(ctx context.Context, req *scheduling.BeginUpdateReq
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.BeginUpdateResponse_builder{Outcome: outcome, Record: record, Token: envelope}.Build(), nil
+	return statepb.BeginUpdateResponse_builder{Outcome: outcome, Record: record, Token: envelope}.Build(), nil
 }
 
-func (s *Server) CommitUpdate(ctx context.Context, req *scheduling.CommitUpdateRequest) (*scheduling.CommitUpdateResponse, error) {
+func (s *Server) CommitUpdate(ctx context.Context, req *statepb.CommitUpdateRequest) (*statepb.CommitUpdateResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -74,8 +74,8 @@ func (s *Server) CommitUpdate(ctx context.Context, req *scheduling.CommitUpdateR
 	if !ok {
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
-	if outcome != scheduling.StateOutcome_STATE_OUTCOME_OK {
-		return scheduling.CommitUpdateResponse_builder{Outcome: outcome}.Build(), nil
+	if outcome != statepb.StateOutcome_STATE_OUTCOME_OK {
+		return statepb.CommitUpdateResponse_builder{Outcome: outcome}.Build(), nil
 	}
 
 	record, err := json.Marshal(committed)
@@ -83,10 +83,10 @@ func (s *Server) CommitUpdate(ctx context.Context, req *scheduling.CommitUpdateR
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.CommitUpdateResponse_builder{Outcome: outcome, Record: record}.Build(), nil
+	return statepb.CommitUpdateResponse_builder{Outcome: outcome, Record: record}.Build(), nil
 }
 
-func (s *Server) AbortUpdate(ctx context.Context, req *scheduling.AbortUpdateRequest) (*scheduling.AbortUpdateResponse, error) {
+func (s *Server) AbortUpdate(ctx context.Context, req *statepb.AbortUpdateRequest) (*statepb.AbortUpdateResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func (s *Server) AbortUpdate(ctx context.Context, req *scheduling.AbortUpdateReq
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.AbortUpdateResponse_builder{Outcome: outcome}.Build(), nil
+	return statepb.AbortUpdateResponse_builder{Outcome: outcome}.Build(), nil
 }
 
 func commitRecord(data []byte, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, error) {

@@ -61,8 +61,9 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 	telemetry.ReportEvent(ctx, "killing sandbox")
 
 	claimID, killedOrRemoved, err := a.orchestrator.KillAndClaim(ctx, teamID, sandboxID, sandbox.RemoveOpts{
-		Action: sandbox.StateActionKill,
-		Reason: sandbox.KillReasonRequest,
+		WaitForLifecycleHold: true,
+		Action:               sandbox.StateActionKill,
+		Reason:               sandbox.KillReasonRequest,
 	})
 	switch {
 	case err == nil:

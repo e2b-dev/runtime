@@ -8,8 +8,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
-const cacheRefreshInterval = 10 * time.Second
-
 // cachedDiscovery serves the last set a background loop read, so callers on a
 // request path do not pay a source round trip. It wraps any Discoverer: the
 // listers stay one-per-source, and caching is a property of the wiring rather
@@ -37,12 +35,13 @@ type cachedDiscovery struct {
 	cancel func()
 }
 
-// Cached wraps lister in a background refresh loop.
-func Cached(lister Discoverer, logger logger.Logger) Discoverer {
+// Cached wraps lister in a background loop that reads it every interval. The
+// interval bounds one read too.
+func Cached(lister Discoverer, logger logger.Logger, interval time.Duration) Discoverer {
 	return &cachedDiscovery{
 		lister:   lister,
 		logger:   logger,
-		interval: cacheRefreshInterval,
+		interval: interval,
 		err:      ErrNotYetSynced,
 		cancel:   func() {},
 	}

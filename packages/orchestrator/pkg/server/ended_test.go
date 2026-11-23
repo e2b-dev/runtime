@@ -38,7 +38,6 @@ func endedServerSandbox(config *orchestrator.SandboxConfig) *sandbox.Sandbox {
 		},
 	}
 	sbx.SetStartedAt(startTime)
-	sbx.SetEndAt(endTime)
 
 	return sbx
 }
@@ -59,7 +58,6 @@ func TestListAndDeleteEndedSandbox(t *testing.T) {
 
 	want := &orchestrator.RunningSandbox{
 		StartTime:   timestamppb.New(startTime),
-		EndTime:     timestamppb.New(endTime),
 		SandboxId:   listSandboxID,
 		TeamId:      listTeamID,
 		ExecutionId: listExecutionID,

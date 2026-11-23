@@ -48,6 +48,11 @@ type Requirements struct {
 	CPU      CPURequirement
 	Features FeatureRequirement
 	Memory   MemoryRequirement
+	// MemoryMiB is the most memory the sandbox may run with when the request
+	// does not carry its size: a start from a build with a memory maximum whose
+	// size the API does not know is accounted at the maximum. The larger of it
+	// and the request's sizes is accounted.
+	MemoryMiB int64
 }
 
 // Algorithm defines the interface for sandbox placement strategies.
@@ -126,7 +131,7 @@ func placeSandbox(
 
 	resources := nodemanager.SandboxResources{
 		CPUs:      sbxRequest.GetSandbox().GetVcpu(),
-		MiBMemory: sbxRequest.GetSandbox().GetRamMb(),
+		MiBMemory: max(sbxRequest.GetSandbox().GetRamMb(), sbxRequest.GetSandbox().GetMemoryMb(), requirements.MemoryMiB),
 		HugePages: true,
 	}
 

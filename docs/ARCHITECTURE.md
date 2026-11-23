@@ -268,10 +268,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   body carries the webhook's signing secret; like every refused request's body, it is kept out
   of the response, the access log and the span. Reads are capped at 100
   deliveries per page.
-- **Cluster records**: the API keeps no remote cluster record itself. It reads and writes them
-  (endpoint, edge token, sandbox domain, auth organization, deletion protection and request,
-  telemetry identity) over a unary gRPC contract (`e2b.clusters.management.v1`) on the cluster
-  service named by `CLUSTER_SERVICE_GRPC_ADDRESS`; nothing in the API's database refers to them. The
+- **Cluster records**: the API keeps no remote cluster record itself. It reads them (endpoint,
+  edge token, sandbox domain, auth organization, deletion protection and request, telemetry
+  identity), records their deletion and removes them over a unary gRPC contract
+  (`e2b.clusters.management.v1`) on the cluster service named by `CLUSTER_SERVICE_GRPC_ADDRESS`;
+  it creates and edits none, and nothing in the API's database refers to them. The
   `cluster_service` client hop is on unless `E2B_TLS_CLUSTER_SERVICE_CLIENT_MODE` says otherwise,
   and may be off only with `ENVIRONMENT=local` or a loopback address, because the service hands its
   callers every cluster's edge token. Team assignment, template cleanup and the shared-cluster
@@ -286,7 +287,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
 - **Scheduling API connection**: with `SCHEDULING_API_GRPC_ADDRESS` set, the API prepares a gRPC
   connection to scheduling-api through the `scheduling` client hop, balanced over every resolved
   address like the cluster service's (a `dns:///name:port` target gives each replica of a headless
-  Service its own connection) and sent only to replicas that report `e2b.scheduling.v1.StateService`
+  Service its own connection) and sent only to replicas that report `e2b.scheduling.state.v1.StateService`
   as `SERVING`. The sandbox store sends a call there instead of to its own Redis store when the
   `sandbox-state-scheduling-api` flag is on for the call's team or sandbox (default off; without
   LaunchDarkly the `SANDBOX_STATE_SCHEDULING_API` environment variable). Calls without a team (the
@@ -307,9 +308,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   serves `SandboxPlacementService` (`e2b.sandbox.placement.v1`) for the sandbox migration
   manager: `GetSandboxPlacement` admits a move between two local nodes and reports the
   execution's network mode and whether managed volumes are attached, for the manager to
-  decide whether the sandbox can move. `HoldExecution` holds a running execution's record
-  so pause, kill and timeout refuse it, and `ResolveExecutionHold` moves the record to the
-  target, releases it, or ends it. Only a chain-verified caller named in
+  decide whether the sandbox can move. `HoldExecution` holds a running execution's record:
+  a request that pauses, kills or updates the sandbox waits up to 30 seconds for the hold
+  to end and is then refused as retryable, a snapshot, a fork, eviction and the node sync
+  are refused at once, and reads are served as usual. `ResolveExecutionHold` moves the
+  record to the target, releases it, or ends it. Only a chain-verified caller named in
   `E2B_TLS_PLACEMENT_ALLOW` is served; the listener's own allow-list is not enough, since
   client-proxy shares it. Every call is safe to repeat.
 - **Node sandboxes**: admin `GET /nodes/{nodeID}/sandboxes` lists the sandboxes a node runs
@@ -318,7 +321,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   the operator view that picks a sandbox to migrate. The migration manager decides whether
   a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
-  works jobs that need the orchestrator connections. Its job arguments live in
+  works jobs that need the orchestrator connections, and one that carries the API's own
+  writes to the cluster service. Its job arguments live in
   `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
@@ -344,7 +348,33 @@ image, which E2B Embed runs on port 3001 against the API alone.
   point and sweeps again, so work admitted before that eviction cannot outlive it. It
   is not unique: a job already running may have read the team before a later ban, so each ban
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
-  follow the teardown's. Steps report
+  follow the teardown's. `sync_team_cluster_assignment` copies a team's cluster to the
+  cluster service, which records it as a project assignment. Every write of a team's cluster
+  enqueues it: a project deletion in its transaction when a cluster service is configured, and a
+  project upsert that leaves the project on a remote cluster after its
+  commit, because that row is written through the auth pool. A
+  failed enqueue there fails the upsert, so the caller's retry enqueues it. The job reads the
+  team when it runs, under a per-team advisory lock it holds until the cluster service has
+  answered, so two jobs for one team cannot write out of order. An attempt whose database
+  session was lost fails and retries, because the lock went with the session. A live team's
+  cluster is assigned; a team on none, deleted or gone has the recorded one detached. Until
+  that job has run for a detached or deleted team, deleting its cluster answers 503 and not
+  409: the API found no live team on it, so the cluster service's refusal clears on its own.
+  A cluster the cluster service is deleting, or does not know, takes no new team: the sync
+  completes without recording one, since a retry cannot change the answer, and the write that
+  takes the team off the cluster enqueues its own.
+  The job is not unique, and completes without a call when no cluster service is configured.
+  Retries and discarding follow the teardown's. `sweep_team_cluster_assignments` covers the
+  teams no write enqueued a sync for: those assigned before the syncs existed, and a record
+  the cluster service has lost since. With a cluster service configured, River's leader
+  enqueues it when it starts and every hour after. It pages through the live teams on a
+  remote cluster, asks the cluster service for each page's recorded clusters, and enqueues a
+  sync for every team recorded on none or on another; the syncs do the writing, at a lower
+  priority than the syncs a write enqueues. Those syncs, and the sweep itself, are unique
+  while one is open, so a team whose sync keeps failing does not gather a retrying one per
+  sweep. A record held for a team that is no
+  longer on a cluster is not found this way; the write that took the team off enqueued its
+  sync. An attempt is bounded at 10 minutes. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) and `OUTBOX_BACKLOG_INTERVAL` (default 30s) configure it;
@@ -356,13 +386,6 @@ image, which E2B Embed runs on port 3001 against the API alone.
   the value the flag falls back to when LaunchDarkly has none (no LaunchDarkly, or the flag not
   defined there); a LaunchDarkly value wins. LaunchDarkly feature flags also gate placement
   parameters, rate limits, and rollouts.
-
-Administrators can update only an existing cluster's telemetry identity with
-`PUT /unstable/management/clusters/{clusterID}/telemetry`, authenticated using the
-existing admin service JWT. The update sends the cluster service only the telemetry
-identity, so credentials, endpoints, display names and assignments stay as stored. It
-refuses a deleting or missing cluster, a cluster that already has a different
-identity, and an identity another cluster holds.
 
 #### Project management writes (`/unstable/management`)
 
@@ -388,12 +411,16 @@ retries.
 
 - `PUT /unstable/management/projects/{projectID}` creates or reconciles a project and answers 201
   or 200 to say which. A project is a `public.teams` row created from a caller-supplied UUID, with
-  no tier. An optional cluster ID is stored on the project; omitting it preserves the current
-  assignment. A changed slug renames the project and, in the same transaction, gives each of its
+  no tier. Creation fixes the project's cluster: omit `cluster_id` for local or supply its remote
+  cluster ID. An update may omit `cluster_id` to preserve the original placement. Naming a different
+  cluster returns 409 without changing the project. Every success returns the stored project ID
+  and cluster after cache eviction, including on replay. Scheduling reads `teams.cluster_id`. A changed slug
+  renames the project and, in the same transaction, gives each of its
   namespaced template aliases under the new slug as well, keeping the old ones and leaving an
   alias the new slug already holds as it is. It answers 409 when another project already holds the slug, when the
-  request assigns a cluster whose deletion is recorded, or when a concurrent request created the
-  same project first.
+  request conflicts with the project's placement, a draining cluster has not admitted that project,
+  or a concurrent request created the same project first. If the cluster service is unavailable
+  during remote creation, the API returns 503 with `Should-Retry: true` before it inserts the team.
 - `PUT .../members/{userID}` applies the desired presence for one user, gated by a monotonic
   per-project/user revision in `projection.project_members`; a duplicate or older revision
   succeeds without changing target state. A present projection carries the user's OIDC
@@ -469,7 +496,7 @@ it leaves a snapshot); and enqueues the teardown again, which is a no-op while o
 
 Afterwards the API's deleted-project middleware, running after authentication, answers 404 to every
 non-GET route under `/unstable/management/` that names `{projectID}`: the upsert, member, limits,
-block, ban and settings writes, and cluster assignment and detachment. The DELETE is exempt so a retry
+block, ban and settings writes. The DELETE is exempt so a retry
 still reaches it. Shared auth refuses a membership or API key still left for the project with 403, and the API leaves the project out of a user's team list. Volumes, builds
 and stored artifacts are not reclaimed.
 
@@ -497,36 +524,25 @@ replaces what they wrote.
 #### Cluster lifecycle (`/unstable/management/clusters`)
 
 The owning management service also drives a replay-safe cluster lifecycle under
-`/unstable/management/clusters/{clusterID}` and
-`/unstable/management/projects/{projectID}/cluster/{clusterID}`, with service JWTs only. A caller
-registers a stable cluster UUID, assigns it only to the named project, detaches that exact
-assignment before provider cleanup, and deletes the cluster only after no project references it.
-Replaying the same registration or assignment succeeds. Registering the cluster again with the same
-auth organization preserves its stored display name and may change its endpoint, TLS setting, sandbox
-proxy domain and token, for example when the cluster moves to a new domain; the API rebuilds that cluster's clients on its next
-sync and gives sandboxes the new domain. That update carries the stored record's etag, and a
-registration that races another write starts over, a bounded number of times. A second update
-then sets a telemetry identity the cluster does not have yet, so a refused identity never costs
-the cluster its new token. A changed auth organization, a different telemetry
-identity, a different assignment, an inexact detach, or deletion of a referenced cluster returns
-a conflict. The
-assignment does not check the project's tier; the caller decides which projects may use a cluster.
-A cluster first registered through this surface starts without deletion protection; one created any
-other way starts protected, a later registration never changes it, and deleting a protected cluster
-or checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
+`/unstable/management/clusters/{clusterID}`, with service JWTs only. Clusters are registered with
+the cluster service, not through the API. A project stays on its original cluster until project
+deletion clears the reference. The caller deletes the cluster only after no project references it;
+deleting a referenced cluster returns a conflict. The assignment does not check the project's
+tier; the caller decides which projects may use a cluster. Deleting a protected cluster or
+checking its destroy readiness (`GET .../destroy-readiness`) returns a conflict.
 A caller that deletes a cluster's projects before the cluster first lists them with
 `GET /unstable/management/clusters/{clusterID}/projects`, which returns every project whose team is
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
 request has the cluster service record the deletion, returns a conflict while deletion
-protection is on, and succeeds for an absent cluster and on repeat. From then on deletion
-protection stays off, and the API refuses to newly assign a team to the cluster
-(`cluster_assignment_cluster_deleting` from the assignment route, a conflict from the project
-upsert carrying the cluster ID); keeping a team's current cluster is not a new assignment. A new
-assignment, by either route, checks the cluster with the cluster service while holding a
-per-cluster advisory lock in the database, and the deletion request takes that lock once the
-deletion is recorded. So an assignment either commits before the request returns, where the
-caller's next listing finds it, or is refused. Deleting each project clears its team's cluster.
+protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
+temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
+with `Should-Retry: true`. Once deletion is recorded, protection stays off. A project already
+admitted to this cluster may finish creation during the drain; its claim prevents final
+removal. A new remote team checks admission with `CheckProjectCreation` while holding the
+per-cluster advisory lock in the database. The response carries no cluster credentials. The
+deletion request takes that lock after recording the drain. Deleting each project clears its
+team's cluster; the caller releases its claim after the deletion is acknowledged.
 The cluster delete then checks deletion protection with the cluster service, and in one
 transaction holding the same lock refuses a cluster a live team still uses, soft-deletes its
 templates and clears it from teams and templates deleted earlier, has the cluster service record
@@ -535,17 +551,19 @@ requested during the delete waits for it and is then refused. If the cluster ser
 remove the record, the transaction rolls back but the recorded deletion stays, so assignments
 remain refused. The delete runs to the end even if its caller leaves, and deleting an absent
 cluster still releases its templates.
-Registration and assignment rejections carry a stable `error_code` (`cluster_registration_*`,
-`cluster_assignment_*`) in the shared error response; callers use that code rather than the
-human-readable message, and treat uncoded or unknown reasons as generic errors.
 
-The operator dashboard manages clusters through `/unstable/admin/clusters`, with an admin token or
-a service JWT: it lists clusters with their team counts, reads one cluster with its teams, creates
-a cluster (protected from deletion), updates its mutable fields and deletion protection, rotates
-its token, and deletes it with the same checks as the management delete. The list filters, sorts
-and pages the cluster service's records in memory, comparing text without regard to case. No
-route returns a cluster's token. `/unstable/admin/clusters/team-counts` returns the live team
-count of each cluster on its own; it reads only the teams, so it answers without a cluster service.
+`DELETE /unstable/management/clusters/{clusterID}/registration` removes the registration even
+when live projects still reference the cluster. Those projects keep their cluster ID and lose
+runtime access. If the cluster is permanently unavailable, running on another cluster requires
+a new project ID. Deleting the old project releases its slug for reuse, but its API keys and
+templates do not transfer to the new project.
+
+The operator dashboard reads and edits cluster records at the cluster service, not through the
+API. Under `/unstable/admin/clusters` the API serves it only what is about teams, which the API
+alone holds, with an admin token or a service JWT. `/unstable/admin/clusters/team-counts` returns
+the live team count of each cluster; it reads only the teams, so it answers without a cluster
+service. `/unstable/admin/clusters/{clusterID}/teams` pages the live teams assigned to a cluster,
+by creation time or name, and answers 404 for a cluster the cluster service does not know.
 
 ### Orchestrator (`packages/orchestrator`)
 
@@ -736,11 +754,12 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
 - **Live upgrade** (`internal/services/process/upgrade.go`): an authenticated `POST /upgrade` lets
   the orchestrator swap envd inside a *running* sandbox at resume. It streams the new binary in the
   request body and envd `syscall.Exec`s into it **with the same PID**, carrying the workload's
-  stdio/PTY fds, process table, recently-retained exit codes and filesystem watchers forward via a
-  tmpfs handover blob. The workload cgroups stay frozen until the post-upgrade `/init` restores the
-  access token (so no re-adopted process runs unauthenticated), and the handover outcome
-  (procs/watchers re-adopted, plus any failures) rides back on that `/init`'s `X-Envd-Handover`
-  header for fleet visibility.
+  stdio/PTY fds, process table, recently-retained exit codes, filesystem watchers, default
+  user/workdir and user environment variables forward via a tmpfs handover blob. The workload
+  cgroups stay frozen until the post-upgrade `/init` restores the access token (so no re-adopted
+  process runs unauthenticated), and the handover outcome (procs/watchers re-adopted, environment
+  variables restored, plus any failures) rides back on that `/init`'s `X-Envd-Handover` header
+  for fleet visibility.
 - Scans guest ports and forwards them so any port a user process opens becomes reachable through
   sandbox URLs. **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and
@@ -817,7 +836,7 @@ answers 408.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
+| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, max_ram_mb, start_memory_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start; `max_ram_mb` is NULL for a build whose memory cannot grow, else the most memory its sandboxes can grow to, while `ram_mb` is the boot RAM; `start_memory_mb` is the memory a start from the build runs at when it names none, boot RAM for a template build and the paused sandbox's whole size for a snapshot build, NULL when unknown), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -829,7 +848,8 @@ limited to gRPC health probes. An isolated local run can explicitly set
 `E2B_TLS_GRPC_MODE=off`.
 
 The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
-`_migrations` table. This includes `env_defaults`, which migration `20260915204740`
+`_migrations` table, and `packages/db/schema/schema.sql` declares the `public`
+and `projection` schemas those migrations build. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.
 Any existing `_dashboard_migrations` table is retained as historical bookkeeping and
 requires no updates. Run the db-migrator before deploying updated services to a
@@ -1374,7 +1394,7 @@ sequenceDiagram
     participant FC as Firecracker build VMs
     participant OS as Object storage
 
-    C->>API: POST /v3/templates (register build: cpu, max cpu, ram, free-disk target) → Postgres env_builds
+    C->>API: POST /v3/templates (register build: cpu, max cpu, ram, max ram, free-disk target) → Postgres env_builds
     C->>API: POST /v2/templates/{id}/builds/{buildID} (recipe: steps, start/ready cmd)
     API->>TM: gRPC TemplateCreate(TemplateConfig)
     TM->>TM: pull image → inject envd/provisioning → extract ext4 rootfs
@@ -1408,6 +1428,19 @@ so the 400 reaches only the request that named it, never a connect or auto-resum
 to the same start. A valid `cpuCount` returns 409 if another start is already in
 flight, since it cannot apply the override to that start. Connect, auto-resume, and fork
 inherit the stored CPU count.
+
+Memory follows the same shape behind the same flag. A build registered with a max memory
+(`maxMemoryMB`, whole 128 MiB slots above `memoryMB`) gets a hotplug region from template
+builders at or above the release that understands it. The build records `max_ram_mb` and, as its
+start size, its boot RAM. Create and explicit resume accept an optional `memoryMB`; memory only
+grows, a size the sandbox already has survives a lowered team limit, and a new sandbox's growth
+above boot RAM, named or inherited from a snapshot template, is held to the caller's limit. Every
+start from a build with a max memory sends the resolved size as `memory_mb` and is placed only on
+orchestrators at or above the release that plugs it and reserves only boot RAM plus it. A pause
+records the sandbox's whole size as the snapshot build's `start_memory_mb`, and copies
+`max_ram_mb` from the source build (or from the snapshot's newest build that has one), so the size
+takes effect only when that build is ready. Placement, node accounting and billing count the whole
+size; when it is unknown, placement counts the max memory and billing boot RAM.
 
 The project provisioning system enqueues a base build when a cluster-backed project becomes active.
 The job registers and starts an ordinary base build, then completes when the API accepts it.
@@ -1515,5 +1548,8 @@ embed/                  E2B Embed: the whole stack on one machine (Compose, Terr
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto`, `packages/scheduling-api/e2b/` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
 Run `make generate` after changing any of them.
+Scheduling contracts exist in this checkout only as generated Go code in
+`packages/shared/pkg/grpc/contracts/scheduling/`; their protos are not part of this checkout, so `make generate`
+does not regenerate them.

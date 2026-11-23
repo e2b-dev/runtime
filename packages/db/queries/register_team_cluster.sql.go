@@ -11,48 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const assignTeamCluster = `-- name: AssignTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = $1::uuid
-    FOR UPDATE
-),
-assigned AS (
-    UPDATE public.teams AS team
-    SET cluster_id = $2::uuid
-    FROM locked_team
-    WHERE team.id = $1::uuid
-      AND (
-          NOT $3::boolean
-          OR locked_team.cluster_id IS NULL
-          OR locked_team.cluster_id = $2::uuid
-      )
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM assigned) AS assigned
-FROM locked_team
-`
-
-type AssignTeamClusterParams struct {
-	TeamID           uuid.UUID
-	ClusterID        uuid.UUID
-	PreserveExisting bool
-}
-
-type AssignTeamClusterRow struct {
-	ClusterID *uuid.UUID
-	Assigned  bool
-}
-
-func (q *Queries) AssignTeamCluster(ctx context.Context, arg AssignTeamClusterParams) (AssignTeamClusterRow, error) {
-	row := q.db.QueryRow(ctx, assignTeamCluster, arg.TeamID, arg.ClusterID, arg.PreserveExisting)
-	var i AssignTeamClusterRow
-	err := row.Scan(&i.ClusterID, &i.Assigned)
-	return i, err
-}
-
 const clusterUsedByMultipleTeams = `-- name: ClusterUsedByMultipleTeams :one
 SELECT COUNT(DISTINCT team_id) > 1
 FROM (
@@ -108,41 +66,19 @@ func (q *Queries) DetachDeletedTemplatesFromCluster(ctx context.Context, cluster
 	return err
 }
 
-const detachTeamCluster = `-- name: DetachTeamCluster :one
-WITH locked_team AS MATERIALIZED (
-    SELECT cluster_id
-    FROM public.teams
-    WHERE id = $1::uuid
-    FOR UPDATE
-),
-detached AS (
-    UPDATE public.teams AS team
-    SET cluster_id = NULL
-    FROM locked_team
-    WHERE team.id = $1::uuid
-      AND locked_team.cluster_id = $2::uuid
-    RETURNING TRUE
-)
-SELECT locked_team.cluster_id,
-       EXISTS (SELECT FROM detached) AS detached
-FROM locked_team
+const getLiveTeamCluster = `-- name: GetLiveTeamCluster :one
+SELECT cluster_id
+FROM public.teams
+WHERE id = $1::uuid
+  AND deleted_at IS NULL
 `
 
-type DetachTeamClusterParams struct {
-	TeamID    uuid.UUID
-	ClusterID uuid.UUID
-}
-
-type DetachTeamClusterRow struct {
-	ClusterID *uuid.UUID
-	Detached  bool
-}
-
-func (q *Queries) DetachTeamCluster(ctx context.Context, arg DetachTeamClusterParams) (DetachTeamClusterRow, error) {
-	row := q.db.QueryRow(ctx, detachTeamCluster, arg.TeamID, arg.ClusterID)
-	var i DetachTeamClusterRow
-	err := row.Scan(&i.ClusterID, &i.Detached)
-	return i, err
+// A deleted team holds no cluster, whatever its row still says.
+func (q *Queries) GetLiveTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getLiveTeamCluster, teamID)
+	var cluster_id *uuid.UUID
+	err := row.Scan(&cluster_id)
+	return cluster_id, err
 }
 
 const listClusterTeamIDs = `-- name: ListClusterTeamIDs :many
@@ -173,18 +109,56 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 	return items, nil
 }
 
-const lockTeamCluster = `-- name: LockTeamCluster :one
-SELECT cluster_id
+const listLiveTeamClusters = `-- name: ListLiveTeamClusters :many
+SELECT id, cluster_id::uuid AS cluster_id
 FROM public.teams
-WHERE id = $1::uuid
-FOR UPDATE
+WHERE cluster_id IS NOT NULL
+  AND deleted_at IS NULL
+  AND id > $1::uuid
+ORDER BY id
+LIMIT $2::int
 `
 
-func (q *Queries) LockTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, lockTeamCluster, teamID)
-	var cluster_id *uuid.UUID
-	err := row.Scan(&cluster_id)
-	return cluster_id, err
+type ListLiveTeamClustersParams struct {
+	After    uuid.UUID
+	PageSize int32
+}
+
+type ListLiveTeamClustersRow struct {
+	ID        uuid.UUID
+	ClusterID uuid.UUID
+}
+
+// A page of the live teams on a remote cluster, after the given team.
+func (q *Queries) ListLiveTeamClusters(ctx context.Context, arg ListLiveTeamClustersParams) ([]ListLiveTeamClustersRow, error) {
+	rows, err := q.db.Query(ctx, listLiveTeamClusters, arg.After, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLiveTeamClustersRow
+	for rows.Next() {
+		var i ListLiveTeamClustersRow
+		if err := rows.Scan(&i.ID, &i.ClusterID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTeamClusterSync = `-- name: LockTeamClusterSync :exec
+SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || $1::uuid::text, 0))
+`
+
+// Serializes the syncs of one team's cluster to the cluster service, so each
+// reads the team only after the sync before it has finished.
+func (q *Queries) LockTeamClusterSync(ctx context.Context, teamID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockTeamClusterSync, teamID)
+	return err
 }
 
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec

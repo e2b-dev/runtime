@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -88,17 +89,20 @@ func TestProxyAnswersProbeRequests(t *testing.T) {
 	tests := []struct {
 		name         string
 		probe        bool
+		canceled     bool
 		err          error
 		wantStatus   int
 		wantAnswer   string
+		wantObserved []ProbeAnswer
 		wantRequests int32
 	}{
-		{name: "routed sandbox is answered without forwarding", probe: true, wantStatus: http.StatusNoContent, wantAnswer: "true"},
-		{name: "unknown sandbox", probe: true, err: NewErrSandboxNotFound("sbx", PresenceAbsent), wantStatus: http.StatusBadGateway, wantAnswer: "false"},
-		{name: "held sandbox without a route keeps the not-found page", probe: true, err: NewErrSandboxNotFound("sbx", PresenceHeld), wantStatus: http.StatusBadGateway, wantAnswer: "true"},
-		{name: "failed lookup cannot tell", probe: true, err: NewErrSandboxNotFound("sbx", PresenceUnknown), wantStatus: http.StatusBadGateway},
-		{name: "sandbox found but refused keeps its page", probe: true, err: NewErrSandboxResumePermissionDenied("sbx", nil), wantStatus: http.StatusForbidden, wantAnswer: "true"},
-		{name: "capacity cannot tell", probe: true, err: NewErrSandboxCapacity("sbx", PresenceUnknown, "no room"), wantStatus: http.StatusServiceUnavailable},
+		{name: "routed sandbox is answered without forwarding", probe: true, wantStatus: http.StatusNoContent, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeFound}},
+		{name: "unknown sandbox", probe: true, err: NewErrSandboxNotFound("sbx", PresenceAbsent), wantStatus: http.StatusNotFound, wantAnswer: "false", wantObserved: []ProbeAnswer{ProbeNotFound}},
+		{name: "held sandbox without a route keeps the not-found page", probe: true, err: NewErrSandboxNotFound("sbx", PresenceHeld), wantStatus: http.StatusBadGateway, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeClaimed}},
+		{name: "failed lookup cannot tell", probe: true, err: NewErrSandboxNotFound("sbx", PresenceUnknown), wantStatus: http.StatusBadGateway, wantObserved: []ProbeAnswer{ProbeUnknown}},
+		{name: "sandbox found but refused keeps its page", probe: true, err: NewErrSandboxResumePermissionDenied("sbx", nil), wantStatus: http.StatusForbidden, wantAnswer: "true", wantObserved: []ProbeAnswer{ProbeClaimed}},
+		{name: "capacity cannot tell", probe: true, err: NewErrSandboxCapacity("sbx", PresenceUnknown, "no room"), wantStatus: http.StatusServiceUnavailable, wantObserved: []ProbeAnswer{ProbeUnknown}},
+		{name: "probe that ended before it was routed", probe: true, canceled: true, wantStatus: http.StatusRequestTimeout, wantObserved: []ProbeAnswer{ProbeCanceled}},
 		{name: "request without the header is forwarded", probe: false, wantStatus: http.StatusOK, wantRequests: 1},
 	}
 
@@ -106,8 +110,16 @@ func TestProxyAnswersProbeRequests(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			var observed []ProbeAnswer
+			observe := func(_ context.Context, answer ProbeAnswer) {
+				observed = append(observed, answer)
+			}
+
 			backendURL, requests, _ := headerBackend(t)
-			p := New(0, ClientProxyRetries, 20*time.Second, func(*http.Request) (*pool.Destination, error) {
+			p := New(0, ClientProxyRetries, 20*time.Second, func(r *http.Request) (*pool.Destination, error) {
+				if tt.canceled {
+					return nil, r.Context().Err()
+				}
 				if tt.err != nil {
 					return nil, tt.err
 				}
@@ -118,10 +130,16 @@ func TestProxyAnswersProbeRequests(t *testing.T) {
 					RequestLogger: logger.NewNopLogger(),
 					ConnectionKey: "probe-" + tt.name,
 				}, nil
-			}, nil, false, WithProbe())
+			}, nil, false, WithProbe(observe))
 			t.Cleanup(func() { require.NoError(t, p.Close()) })
 
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodHead, "http://49983-sbx.e2b.app/", nil)
+			ctx := t.Context()
+			if tt.canceled {
+				canceledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = canceledCtx
+			}
+			req := httptest.NewRequestWithContext(ctx, http.MethodHead, "http://49983-sbx.e2b.app/", nil)
 			if tt.probe {
 				req.Header.Set(HeaderProbe, "true")
 			}
@@ -131,6 +149,7 @@ func TestProxyAnswersProbeRequests(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, rr.Code)
 			assert.Equal(t, tt.wantAnswer, rr.Header().Get(HeaderProbe))
 			assert.Equal(t, tt.wantRequests, requests.Load())
+			assert.Equal(t, tt.wantObserved, observed)
 		})
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -31,12 +32,7 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 
 		return
 	}
-	// Without a cluster service the pool never loads a remote cluster.
-	if body.ClusterId != nil && *body.ClusterId != uuid.Nil && !a.requireClusterService(c) {
-		return
-	}
-
-	stored, created, err := a.managementService.UpsertProject(ctx, management.Project{
+	stored, created, err := a.managementService.UpsertProject(ctx, a.riverClient, management.Project{
 		ClusterID: body.ClusterId,
 		ID:        projectID,
 		Name:      body.Name,
@@ -67,6 +63,20 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 
 		return
 	}
+	if errors.Is(err, management.ErrProjectNotFound) {
+		a.sendAPIStoreError(c, http.StatusNotFound, "Project not found")
+
+		return
+	}
+	if errors.Is(err, clusterassign.ErrUnavailable) {
+		apierrors.SendAPIError(c, &apierrors.APIError{
+			Code:      http.StatusServiceUnavailable,
+			ClientMsg: "Cluster management is not available",
+			Retryable: apierrors.CanRetry,
+		})
+
+		return
+	}
 	if errors.Is(err, clusterassign.ErrNotFound) {
 		telemetry.ReportErrorByCode(ctx, http.StatusNotFound, "upsert project failed", err, attrs...)
 		a.sendAPIStoreError(c, http.StatusNotFound, "Cluster not found")
@@ -82,12 +92,16 @@ func (a *APIStore) sendProjectUpsertError(c *gin.Context, err error, attrs ...at
 // failure is not one the caller can resolve by changing the request.
 func projectConflictMessage(err error) string {
 	switch {
+	case errors.Is(err, management.ErrProjectClusterFixed):
+		return "The project's cluster cannot be changed"
 	case errors.Is(err, management.ErrProjectSlugTaken):
 		return "Slug is already taken on this control plane"
 	case errors.Is(err, management.ErrProjectRaced):
 		return "Project was created concurrently, retry"
 	case errors.Is(err, clusterassign.ErrDeleting):
 		return "Cluster is being deleted"
+	case errors.Is(err, clusterassign.ErrPlacementConflict):
+		return "Project cannot be created on this cluster"
 	}
 
 	return ""

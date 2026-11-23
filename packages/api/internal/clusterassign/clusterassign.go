@@ -22,10 +22,12 @@ import (
 )
 
 var (
+	ErrUnavailable = errors.New("cluster management is not available")
 	// ErrNotFound reports a cluster the cluster service has no record of.
 	ErrNotFound = errors.New("cluster not found")
 	// ErrDeleting reports a cluster whose deletion is recorded.
-	ErrDeleting = errors.New("cluster is being deleted")
+	ErrDeleting          = errors.New("cluster is being deleted")
+	ErrPlacementConflict = errors.New("project cannot be created on this cluster")
 )
 
 // Lock holds the cluster's assignment lock until tx ends. Take it before
@@ -38,32 +40,45 @@ func Lock(ctx context.Context, tx pgx.Tx, clusterID uuid.UUID) error {
 	return nil
 }
 
-// Check returns ErrNotFound or ErrDeleting for a cluster no team may be newly
-// assigned to. Call it holding Lock.
-func Check(ctx context.Context, service clustersgrpc.ClusterServiceClient, clusterID uuid.UUID) error {
-	// The local cluster has no record, and the cluster service refuses its nil
-	// ID outright. Without a cluster service there are no remote clusters.
-	if clusterID == consts.LocalClusterID || service == nil {
+// Check runs under Lock on the first insert of a remote project.
+func Check(ctx context.Context, service clustersgrpc.ClusterServiceClient, clusterID, projectID uuid.UUID) error {
+	// The local cluster has no record, and the cluster service refuses its nil ID.
+	if clusterID == consts.LocalClusterID {
 		return ErrNotFound
 	}
-
-	resp, err := service.GetCluster(ctx, clustersgrpc.GetClusterRequest_builder{ClusterId: clusterID.String()}.Build())
-	switch {
-	case status.Code(err) == codes.NotFound:
-		return ErrNotFound
-	case err != nil:
-		return fmt.Errorf("look up the cluster: %w", err)
-	case resp.GetCluster().HasDeletionRequestedAt():
-		return ErrDeleting
+	if service == nil {
+		return ErrUnavailable
 	}
 
-	return nil
+	_, err := service.CheckProjectCreation(ctx, clustersgrpc.CheckProjectCreationRequest_builder{
+		ProjectId: projectID.String(),
+		ClusterId: clusterID.String(),
+	}.Build())
+	switch status.Code(err) {
+	case codes.OK:
+		return nil
+	case codes.NotFound:
+		return ErrNotFound
+	case codes.Unavailable:
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+	case codes.FailedPrecondition:
+		for _, detail := range status.Convert(err).Details() {
+			if reason, ok := detail.(*clustersgrpc.ClusterErrorDetail); ok {
+				switch reason.GetReason() {
+				case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED:
+					return ErrDeleting
+				case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT:
+					return ErrPlacementConflict
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("check project creation: %w", err)
 }
 
-// Settle returns once every assignment holding the cluster's lock has
-// committed. Called after a deletion is recorded, it leaves every later
-// assignment to find the deletion, so the caller's next reading of the
-// cluster's teams is final.
+// Settle waits for assignments that checked admission before the drain.
+// An already claimed project can still finish creating its team afterwards.
 func Settle(ctx context.Context, db *sqlcdb.Client, clusterID uuid.UUID) error {
 	_, tx, err := db.WithTx(ctx)
 	if err != nil {

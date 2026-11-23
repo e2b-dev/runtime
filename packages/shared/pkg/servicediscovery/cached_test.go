@@ -13,6 +13,9 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 
+// refreshInterval outlasts every test here: none waits for a second read.
+const refreshInterval = 10 * time.Second
+
 // scriptedLister returns each canned result in turn, repeating the last.
 type scriptedLister struct {
 	mu      sync.Mutex
@@ -48,7 +51,7 @@ func (l *scriptedLister) callCount() int {
 func startCached(t *testing.T, lister Discoverer) Discoverer {
 	t.Helper()
 
-	d := Cached(lister, logger.NewNopLogger())
+	d := Cached(lister, logger.NewNopLogger(), refreshInterval)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	d.Start(ctx)
@@ -63,7 +66,7 @@ func startCached(t *testing.T, lister Discoverer) Discoverer {
 func TestCached_ReportsNotYetSyncedBeforeTheFirstRefresh(t *testing.T) {
 	t.Parallel()
 
-	d := Cached(&scriptedLister{results: []listResult{{instances: []Instance{{WorkloadID: "a"}}}}}, logger.NewNopLogger())
+	d := Cached(&scriptedLister{results: []listResult{{instances: []Instance{{WorkloadID: "a"}}}}}, logger.NewNopLogger(), refreshInterval)
 
 	instances, err := d.ListInstances(t.Context())
 	require.ErrorIs(t, err, ErrNotYetSynced)
@@ -115,7 +118,7 @@ func TestCached_StopEndsTheRefreshLoop(t *testing.T) {
 	t.Parallel()
 
 	lister := &scriptedLister{results: []listResult{{instances: []Instance{{WorkloadID: "a"}}}}}
-	d := Cached(lister, logger.NewNopLogger())
+	d := Cached(lister, logger.NewNopLogger(), refreshInterval)
 
 	ctx := t.Context()
 	d.Start(ctx)

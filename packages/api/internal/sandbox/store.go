@@ -235,11 +235,55 @@ func (s *Store) TeamsWithSandboxes(ctx context.Context) (map[uuid.UUID]int64, er
 	return b.storage.TeamsWithSandboxCount(bctx)
 }
 
+// Update applies updateFunc to the record under its lock. It waits out a
+// lifecycle hold, as waitOutHold describes, and then updates the record as
+// the hold left it.
 func (s *Store) Update(ctx context.Context, teamID uuid.UUID, sandboxID string, updateFunc func(sandbox Sandbox) (Sandbox, error)) (Sandbox, error) {
 	bctx, b, span := s.begin(ctx, "update", teamID, sandboxID)
 	defer span.End()
 
-	return sandboxtypes.UpdateRecord(bctx, b.storage, teamID, sandboxID, updateFunc)
+	var updated Sandbox
+	err := waitOutHold(bctx, func() (err error) {
+		updated, err = sandboxtypes.UpdateRecord(bctx, b.storage, teamID, sandboxID, updateFunc)
+
+		return err
+	})
+
+	return updated, err
+}
+
+// holdWaitLimit is how long a write waits for a lifecycle hold to end before
+// it is refused. A migration holds a sandbox for seconds, and the SDKs give
+// up on a request after 60 seconds by default, so the refusal has to come
+// well before that.
+const holdWaitLimit = 30 * time.Second
+
+// holdRetryInterval is how long a waiting write leaves between two tries, and
+// so the longest it keeps waiting once its hold has ended.
+const holdRetryInterval = 250 * time.Millisecond
+
+// waitOutHold runs begin again for as long as a lifecycle hold refuses it.
+// It starts no new try once holdWaitLimit has passed or ctx has ended, and
+// returns the last refusal, ErrLifecycleHeld, which the caller answers as
+// retryable. The limit bounds the wait for the hold only: a try in progress
+// keeps the caller's own deadline, so one admitted late still applies. A
+// refused begin has changed nothing, so repeating it replays no effect.
+// Writes waiting on one hold are admitted in no particular order.
+func waitOutHold(ctx context.Context, begin func() error) error {
+	waitCtx, cancel := context.WithTimeout(ctx, holdWaitLimit)
+	defer cancel()
+
+	for {
+		err := begin()
+		if !errors.Is(err, ErrLifecycleHeld) {
+			return err
+		}
+		select {
+		case <-waitCtx.Done():
+			return err
+		case <-time.After(holdRetryInterval):
+		}
+	}
 }
 
 // HoldExecution marks the running execution as held until `until`; see
@@ -292,7 +336,19 @@ func (s *Store) StartRemoving(ctx context.Context, teamID uuid.UUID, sandboxID s
 	bctx, b, span := s.begin(ctx, "start-removing", teamID, sandboxID)
 	defer span.End()
 
-	transition, alreadyDone, err := sandboxtypes.StartRemoving(bctx, b.storage, teamID, sandboxID, opts)
+	var transition StateTransition
+	var alreadyDone bool
+	begin := func() (err error) {
+		transition, alreadyDone, err = sandboxtypes.StartRemoving(bctx, b.storage, teamID, sandboxID, opts)
+
+		return err
+	}
+	var err error
+	if opts.WaitForLifecycleHold {
+		err = waitOutHold(bctx, begin)
+	} else {
+		err = begin()
+	}
 	if err != nil {
 		return transition, false, nil, err
 	}

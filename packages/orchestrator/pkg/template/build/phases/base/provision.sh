@@ -6,10 +6,6 @@ RESULT_PATH="{{ .ResultPath }}"
 
 echo "Starting provisioning script"
 
-{{ if eq .Provider "gcp" }}
-# GCP Specific logic
-{{ end }}
-
 echo "Making configuration immutable"
 $BUSYBOX chattr +i /etc/resolv.conf
 

@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/reservation"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -27,7 +27,7 @@ func serve(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait t
 
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	scheduling.RegisterReservationServiceServer(server, reservation.NewServer(reservations, maxWait))
+	reservationpb.RegisterReservationServiceServer(server, reservation.NewServer(reservations, maxWait))
 	go func() {
 		assert.NoError(t, server.Serve(listener))
 	}()
@@ -36,10 +36,10 @@ func serve(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait t
 	return listener
 }
 
-func dial(t *testing.T, listener *bufconn.Listener) scheduling.ReservationServiceClient {
+func dial(t *testing.T, listener *bufconn.Listener) reservationpb.ReservationServiceClient {
 	t.Helper()
 
-	return scheduling.NewReservationServiceClient(dialConn(t, listener))
+	return reservationpb.NewReservationServiceClient(dialConn(t, listener))
 }
 
 func dialConn(t *testing.T, listener *bufconn.Listener, options ...grpc.DialOption) *grpc.ClientConn {
@@ -57,7 +57,7 @@ func dialConn(t *testing.T, listener *bufconn.Listener, options ...grpc.DialOpti
 	return conn
 }
 
-func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait time.Duration) scheduling.ReservationServiceClient {
+func newClient(t *testing.T, reservations sandboxtypes.ReservationStorage, maxWait time.Duration) reservationpb.ReservationServiceClient {
 	t.Helper()
 
 	return dial(t, serve(t, reservations, maxWait))
@@ -92,30 +92,30 @@ func newIDs() ids {
 	return ids{team: uuid.NewString(), sandbox: "sbx-" + uuid.NewString()}
 }
 
-func reserve(ctx context.Context, t *testing.T, client scheduling.ReservationServiceClient, id ids, limit int64) scheduling.ReserveOutcome {
+func reserve(ctx context.Context, t *testing.T, client reservationpb.ReservationServiceClient, id ids, limit int64) reservationpb.ReserveOutcome {
 	t.Helper()
 
-	resp, err := client.Reserve(ctx, scheduling.ReserveRequest_builder{TeamId: id.team, SandboxId: id.sandbox, Limit: limit}.Build())
+	resp, err := client.Reserve(ctx, reservationpb.ReserveRequest_builder{TeamId: id.team, SandboxId: id.sandbox, Limit: limit}.Build())
 	require.NoError(t, err)
 
 	return resp.GetOutcome()
 }
 
-func waitForStart(ctx context.Context, client scheduling.ReservationServiceClient, id ids) (*scheduling.WaitForStartResponse, error) {
-	return client.WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
+func waitForStart(ctx context.Context, client reservationpb.ReservationServiceClient, id ids) (*reservationpb.WaitForStartResponse, error) {
+	return client.WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
 }
 
-func finishStart(ctx context.Context, t *testing.T, client scheduling.ReservationServiceClient, id ids, result []byte) {
+func finishStart(ctx context.Context, t *testing.T, client reservationpb.ReservationServiceClient, id ids, result []byte) {
 	t.Helper()
 
-	_, err := client.FinishStart(ctx, scheduling.FinishStartRequest_builder{TeamId: id.team, SandboxId: id.sandbox, Result: result}.Build())
+	_, err := client.FinishStart(ctx, reservationpb.FinishStartRequest_builder{TeamId: id.team, SandboxId: id.sandbox, Result: result}.Build())
 	require.NoError(t, err)
 }
 
-func claimKill(ctx context.Context, t *testing.T, client scheduling.ReservationServiceClient, id ids) *scheduling.ClaimKillResponse {
+func claimKill(ctx context.Context, t *testing.T, client reservationpb.ReservationServiceClient, id ids) *reservationpb.ClaimKillResponse {
 	t.Helper()
 
-	resp, err := client.ClaimKill(ctx, scheduling.ClaimKillRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
+	resp, err := client.ClaimKill(ctx, reservationpb.ClaimKillRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
 	require.NoError(t, err)
 
 	return resp

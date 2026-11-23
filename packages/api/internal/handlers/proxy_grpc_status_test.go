@@ -38,6 +38,7 @@ func TestResumeStatusError_CarriesTheErrorCode(t *testing.T) {
 		{"create refused", &api.APIError{Code: http.StatusBadRequest, ErrorCode: proxygrpc.PlacementCreateRefused, ClientMsg: "vcpu 0 must be at least 1"}, codes.InvalidArgument, proxygrpc.PlacementCreateRefused, true, false},
 		{"create refused as a server error", &api.APIError{Code: http.StatusInternalServerError, ErrorCode: proxygrpc.PlacementCreateRefused, ClientMsg: "vcpu 0 must be at least 1"}, codes.Internal, proxygrpc.PlacementCreateRefused, true, false},
 		{"snapshot guest agent unresponsive", &api.APIError{Code: http.StatusConflict, ErrorCode: proxygrpc.SnapshotGuestAgentUnresponsive, ClientMsg: "resume it without memory"}, codes.AlreadyExists, proxygrpc.SnapshotGuestAgentUnresponsive, true, false},
+		{"memory record mismatch", &api.APIError{Code: http.StatusInternalServerError, ErrorCode: proxygrpc.SandboxMemoryRecordMismatch, ClientMsg: "the memory recorded for this sandbox does not match its snapshot"}, codes.Internal, proxygrpc.SandboxMemoryRecordMismatch, true, false},
 		{"internal", &api.APIError{Code: http.StatusInternalServerError, ErrorCode: "internal_server_error", ClientMsg: "Failed to place sandbox"}, codes.Internal, "internal_server_error", false, false},
 		{"team limit", &api.APIError{Code: http.StatusTooManyRequests, ClientMsg: "limit reached"}, codes.ResourceExhausted, "", false, false},
 	} {

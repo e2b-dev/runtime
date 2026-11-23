@@ -37,8 +37,6 @@ BEGIN
 END
 $post_user_signup$ SECURITY DEFINER SET search_path = public;
 
-ALTER FUNCTION public.post_user_signup() OWNER TO trigger_user;
-
 -- +goose StatementEnd
 
 -- +goose Down

@@ -1,9 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
 
--- Add new schema named "auth"
-CREATE SCHEMA IF NOT EXISTS "extensions";
-
 -- Create "tiers" table
 CREATE TABLE IF NOT EXISTS "public"."tiers"
 (

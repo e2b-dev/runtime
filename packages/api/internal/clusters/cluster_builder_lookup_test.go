@@ -370,3 +370,13 @@ func TestBuildReservations_Expire(t *testing.T) {
 	b.reserveBuild(8)
 	assert.InDelta(t, 0.1, b.cpuLoad(), 1e-9)
 }
+
+func TestTemplateBuilderMinVersion(t *testing.T) {
+	t.Parallel()
+
+	set := new(int64(4))
+	assert.Nil(t, TemplateBuilderMinVersion(nil, nil))
+	assert.Equal(t, ResizableTemplateBuildsMinVersion, TemplateBuilderMinVersion(set, nil))
+	assert.Equal(t, TemplateMemoryMaximumMinVersion, TemplateBuilderMinVersion(nil, set))
+	assert.Equal(t, TemplateMemoryMaximumMinVersion, TemplateBuilderMinVersion(set, set))
+}

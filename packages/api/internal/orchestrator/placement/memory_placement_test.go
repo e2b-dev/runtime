@@ -264,3 +264,20 @@ func TestPlaceSandbox_ConcurrentPlacementsNeverOverfillANode(t *testing.T) {
 		})
 	}
 }
+
+// A resume keeping a grown size names none in the request; the size it runs
+// with still decides whether a node has room.
+func TestPlaceSandbox_AccountsTheSandboxMemoryAboveBootRAM(t *testing.T) {
+	t.Parallel()
+
+	origin := hugepageNode("origin", 1600, 100, 0, 2000)
+	other := hugepageNode("other", 1600, 0, 0, 2000)
+	var picks []string
+
+	// 3800 MiB is 1900 pages: 100 used + 1900 is past 0.95 * 2000 on origin only.
+	result, err := PlaceSandbox(t.Context(), firstNotExcluded([]*nodemanager.Node{other}, &picks), []*nodemanager.Node{origin, other}, origin,
+		hugepageSbxRequest(), Requirements{Memory: limit95, MemoryMiB: 3800}, false, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, other.ID, result.Node.ID)
+}

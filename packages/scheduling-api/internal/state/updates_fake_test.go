@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -34,9 +34,9 @@ func issuedToken(t *testing.T, teamID uuid.UUID, sandboxID string, token sandbox
 
 	fake := newFake()
 	fake.token = token
-	resp, err := newClient(t, fake).BeginUpdate(callContext(t), scheduling.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
+	resp, err := newClient(t, fake).BeginUpdate(callContext(t), statepb.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
 	require.NoError(t, err)
-	require.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+	require.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 	require.NotEmpty(t, resp.GetToken())
 
 	return resp.GetToken()
@@ -48,14 +48,14 @@ func updateToken(t *testing.T) []byte {
 	return issuedToken(t, updateTeam, updateSandbox, storeToken)
 }
 
-func updateHold() *scheduling.Hold {
-	return scheduling.Hold_builder{
+func updateHold() *statepb.Hold {
+	return statepb.Hold_builder{
 		TeamId: updateTeam.String(), SandboxId: updateSandbox, ExecutionId: updateExecution, SourceNodeId: "node-a", Id: "hold",
 	}.Build()
 }
 
 type updateCall struct {
-	call      func(ctx context.Context, client scheduling.StateServiceClient) (scheduling.StateOutcome, error)
+	call      func(ctx context.Context, client statepb.StateServiceClient) (statepb.StateOutcome, error)
 	sentinels []error
 }
 
@@ -69,16 +69,16 @@ func updateCalls(t *testing.T) map[string]updateCall {
 
 	return map[string]updateCall{
 		"BeginUpdate": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.BeginUpdate(ctx, statepb.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 
 				return resp.GetOutcome(), err
 			},
 			sentinels: []error{sandboxtypes.ErrNotFound, sandboxtypes.ErrLifecycleHeld},
 		},
 		"CommitUpdate": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.CommitUpdate(ctx, scheduling.CommitUpdateRequest_builder{
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.CommitUpdate(ctx, statepb.CommitUpdateRequest_builder{
 					TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token, Record: record,
 				}.Build())
 
@@ -87,40 +87,40 @@ func updateCalls(t *testing.T) map[string]updateCall {
 			sentinels: []error{sandboxtypes.ErrLockLost},
 		},
 		"AbortUpdate": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.AbortUpdate(ctx, scheduling.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.AbortUpdate(ctx, statepb.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token}.Build())
 
 				return resp.GetOutcome(), err
 			},
 			sentinels: []error{sandboxtypes.ErrLockLost, errLockNotHeld},
 		},
 		"HoldExecution": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.HoldExecution(ctx, scheduling.HoldExecutionRequest_builder{Hold: updateHold(), Until: timestamppb.New(time.Now().Add(time.Hour))}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.HoldExecution(ctx, statepb.HoldExecutionRequest_builder{Hold: updateHold(), Until: timestamppb.New(time.Now().Add(time.Hour))}.Build())
 
 				return resp.GetOutcome(), err
 			},
 			sentinels: []error{sandboxtypes.ErrHoldConflict, sandboxtypes.ErrNotFound, sandboxtypes.ErrLockLost},
 		},
 		"MoveHeldExecution": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.MoveHeldExecution(ctx, scheduling.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.MoveHeldExecution(ctx, statepb.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
 
 				return resp.GetOutcome(), err
 			},
 			sentinels: held,
 		},
 		"ReleaseHeldExecution": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.ReleaseHeldExecution(ctx, scheduling.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.ReleaseHeldExecution(ctx, statepb.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 
 				return resp.GetOutcome(), err
 			},
 			sentinels: held,
 		},
 		"RemoveHeldExecution": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (scheduling.StateOutcome, error) {
-				resp, err := c.RemoveHeldExecution(ctx, scheduling.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (statepb.StateOutcome, error) {
+				resp, err := c.RemoveHeldExecution(ctx, statepb.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 
 				return resp.GetOutcome(), err
 			},
@@ -129,14 +129,14 @@ func updateCalls(t *testing.T) map[string]updateCall {
 	}
 }
 
-var sentinelOutcomes = map[error]scheduling.StateOutcome{
-	sandboxtypes.ErrNotFound:          scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND,
-	sandboxtypes.ErrLifecycleHeld:     scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD,
-	sandboxtypes.ErrExecutionMismatch: scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH,
-	sandboxtypes.ErrLockLost:          scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST,
-	sandboxtypes.ErrHoldConflict:      scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT,
-	sandboxtypes.ErrNotHeld:           scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD,
-	errLockNotHeld:                    scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST,
+var sentinelOutcomes = map[error]statepb.StateOutcome{
+	sandboxtypes.ErrNotFound:          statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND,
+	sandboxtypes.ErrLifecycleHeld:     statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD,
+	sandboxtypes.ErrExecutionMismatch: statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH,
+	sandboxtypes.ErrLockLost:          statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST,
+	sandboxtypes.ErrHoldConflict:      statepb.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT,
+	sandboxtypes.ErrNotHeld:           statepb.StateOutcome_STATE_OUTCOME_NOT_HELD,
+	errLockNotHeld:                    statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST,
 }
 
 func TestUpdateOutcomeMapping(t *testing.T) {
@@ -168,7 +168,7 @@ func TestUpdateOutcomeMapping(t *testing.T) {
 			fake.token = "token"
 			outcome, err := rpc.call(callContext(t), newClient(t, fake))
 			require.NoError(t, err)
-			assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, outcome)
+			assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, outcome)
 		})
 	}
 }
@@ -188,17 +188,17 @@ func TestEverySentinelHasAnOutcome(t *testing.T) {
 		&sandboxtypes.InvalidStateTransitionError{CurrentState: sandboxtypes.StateKilling, TargetState: sandboxtypes.StatePausing},
 		sandboxtypes.ErrRestoreConflict,
 	}
-	require.Len(t, scheduling.StateOutcome_name, len(sentinels)+2, "every outcome besides UNSPECIFIED and OK has its sentinel")
+	require.Len(t, statepb.StateOutcome_name, len(sentinels)+2, "every outcome besides UNSPECIFIED and OK has its sentinel")
 
-	seen := map[scheduling.StateOutcome]error{}
+	seen := map[statepb.StateOutcome]error{}
 	for _, sentinel := range sentinels {
 		fake := newFake()
 		fake.err = sentinel
-		resp, err := newClient(t, fake).Remove(callContext(t), scheduling.RemoveRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+		resp, err := newClient(t, fake).Remove(callContext(t), statepb.RemoveRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 		require.NoError(t, err, "%v has no outcome", sentinel)
 		outcome := resp.GetOutcome()
-		assert.NotEqual(t, scheduling.StateOutcome_STATE_OUTCOME_UNSPECIFIED, outcome, sentinel.Error())
-		assert.NotEqual(t, scheduling.StateOutcome_STATE_OUTCOME_OK, outcome, sentinel.Error())
+		assert.NotEqual(t, statepb.StateOutcome_STATE_OUTCOME_UNSPECIFIED, outcome, sentinel.Error())
+		assert.NotEqual(t, statepb.StateOutcome_STATE_OUTCOME_OK, outcome, sentinel.Error())
 		assert.NotContains(t, seen, outcome, "%v shares its outcome with %v", sentinel, seen[outcome])
 		seen[outcome] = sentinel
 	}
@@ -231,37 +231,37 @@ func TestUpdateCancelledCaller(t *testing.T) {
 	token := updateToken(t)
 	handlerCalls := map[string]func(ctx context.Context, s *state.Server) error{
 		"BeginUpdate": func(ctx context.Context, s *state.Server) error {
-			_, err := s.BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+			_, err := s.BeginUpdate(ctx, statepb.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 
 			return err
 		},
 		"CommitUpdate": func(ctx context.Context, s *state.Server) error {
-			_, err := s.CommitUpdate(ctx, scheduling.CommitUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token, Record: record}.Build())
+			_, err := s.CommitUpdate(ctx, statepb.CommitUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token, Record: record}.Build())
 
 			return err
 		},
 		"AbortUpdate": func(ctx context.Context, s *state.Server) error {
-			_, err := s.AbortUpdate(ctx, scheduling.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token}.Build())
+			_, err := s.AbortUpdate(ctx, statepb.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: token}.Build())
 
 			return err
 		},
 		"HoldExecution": func(ctx context.Context, s *state.Server) error {
-			_, err := s.HoldExecution(ctx, scheduling.HoldExecutionRequest_builder{Hold: updateHold(), Until: until}.Build())
+			_, err := s.HoldExecution(ctx, statepb.HoldExecutionRequest_builder{Hold: updateHold(), Until: until}.Build())
 
 			return err
 		},
 		"MoveHeldExecution": func(ctx context.Context, s *state.Server) error {
-			_, err := s.MoveHeldExecution(ctx, scheduling.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
+			_, err := s.MoveHeldExecution(ctx, statepb.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
 
 			return err
 		},
 		"ReleaseHeldExecution": func(ctx context.Context, s *state.Server) error {
-			_, err := s.ReleaseHeldExecution(ctx, scheduling.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+			_, err := s.ReleaseHeldExecution(ctx, statepb.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 
 			return err
 		},
 		"RemoveHeldExecution": func(ctx context.Context, s *state.Server) error {
-			_, err := s.RemoveHeldExecution(ctx, scheduling.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+			_, err := s.RemoveHeldExecution(ctx, statepb.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 
 			return err
 		},
@@ -286,7 +286,7 @@ func TestUpdateCancelledCaller(t *testing.T) {
 		fake := newFake()
 		fake.token = "begun-token"
 		fake.block = func(context.Context) { cancel() }
-		_, err := state.NewServer(fake, hangTimeout).BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+		_, err := state.NewServer(fake, hangTimeout).BeginUpdate(ctx, statepb.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 		requireCode(t, err, codes.Canceled)
 		assert.Equal(t, []sandboxtypes.UpdateToken{"begun-token"}, fake.snapshot().aborted)
 	})
@@ -295,61 +295,61 @@ func TestUpdateCancelledCaller(t *testing.T) {
 func TestUpdateInvalidRequests(t *testing.T) {
 	t.Parallel()
 
-	type rpcCall = func(ctx context.Context, client scheduling.StateServiceClient) error
+	type rpcCall = func(ctx context.Context, client statepb.StateServiceClient) error
 	commit := func(team, sandbox string, token, record []byte) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.CommitUpdate(ctx, scheduling.CommitUpdateRequest_builder{TeamId: team, SandboxId: sandbox, Token: token, Record: record}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.CommitUpdate(ctx, statepb.CommitUpdateRequest_builder{TeamId: team, SandboxId: sandbox, Token: token, Record: record}.Build())
 
 			return err
 		}
 	}
 	abort := func(team, sandbox string, token []byte) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.AbortUpdate(ctx, scheduling.AbortUpdateRequest_builder{TeamId: team, SandboxId: sandbox, Token: token}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.AbortUpdate(ctx, statepb.AbortUpdateRequest_builder{TeamId: team, SandboxId: sandbox, Token: token}.Build())
 
 			return err
 		}
 	}
 	begin := func(team, sandbox string) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.BeginUpdate(ctx, scheduling.BeginUpdateRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.BeginUpdate(ctx, statepb.BeginUpdateRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}
 	}
-	holdRequest := func(req *scheduling.HoldExecutionRequest) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
+	holdRequest := func(req *statepb.HoldExecutionRequest) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
 			_, err := c.HoldExecution(ctx, req)
 
 			return err
 		}
 	}
-	hold := func(mutate func(*scheduling.Hold), until *timestamppb.Timestamp) rpcCall {
+	hold := func(mutate func(*statepb.Hold), until *timestamppb.Timestamp) rpcCall {
 		h := updateHold()
 		mutate(h)
 
-		return holdRequest(scheduling.HoldExecutionRequest_builder{Hold: h, Until: until}.Build())
+		return holdRequest(statepb.HoldExecutionRequest_builder{Hold: h, Until: until}.Build())
 	}
-	heldCalls := func(h *scheduling.Hold) map[string]rpcCall {
+	heldCalls := func(h *statepb.Hold) map[string]rpcCall {
 		return map[string]rpcCall{
-			"MoveHeldExecution": func(ctx context.Context, c scheduling.StateServiceClient) error {
-				_, err := c.MoveHeldExecution(ctx, scheduling.MoveHeldExecutionRequest_builder{Hold: h, NodeId: "node-b"}.Build())
+			"MoveHeldExecution": func(ctx context.Context, c statepb.StateServiceClient) error {
+				_, err := c.MoveHeldExecution(ctx, statepb.MoveHeldExecutionRequest_builder{Hold: h, NodeId: "node-b"}.Build())
 
 				return err
 			},
-			"ReleaseHeldExecution": func(ctx context.Context, c scheduling.StateServiceClient) error {
-				_, err := c.ReleaseHeldExecution(ctx, scheduling.ReleaseHeldExecutionRequest_builder{Hold: h}.Build())
+			"ReleaseHeldExecution": func(ctx context.Context, c statepb.StateServiceClient) error {
+				_, err := c.ReleaseHeldExecution(ctx, statepb.ReleaseHeldExecutionRequest_builder{Hold: h}.Build())
 
 				return err
 			},
-			"RemoveHeldExecution": func(ctx context.Context, c scheduling.StateServiceClient) error {
-				_, err := c.RemoveHeldExecution(ctx, scheduling.RemoveHeldExecutionRequest_builder{Hold: h}.Build())
+			"RemoveHeldExecution": func(ctx context.Context, c statepb.StateServiceClient) error {
+				_, err := c.RemoveHeldExecution(ctx, statepb.RemoveHeldExecutionRequest_builder{Hold: h}.Build())
 
 				return err
 			},
 		}
 	}
-	mutatedHold := func(mutate func(*scheduling.Hold)) *scheduling.Hold {
+	mutatedHold := func(mutate func(*statepb.Hold)) *statepb.Hold {
 		h := updateHold()
 		mutate(h)
 
@@ -367,28 +367,28 @@ func TestUpdateInvalidRequests(t *testing.T) {
 		"CommitUpdate empty sandbox":   commit(team, "", updateToken(t), valid),
 		"CommitUpdate token not JSON":  commit(team, updateSandbox, []byte("malformed-secret"), valid),
 		"AbortUpdate token not JSON":   abort(team, updateSandbox, []byte("malformed-secret")),
-		"MoveHeldExecution empty node": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.MoveHeldExecution(ctx, scheduling.MoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+		"MoveHeldExecution empty node": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.MoveHeldExecution(ctx, statepb.MoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 
 			return err
 		},
 		"AbortUpdate empty token":         abort(team, updateSandbox, nil),
 		"AbortUpdate team not a UUID":     abort("team-1", updateSandbox, updateToken(t)),
-		"HoldExecution no hold":           holdRequest(scheduling.HoldExecutionRequest_builder{Until: later}.Build()),
-		"HoldExecution empty hold ID":     hold(func(h *scheduling.Hold) { h.SetId("") }, later),
-		"HoldExecution empty source node": hold(func(h *scheduling.Hold) { h.SetSourceNodeId("") }, later),
-		"HoldExecution team not a UUID":   hold(func(h *scheduling.Hold) { h.SetTeamId("team-1") }, later),
-		"HoldExecution braced sandbox":    hold(func(h *scheduling.Hold) { h.SetSandboxId("a}b") }, later),
-		"HoldExecution missing until":     hold(func(*scheduling.Hold) {}, nil),
-		"HoldExecution invalid until":     hold(func(*scheduling.Hold) {}, &timestamppb.Timestamp{Seconds: 1, Nanos: -1}),
+		"HoldExecution no hold":           holdRequest(statepb.HoldExecutionRequest_builder{Until: later}.Build()),
+		"HoldExecution empty hold ID":     hold(func(h *statepb.Hold) { h.SetId("") }, later),
+		"HoldExecution empty source node": hold(func(h *statepb.Hold) { h.SetSourceNodeId("") }, later),
+		"HoldExecution team not a UUID":   hold(func(h *statepb.Hold) { h.SetTeamId("team-1") }, later),
+		"HoldExecution braced sandbox":    hold(func(h *statepb.Hold) { h.SetSandboxId("a}b") }, later),
+		"HoldExecution missing until":     hold(func(*statepb.Hold) {}, nil),
+		"HoldExecution invalid until":     hold(func(*statepb.Hold) {}, &timestamppb.Timestamp{Seconds: 1, Nanos: -1}),
 	}
 	for name, call := range heldCalls(nil) {
 		tests[name+" no hold"] = call
 	}
-	for name, call := range heldCalls(mutatedHold(func(h *scheduling.Hold) { h.SetId("") })) {
+	for name, call := range heldCalls(mutatedHold(func(h *statepb.Hold) { h.SetId("") })) {
 		tests[name+" empty hold ID"] = call
 	}
-	for name, call := range heldCalls(mutatedHold(func(h *scheduling.Hold) { h.SetSandboxId("") })) {
+	for name, call := range heldCalls(mutatedHold(func(h *statepb.Hold) { h.SetSandboxId("") })) {
 		tests[name+" empty sandbox"] = call
 	}
 	for name, call := range tests {
@@ -429,12 +429,12 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 		fake := newFake()
 		fake.record = fullRecord(updateTeam, updateSandbox)
 		fake.token = "token-from-store"
-		resp, err := newClient(t, fake).BeginUpdate(callContext(t), scheduling.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
+		resp, err := newClient(t, fake).BeginUpdate(callContext(t), statepb.BeginUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 		assert.Equal(t, fake.record, decode(t, resp.GetRecord()))
 		assert.NotEqual(t, []byte("token-from-store"), resp.GetToken(), "the wire token is not the store's token as is")
-		_, err = newClient(t, fake).AbortUpdate(callContext(t), scheduling.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: resp.GetToken()}.Build())
+		_, err = newClient(t, fake).AbortUpdate(callContext(t), statepb.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: resp.GetToken()}.Build())
 		require.NoError(t, err)
 		assert.Equal(t, sandboxtypes.UpdateToken("token-from-store"), fake.snapshot().token, "the wire token carries the store's token")
 	})
@@ -444,11 +444,11 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 
 		full := fullRecord(updateTeam, updateSandbox)
 		fake := newFake()
-		resp, err := newClient(t, fake).CommitUpdate(callContext(t), scheduling.CommitUpdateRequest_builder{
+		resp, err := newClient(t, fake).CommitUpdate(callContext(t), statepb.CommitUpdateRequest_builder{
 			TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: updateToken(t), Record: encode(t, full),
 		}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 		assert.Equal(t, full, decode(t, resp.GetRecord()))
 		seen := fake.snapshot()
 		assert.Equal(t, storeToken, seen.token)
@@ -459,7 +459,7 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 		t.Parallel()
 
 		fake := newFake()
-		_, err := newClient(t, fake).AbortUpdate(callContext(t), scheduling.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: updateToken(t)}.Build())
+		_, err := newClient(t, fake).AbortUpdate(callContext(t), statepb.AbortUpdateRequest_builder{TeamId: updateTeam.String(), SandboxId: updateSandbox, Token: updateToken(t)}.Build())
 		require.NoError(t, err)
 		assert.Equal(t, storeToken, fake.snapshot().token)
 	})
@@ -471,7 +471,7 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 
 		until := time.Date(2026, 11, 13, 10, 11, 12, 123456789, time.UTC)
 		fake := newFake()
-		_, err := newClient(t, fake).HoldExecution(callContext(t), scheduling.HoldExecutionRequest_builder{Hold: updateHold(), Until: timestamppb.New(until)}.Build())
+		_, err := newClient(t, fake).HoldExecution(callContext(t), statepb.HoldExecutionRequest_builder{Hold: updateHold(), Until: timestamppb.New(until)}.Build())
 		require.NoError(t, err)
 		seen := fake.snapshot()
 		assert.Equal(t, want, seen.hold)
@@ -484,7 +484,7 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 		for _, moved := range []bool{true, false} {
 			fake := newFake()
 			fake.moved = moved
-			resp, err := newClient(t, fake).MoveHeldExecution(callContext(t), scheduling.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
+			resp, err := newClient(t, fake).MoveHeldExecution(callContext(t), statepb.MoveHeldExecutionRequest_builder{Hold: updateHold(), NodeId: "node-b"}.Build())
 			require.NoError(t, err)
 			assert.Equal(t, moved, resp.GetMoved())
 			seen := fake.snapshot()
@@ -497,7 +497,7 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 		t.Parallel()
 
 		fake := newFake()
-		_, err := newClient(t, fake).ReleaseHeldExecution(callContext(t), scheduling.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+		_, err := newClient(t, fake).ReleaseHeldExecution(callContext(t), statepb.ReleaseHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 		require.NoError(t, err)
 		assert.Equal(t, want, fake.snapshot().hold)
 	})
@@ -507,9 +507,9 @@ func TestUpdateStoreReceivesTheCallersValues(t *testing.T) {
 
 		fake := newFake()
 		fake.record = fullRecord(updateTeam, updateSandbox)
-		resp, err := newClient(t, fake).RemoveHeldExecution(callContext(t), scheduling.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
+		resp, err := newClient(t, fake).RemoveHeldExecution(callContext(t), statepb.RemoveHeldExecutionRequest_builder{Hold: updateHold()}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 		assert.Equal(t, fake.record, decode(t, resp.GetRecord()))
 		assert.Equal(t, want, fake.snapshot().hold)
 	})
@@ -559,7 +559,7 @@ func TestCommitRejectedRecordReleasesTheLock(t *testing.T) {
 				if abortFails {
 					fake.err = errors.New("abort failed")
 				}
-				_, err := newClient(t, fake).CommitUpdate(callContext(t), scheduling.CommitUpdateRequest_builder{
+				_, err := newClient(t, fake).CommitUpdate(callContext(t), statepb.CommitUpdateRequest_builder{
 					TeamId: updateTeam.String(), SandboxId: sandboxID, Token: issuedToken(t, updateTeam, sandboxID, storeToken), Record: record,
 				}.Build())
 				st := requireCode(t, err, codes.InvalidArgument)
@@ -576,10 +576,10 @@ func TestUpdateTokenIsBoundToTeamAndSandbox(t *testing.T) {
 
 	token := updateToken(t)
 	otherTeam := uuid.New()
-	type call func(ctx context.Context, c scheduling.StateServiceClient) error
+	type call func(ctx context.Context, c statepb.StateServiceClient) error
 	commit := func(teamID uuid.UUID, sandboxID string, token []byte) call {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.CommitUpdate(ctx, scheduling.CommitUpdateRequest_builder{
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.CommitUpdate(ctx, statepb.CommitUpdateRequest_builder{
 				TeamId: teamID.String(), SandboxId: sandboxID, Token: token, Record: encode(t, minimalRecord(teamID, sandboxID)),
 			}.Build())
 
@@ -587,8 +587,8 @@ func TestUpdateTokenIsBoundToTeamAndSandbox(t *testing.T) {
 		}
 	}
 	abort := func(teamID uuid.UUID, sandboxID string, token []byte) call {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.AbortUpdate(ctx, scheduling.AbortUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: token}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.AbortUpdate(ctx, statepb.AbortUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: token}.Build())
 
 			return err
 		}

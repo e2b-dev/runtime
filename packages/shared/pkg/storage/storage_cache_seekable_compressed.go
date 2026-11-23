@@ -46,6 +46,7 @@ func (c *cachedSeekable) openReaderCompressed(ctx context.Context, offsetU int64
 	}
 	RecordReadOpen(ctx, time.Since(start), c.objType, SourceNFS, ct, err)
 	if err == nil {
+		c.index.touch()
 		// A cached frame that decodes cleanly returns here. NewDecompressReader's
 		// Close drains and CRC-verifies the frame, so a non-nil Close error means
 		// the cached bytes no longer decode (bit rot / torn write that still has

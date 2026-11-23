@@ -95,7 +95,7 @@ func TestNewClientCredentialsReportsTheHopModeBeforeAnyDial(t *testing.T) {
 	metrics, reader := testMetrics(t)
 	_ = NewClientCredentials(ClientConfig{Name: "idle-hop", Mode: StaticClientMode(ClientOff), Metrics: metrics})
 
-	assert.Equal(t, int64(1), mustPoint(t, reader, MetricClientMode, attribute.String(AttrClientHop, "idle-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceFallback)))
+	assert.Equal(t, int64(1), mustPoint(t, reader, MetricClientMode, attribute.String(AttrClientHop, "idle-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceStatic)))
 }
 
 // A keep-alive plaintext connection admitted while the listener was off

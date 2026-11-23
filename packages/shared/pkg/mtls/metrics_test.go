@@ -142,7 +142,7 @@ func TestMetricsCountPlaintextRequestsAndRPCs(t *testing.T) {
 	code, _, _ = guarded(t, emptyRequired, []string{"/health"}, plainRequest(t, http.MethodPost, "/admin"))
 	require.Equal(t, http.StatusNoContent, code)
 	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricPlaintextRequests, attribute.String(AttrListener, "required-empty-metrics"), attribute.String(AttrKind, KindHTTP)))
-	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricMode, attribute.String(AttrListener, "required-empty-metrics"), attribute.String(AttrMode, "permissive"), attribute.String(AttrSource, SourceFallback)))
+	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricMode, attribute.String(AttrListener, "required-empty-metrics"), attribute.String(AttrMode, "permissive"), attribute.String(AttrSource, SourceStatic)))
 }
 
 func TestMetricsReportTheModeInForceAndItsSource(t *testing.T) {
@@ -171,7 +171,7 @@ func TestMetricsReportTheModeInForceAndItsSource(t *testing.T) {
 	})
 	_, _, err := creds.ClientHandshake(t.Context(), "ignored", clientSide)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricClientMode, attribute.String(AttrClientHop, "test-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceFallback)))
+	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricClientMode, attribute.String(AttrClientHop, "test-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceStatic)))
 	assert.Equal(t, int64(1), mustPoint(t, fx.reader, MetricHandshakes, attribute.String(AttrClientHop, "test-hop"), attribute.String(AttrOutcome, OutcomePlaintext)))
 }
 

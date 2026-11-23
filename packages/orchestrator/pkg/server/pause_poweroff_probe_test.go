@@ -39,7 +39,7 @@ func TestPause_PowerOffDuringTheProbeKeepsTheHeldSandbox(t *testing.T) {
 			t.Parallel()
 
 			s, reader := admissionMetricsServer(t, -1)
-			s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+			s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 			sbx := envdProbeSandbox(t, "sbx-poweroff-probe-"+name, c.slot)
 			require.NoError(t, s.sandboxFactory.Sandboxes.MarkRunning(t.Context(), sbx))
 
@@ -72,7 +72,7 @@ func envdProbeWithPowerOffHoldFlagClient(t *testing.T) *featureflags.Client {
 	t.Helper()
 
 	td := ldtestdata.DataSource()
-	td.Update(td.Flag(featureflags.PauseEnvdHealthTimeoutMs.Key()).ValueForAll(ldvalue.Int(envdProbeMs)))
+	td.Update(td.Flag(featureflags.PauseEnvdHealthTimeoutMs.Key()).ValueForAll(ldvalue.Int(envdFailingProbeMs)))
 	td.Update(td.Flag(featureflags.GuestPowerOffEndFlag.Key()).ValueForAll(ldvalue.Bool(true)))
 
 	ff, err := featureflags.NewClientWithDatasource(td)
@@ -121,7 +121,7 @@ func TestPause_ExitDuringTheProbeWithTheDeviceTakenIsRetryableWithTheFlagsOff(t 
 	t.Parallel()
 
 	s, _ := admissionMetricsServer(t, -1)
-	s.featureFlags = envdProbeFlagClient(t, new(envdProbeMs))
+	s.featureFlags = envdProbeFlagClient(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-poweroff-device", 93)
 	sbx.DeclarePowerOffDeviceForTest()
 	require.True(t, sbx.PowerOffDeviceDeclared())

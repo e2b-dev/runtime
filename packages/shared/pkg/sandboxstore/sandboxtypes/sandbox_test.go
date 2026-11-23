@@ -54,3 +54,14 @@ func TestToNodeSandbox_CopiesEveryField(t *testing.T) {
 			"NodeSandbox.%s was not copied from the stored sandbox", value.Type().Field(i).Name)
 	}
 }
+
+func TestTotalMemoryMB(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, int64(1024), Sandbox{RamMB: 1024}.TotalMemoryMB())
+	assert.Equal(t, int64(3072), Sandbox{RamMB: 1024, MemoryMB: 3072}.TotalMemoryMB())
+	assert.Equal(t, int64(3072), Sandbox{RamMB: 1024, MemoryMB: 3072}.ToNodeSandbox().RamMB)
+	unknown := Sandbox{RamMB: 1024, PlacedMemoryMB: 4096}
+	assert.Equal(t, int64(1024), unknown.TotalMemoryMB(), "billing and answers keep the known size")
+	assert.Equal(t, int64(4096), unknown.ToNodeSandbox().RamMB, "a kill releases what placement charged")
+}

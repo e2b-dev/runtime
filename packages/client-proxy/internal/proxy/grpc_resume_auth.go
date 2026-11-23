@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,9 @@ const grpcResumeAuthScope = proxygrpc.ScopeSandboxLifecycle
 // this is how long that can last.
 const grpcResumeTokenTimeout = 10 * time.Second
 
+// Start renewing a projected credential on the first request in its final minute.
+const projectedResumeRefreshWindow = time.Minute
+
 // errResumeToken marks an attempt that could not obtain its token; the
 // flight answers it like its other local errors.
 var errResumeToken = errors.New("get api grpc OAuth token")
@@ -38,7 +42,8 @@ type noopGrpcResumeAuth struct{}
 // next attempt starts a new one; a stalled token endpoint therefore costs
 // one goroutine per fetch, not one per attempt.
 type oauthGrpcResumeAuth struct {
-	fetch func() (*oauth2.Token, error)
+	fetch            func() (*oauth2.Token, error)
+	serveUntilExpiry bool
 
 	mu      sync.Mutex
 	token   *oauth2.Token
@@ -91,6 +96,32 @@ func newGrpcResumeAuthWithTimeout(ctx context.Context, c GRPCOAuthConfig, tokenT
 	}, nil
 }
 
+func newProjectedResumeAuth(ctx context.Context, path string, client proxygrpc.ResumeTokenServiceClient) *oauthGrpcResumeAuth {
+	return &oauthGrpcResumeAuth{serveUntilExpiry: true, fetch: func() (*oauth2.Token, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read projected resume credential: %w", err)
+		}
+		raw := strings.TrimSpace(string(data))
+		if raw == "" {
+			return nil, errors.New("empty projected resume credential")
+		}
+		fetchCtx, cancel := context.WithTimeout(ctx, grpcResumeTokenTimeout)
+		defer cancel()
+		fetchCtx = metadata.AppendToOutgoingContext(fetchCtx, proxygrpc.MetadataAuthorization, "Bearer "+raw)
+		res, err := client.ExchangeResumeToken(fetchCtx, &proxygrpc.ExchangeResumeTokenRequest{})
+		if err != nil {
+			return nil, err
+		}
+		token := &oauth2.Token{AccessToken: res.GetAccessToken(), Expiry: time.Unix(res.GetExpiresAtUnix(), 0)}
+		if !token.Valid() {
+			return nil, errors.New("invalid registry resume credential")
+		}
+
+		return token, nil
+	}}
+}
+
 func (noopGrpcResumeAuth) authorize(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
@@ -112,7 +143,7 @@ func (a *oauthGrpcResumeAuth) authorize(ctx context.Context) (context.Context, e
 
 func (a *oauthGrpcResumeAuth) getToken(ctx context.Context) (*oauth2.Token, error) {
 	a.mu.Lock()
-	if a.token.Valid() {
+	if a.token.Valid() && (!a.serveUntilExpiry || time.Until(a.token.Expiry) > projectedResumeRefreshWindow) {
 		token := a.token
 		a.mu.Unlock()
 
@@ -124,6 +155,14 @@ func (a *oauthGrpcResumeAuth) getToken(ctx context.Context) (*oauth2.Token, erro
 		fetch = &tokenFetch{done: make(chan struct{})}
 		a.current = fetch
 		go a.run(fetch)
+	}
+	// During early refresh a projected client can still use its previously
+	// issued token until the signed expiry, including during a registry outage.
+	if a.serveUntilExpiry && a.token != nil && time.Now().Before(a.token.Expiry) {
+		token := a.token
+		a.mu.Unlock()
+
+		return token, nil
 	}
 	a.mu.Unlock()
 

@@ -111,12 +111,16 @@ func ClientModeFromEnv(name string) (ClientMode, error) {
 
 // ModeSource yields the mode a listener applies. It is read on every
 // handshake, request and RPC, so a flip needs no restart.
+// An implementation that cannot say where its mode came from (the flag
+// sources can) is labelled SourceStatic on the gauges.
 type ModeSource interface {
 	Mode(ctx context.Context) Mode
 }
 
 // ClientModeSource yields whether a client hop dials TLS; read on every
 // handshake, because clients keep connections for a long time.
+// An implementation that cannot say where its mode came from (the flag
+// sources can) is labelled SourceStatic on the gauges.
 type ClientModeSource interface {
 	ClientMode(ctx context.Context) ClientMode
 }
@@ -136,7 +140,11 @@ func (m StaticClientMode) ClientMode(context.Context) ClientMode { return Client
 
 // Values of the source attribute on the mode gauges.
 const (
-	// SourceFallback means the mode in force is the environment value.
+	// SourceStatic means the endpoint has no flag: its mode is the
+	// environment value alone.
+	SourceStatic = "static"
+	// SourceFallback means a flag-backed endpoint runs its environment value
+	// because no flag value has been accepted yet.
 	SourceFallback = "fallback"
 	// SourceFlag means a flag value has been accepted.
 	SourceFlag = "flag"
@@ -362,14 +370,14 @@ type modeSourcer interface {
 }
 
 // sourceOf labels a mode source for the gauges: SourceFlag once a flag value
-// has been accepted, SourceRefused while one is refused, SourceFallback for
-// static sources and before.
+// has been accepted, SourceRefused while one is refused, SourceFallback
+// before either, and SourceStatic for a source with no flag.
 func sourceOf(src any) string {
 	if s, ok := src.(modeSourcer); ok {
 		return s.Source()
 	}
 
-	return SourceFallback
+	return SourceStatic
 }
 
 // modeWithSource reads a listener's mode and its source together when the

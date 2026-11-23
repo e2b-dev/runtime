@@ -153,6 +153,7 @@ func requestTemplateBuild(ctx context.Context, c *gin.Context, a *APIStore, body
 		Tags:               tags,
 		CpuCount:           body.CpuCount,
 		MaxCpuCount:        body.MaxCpuCount,
+		MaxMemoryMB:        body.MaxMemoryMB,
 		MemoryMB:           body.MemoryMB,
 		MinFreeDiskMb:      body.MinFreeDiskMb,
 		Version:            templates.TemplateV2LatestVersion,

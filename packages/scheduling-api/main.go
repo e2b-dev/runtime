@@ -23,7 +23,8 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	reservationsredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
@@ -87,6 +88,10 @@ func run() int {
 		}
 		_ = log.Sync()
 	}()
+
+	if err := tel.StartRuntimeInstrumentation(); err != nil {
+		log.Warn(ctx, "failed to start runtime instrumentation", zap.Error(err))
+	}
 
 	drain := shutdownDrain
 	if env.IsLocal() {
@@ -200,8 +205,8 @@ func newServer(tel *telemetry.Client, tlsConfig mtls.ServerConfig, reservations 
 	}
 	healthServer := health.NewServer()
 	healthv1.RegisterHealthServer(grpcServer, healthServer)
-	healthServer.SetServingStatus(scheduling.ReservationService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
-	healthServer.SetServingStatus(scheduling.StateService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(reservationpb.ReservationService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(statepb.StateService_ServiceDesc.ServiceName, healthv1.HealthCheckResponse_SERVING)
 
 	return grpcServer, healthServer, nil
 }

@@ -563,6 +563,8 @@ func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
 		Containment: a.teamService,
 		TeamCache:   a.authService,
 		Teams:       a.authDB,
+		DB:          a.sqlcDB,
+		Clusters:    a.clusterService,
 		Logger:      l,
 		Telemetry:   a.Telemetry,
 		Config: outbox.Config{
@@ -799,5 +801,5 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 }
 
 func (a *APIStore) SandboxPlacementService(callers *mtls.AllowList) placementpb.SandboxPlacementServiceServer {
-	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers)
+	return orchestrator.NewSandboxPlacementService(a.orchestrator, callers, a.authService)
 }

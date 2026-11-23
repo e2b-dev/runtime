@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
-	"github.com/e2b-dev/infra/packages/api/internal/management"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
@@ -113,14 +112,9 @@ func TestDeleteProjectRetryRepairsWhatRacedTheDeletion(t *testing.T) {
 	addProjectMember(t, db, projectID)
 	clusterID := uuid.New()
 	insertCluster(t, db, clusterID, false)
-	// An upsert that passed its deleted-project check before the deletion
-	// committed reaches the service and assigns its cluster.
-	_, _, err := store.managementService.UpsertProject(ctx, management.Project{
-		ClusterID: &clusterID, ID: projectID, Name: "raced", Slug: "raced-" + projectID.String()[:8], Email: "raced@example.test",
-	})
-	require.NoError(t, err)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(ctx,
-		`UPDATE public.teams SET blocked_reason = 'raced block' WHERE id = $1`, projectID))
+		`UPDATE public.teams SET blocked_reason = 'raced block', cluster_id = $2,
+		name = 'raced', slug = $3, email = 'raced@example.test' WHERE id = $1`, projectID, clusterID, "raced-"+projectID.String()[:8]))
 
 	retry := callDeleteProject(t, store, projectID)
 
