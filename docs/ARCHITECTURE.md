@@ -356,7 +356,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   point and sweeps again, so work admitted before that eviction cannot outlive it. It
   is not unique: a job already running may have read the team before a later ban, so each ban
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
-  follow the teardown's. Previously queued assignment jobs drain through the same worker pool. Steps report
+  follow the teardown's. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) controls the default queue. Each replica configured for

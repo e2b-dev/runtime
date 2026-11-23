@@ -565,8 +565,6 @@ func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
 		Containment: a.teamService,
 		TeamCache:   a.authService,
 		Teams:       a.authDB,
-		DB:          a.sqlcDB,
-		Clusters:    a.clusterService,
 		Logger:      l,
 		Telemetry:   a.Telemetry,
 		Config: outbox.Config{

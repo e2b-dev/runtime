@@ -66,21 +66,6 @@ func (q *Queries) DetachDeletedTemplatesFromCluster(ctx context.Context, cluster
 	return err
 }
 
-const getLiveTeamCluster = `-- name: GetLiveTeamCluster :one
-SELECT cluster_id
-FROM public.teams
-WHERE id = $1::uuid
-  AND deleted_at IS NULL
-`
-
-// A deleted team holds no cluster, whatever its row still says.
-func (q *Queries) GetLiveTeamCluster(ctx context.Context, teamID uuid.UUID) (*uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getLiveTeamCluster, teamID)
-	var cluster_id *uuid.UUID
-	err := row.Scan(&cluster_id)
-	return cluster_id, err
-}
-
 const listClusterTeamIDs = `-- name: ListClusterTeamIDs :many
 SELECT id
 FROM public.teams
@@ -107,58 +92,6 @@ func (q *Queries) ListClusterTeamIDs(ctx context.Context, clusterID uuid.UUID) (
 		return nil, err
 	}
 	return items, nil
-}
-
-const listLiveTeamClusters = `-- name: ListLiveTeamClusters :many
-SELECT id, cluster_id::uuid AS cluster_id
-FROM public.teams
-WHERE cluster_id IS NOT NULL
-  AND deleted_at IS NULL
-  AND id > $1::uuid
-ORDER BY id
-LIMIT $2::int
-`
-
-type ListLiveTeamClustersParams struct {
-	After    uuid.UUID
-	PageSize int32
-}
-
-type ListLiveTeamClustersRow struct {
-	ID        uuid.UUID
-	ClusterID uuid.UUID
-}
-
-// A page of the live teams on a remote cluster, after the given team.
-func (q *Queries) ListLiveTeamClusters(ctx context.Context, arg ListLiveTeamClustersParams) ([]ListLiveTeamClustersRow, error) {
-	rows, err := q.db.Query(ctx, listLiveTeamClusters, arg.After, arg.PageSize)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListLiveTeamClustersRow
-	for rows.Next() {
-		var i ListLiveTeamClustersRow
-		if err := rows.Scan(&i.ID, &i.ClusterID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const lockTeamClusterSync = `-- name: LockTeamClusterSync :exec
-SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || $1::uuid::text, 0))
-`
-
-// Serializes the syncs of one team's cluster to the cluster service, so each
-// reads the team only after the sync before it has finished.
-func (q *Queries) LockTeamClusterSync(ctx context.Context, teamID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, lockTeamClusterSync, teamID)
-	return err
 }
 
 const releaseEnvironmentsAliases = `-- name: ReleaseEnvironmentsAliases :exec

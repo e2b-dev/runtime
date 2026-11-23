@@ -17,10 +17,8 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	dbmodule "github.com/e2b-dev/infra/packages/api/internal/db"
-	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
 	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
-	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	webhooksgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
@@ -50,13 +48,9 @@ type Dependencies struct {
 	Containment teamContainer
 	TeamCache   teamCache
 	Teams       *authdb.Client
-	// DB reads the teams' clusters.
-	DB *sqlcdb.Client
-	// Clusters is nil without a cluster service.
-	Clusters  clustersgrpc.ClusterServiceClient
-	Logger    logger.Logger
-	Telemetry *telemetry.Client
-	Config    Config
+	Logger      logger.Logger
+	Telemetry   *telemetry.Client
+	Config      Config
 }
 
 type River struct {
@@ -89,19 +83,6 @@ func New(deps Dependencies) (*River, error) {
 		settle:    containSettleDelay,
 		steps:     steps.Job(outbox.ContainBannedTeam{}.Kind()),
 	})
-	river.AddWorker(workers, &teamClusterAssignmentWorker{
-		db:       deps.DB,
-		clusters: deps.Clusters,
-		steps:    steps.Job(outbox.SyncTeamClusterAssignment{}.Kind()),
-	})
-	sweep := &teamClusterSweepWorker{
-		db:       deps.DB,
-		clusters: deps.Clusters,
-		pageSize: teamClusterSweepPage,
-		steps:    steps.Job(outbox.SweepTeamClusterAssignments{}.Kind()),
-	}
-	river.AddWorker(workers, sweep)
-
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
 		Queues:               queues,
@@ -119,12 +100,9 @@ func New(deps Dependencies) (*River, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create river client: %w", err)
 	}
-	// The client is built from its workers, so the sweep gets it afterwards.
-	sweep.jobs = client
-
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.RetireProjectWebhooks{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind(), outbox.SweepTeamClusterAssignments{}.Kind()},
+		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.RetireProjectWebhooks{}.Kind(), outbox.ContainBannedTeam{}.Kind()},
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {

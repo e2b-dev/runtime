@@ -62,25 +62,3 @@ UPDATE public.teams
 SET cluster_id = NULL
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NOT NULL;
-
--- name: LockTeamClusterSync :exec
--- Serializes the syncs of one team's cluster to the cluster service, so each
--- reads the team only after the sync before it has finished.
-SELECT pg_advisory_xact_lock(hashtextextended('team cluster sync ' || sqlc.arg(team_id)::uuid::text, 0));
-
--- name: GetLiveTeamCluster :one
--- A deleted team holds no cluster, whatever its row still says.
-SELECT cluster_id
-FROM public.teams
-WHERE id = sqlc.arg(team_id)::uuid
-  AND deleted_at IS NULL;
-
--- name: ListLiveTeamClusters :many
--- A page of the live teams on a remote cluster, after the given team.
-SELECT id, cluster_id::uuid AS cluster_id
-FROM public.teams
-WHERE cluster_id IS NOT NULL
-  AND deleted_at IS NULL
-  AND id > sqlc.arg(after)::uuid
-ORDER BY id
-LIMIT sqlc.arg(page_size)::int;
