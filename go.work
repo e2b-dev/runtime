@@ -7,7 +7,6 @@ use (
 	./packages/clickhouse
 	./packages/client-proxy
 	./packages/envd
-	./packages/nomad-nodepool-apm
 	./packages/orchestrator
 	./packages/scheduling-api
 	./packages/shared

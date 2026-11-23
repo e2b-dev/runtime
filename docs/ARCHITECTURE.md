@@ -95,7 +95,7 @@ flowchart TB
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
 `packages/auth` (authentication library), `packages/api/internal/db` (Postgres migrations + sqlc queries),
 `packages/clickhouse` (ClickHouse schema + clients), `packages/otel-collector` (collector config),
-`packages/nomad-nodepool-apm` (autoscaler plugin), `packages/local-dev` (local stack).
+`packages/local-dev` (local stack).
 
 ### API (`packages/api`)
 
@@ -1550,7 +1550,6 @@ packages/
   db/                   Postgres migrations (goose) + queries (sqlc)
   clickhouse/           ClickHouse schema, batching writers, query clients
   otel-collector/       Collector config
-  nomad-nodepool-apm/   Nomad autoscaler metric and deployment-aware target plugins
   local-dev/            docker-compose local stack + DB seeding
 spec/                   OpenAPI specs (public, edge, hyperloop) — codegen sources
 packages/api/integration/      Integration tests against a live deployment
