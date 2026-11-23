@@ -31,7 +31,9 @@ BEGIN
         REVOKE INSERT ON public.access_tokens FROM trigger_user;
 
         REVOKE CREATE, USAGE ON SCHEMA public FROM trigger_user;
-        REVOKE USAGE ON SCHEMA auth FROM trigger_user;
+        IF to_regnamespace('auth') IS NOT NULL THEN
+            REVOKE USAGE ON SCHEMA auth FROM trigger_user;
+        END IF;
     END IF;
 END
 $revoke$;
@@ -66,55 +68,6 @@ BEGIN
     RETURN NEW;
 END
 $post_user_signup$ SECURITY DEFINER SET search_path = public;
-
-CREATE OR REPLACE FUNCTION public.sync_insert_auth_users_to_public_users_trigger() RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $func$
-BEGIN
-    INSERT INTO public.users (id, email)
-    VALUES (NEW.id, NEW.email);
-
-    RETURN NEW;
-END;
-$func$ SECURITY DEFINER SET search_path = public;
-
-CREATE OR REPLACE FUNCTION public.sync_update_auth_users_to_public_users_trigger() RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $func$
-BEGIN
-    UPDATE public.users
-    SET email = NEW.email,
-        updated_at = now()
-    WHERE id = NEW.id;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'User with id % does not exist in public.users', NEW.id;
-    END IF;
-
-    RETURN NEW;
-END;
-$func$ SECURITY DEFINER SET search_path = public;
-
-CREATE OR REPLACE FUNCTION public.sync_delete_auth_users_to_public_users_trigger() RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $func$
-BEGIN
-    DELETE FROM public.users WHERE id = OLD.id;
-    RETURN OLD;
-END;
-$func$ SECURITY DEFINER SET search_path = public;
-
-CREATE TRIGGER sync_inserts_to_public_users
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.sync_insert_auth_users_to_public_users_trigger();
-
-CREATE TRIGGER sync_updates_to_public_users
-    AFTER UPDATE ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.sync_update_auth_users_to_public_users_trigger();
-
-CREATE TRIGGER sync_deletes_to_public_users
-    AFTER DELETE ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.sync_delete_auth_users_to_public_users_trigger();
 
 CREATE TRIGGER post_user_signup
     AFTER INSERT ON public.users

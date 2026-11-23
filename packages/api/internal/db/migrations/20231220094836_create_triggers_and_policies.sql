@@ -20,10 +20,6 @@ BEGIN
 END
 $create_default_team$ SECURITY DEFINER SET search_path = public;
 
-CREATE OR REPLACE TRIGGER create_default_team
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION generate_default_team_trigger();
-
 
 CREATE OR REPLACE FUNCTION public.generate_teams_api_keys_trigger() RETURNS TRIGGER
     LANGUAGE plpgsql
@@ -60,11 +56,6 @@ BEGIN
     RETURN NEW;
 END;
 $generate_access_token$ SECURITY DEFINER SET search_path = public;
-
-
-CREATE OR REPLACE TRIGGER create_access_token
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION generate_access_token_trigger();
 
 
 -- +goose StatementEnd

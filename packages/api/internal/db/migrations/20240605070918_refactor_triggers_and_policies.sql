@@ -74,10 +74,6 @@ BEGIN
 END
 $post_user_signup$ SECURITY DEFINER SET search_path = public;
 
-CREATE OR REPLACE TRIGGER post_user_signup
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION post_user_signup();
-
 -- +goose StatementEnd
 
 -- +goose Down

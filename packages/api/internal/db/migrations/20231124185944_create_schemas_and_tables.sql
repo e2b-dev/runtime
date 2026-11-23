@@ -82,8 +82,7 @@ CREATE TABLE IF NOT EXISTS "public"."access_tokens"
     "access_token" text        NOT NULL,
     "user_id"      uuid        NOT NULL,
     "created_at"   timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY ("access_token"),
-    CONSTRAINT "access_tokens_users_access_tokens" FOREIGN KEY ("user_id") REFERENCES "auth"."users" ("id") ON UPDATE NO ACTION ON DELETE CASCADE
+    PRIMARY KEY ("access_token")
 );
 
 -- Create "users_teams" table
@@ -93,8 +92,7 @@ CREATE TABLE IF NOT EXISTS "public"."users_teams"
     "user_id" uuid   NOT NULL,
     "team_id" uuid   NOT NULL,
     PRIMARY KEY ("id"),
-    CONSTRAINT "users_teams_teams_teams" FOREIGN KEY ("team_id") REFERENCES "public"."teams" ("id") ON UPDATE NO ACTION ON DELETE CASCADE,
-    CONSTRAINT "users_teams_users_users" FOREIGN KEY ("user_id") REFERENCES "auth"."users" ("id") ON UPDATE NO ACTION ON DELETE CASCADE
+    CONSTRAINT "users_teams_teams_teams" FOREIGN KEY ("team_id") REFERENCES "public"."teams" ("id") ON UPDATE NO ACTION ON DELETE CASCADE
 );
 
 -- Create index "usersteams_team_id_user_id" to table: "users_teams"

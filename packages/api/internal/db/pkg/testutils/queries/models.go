@@ -33,14 +33,6 @@ type ActiveTemplateBuild struct {
 	CreatedAt  time.Time
 }
 
-type AuthUser struct {
-	ID              uuid.UUID
-	Email           string
-	CreatedAt       time.Time
-	RawAppMetaData  []byte
-	RawUserMetaData []byte
-}
-
 type BillingSandboxLog struct {
 	SandboxID       string
 	EnvID           string

@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS "public"."addons"
     "added_by"                          uuid        NOT NULL,
     PRIMARY KEY ("id"),
     CONSTRAINT "addons_teams_addons" FOREIGN KEY ("team_id") REFERENCES "public"."teams" ("id") ON UPDATE NO ACTION ON DELETE CASCADE,
-    CONSTRAINT "addons_users_addons" FOREIGN KEY ("added_by") REFERENCES "auth"."users" ("id") ON UPDATE NO ACTION ON DELETE NO ACTION,
     CONSTRAINT "addons_valid_dates_check" CHECK (valid_to IS NULL OR valid_to > valid_from)
 );
 
