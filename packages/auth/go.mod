@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/auth
 
-go 1.27.3
+go 1.27.4
 
 replace github.com/e2b-dev/infra/packages/shared => ../shared
 

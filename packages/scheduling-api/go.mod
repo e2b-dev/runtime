@@ -1,6 +1,6 @@
 module github.com/e2b-dev/infra/packages/scheduling-api
 
-go 1.27.3
+go 1.27.4
 
 replace github.com/e2b-dev/infra/packages/shared v0.0.0 => ../shared
 

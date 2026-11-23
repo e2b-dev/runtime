@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.27.3
+ARG GOLANG_VERSION=1.27.4
 ARG ALPINE_VERSION=3.24
 
 # The builder runs on the build platform and cross-compiles for the target
