@@ -102,23 +102,10 @@ func New(deps Dependencies) (*River, error) {
 	}
 	river.AddWorker(workers, sweep)
 
-	// Without a cluster service no team is on a remote cluster to sweep for.
-	var periodicJobs []*river.PeriodicJob
-	if deps.Clusters != nil {
-		periodicJobs = append(periodicJobs, river.NewPeriodicJob(
-			river.PeriodicInterval(teamClusterSweepInterval),
-			func() (river.JobArgs, *river.InsertOpts) { return outbox.SweepTeamClusterAssignments{}, nil },
-			// A new leader starts the interval over, so a plane that deploys
-			// more often than the interval would otherwise never sweep.
-			&river.PeriodicJobOpts{RunOnStart: true},
-		))
-	}
-
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
 		Queues:               queues,
 		Workers:              workers,
-		PeriodicJobs:         periodicJobs,
 		Plugins:              []rivertype.Plugin{sharedriver.NewOTelMiddleware(deps.Telemetry)},
 		Middleware:           []rivertype.Middleware{sharedriver.NewOutboxJobTelemetry(deps.Telemetry, deps.Logger)},
 		Logger:               sharedriver.NewLogger(deps.Logger),

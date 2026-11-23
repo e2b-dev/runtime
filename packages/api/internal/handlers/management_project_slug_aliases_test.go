@@ -181,7 +181,7 @@ func TestUpsertProjectSlugChangeWaitsForATemplateDeleteInProgress(t *testing.T) 
 	moved := renamed(project)
 	upserted := make(chan error, 1)
 	go func() {
-		_, _, err := store.managementService.UpsertProject(t.Context(), store.riverClient, management.Project{
+		_, _, err := store.managementService.UpsertProject(t.Context(), management.Project{
 			ID: project.id, Name: moved.Name, Slug: moved.Slug, Email: moved.Email,
 		})
 		upserted <- err

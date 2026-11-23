@@ -76,13 +76,6 @@ func (a *APIStore) deleteProject(ctx context.Context, projectID uuid.UUID) ([]st
 			return nil, fmt.Errorf("enqueue webhook retirement: %w", err)
 		}
 	}
-	// The deletion clears the project's cluster. Without a cluster service
-	// no project has one.
-	if a.clusterService != nil {
-		if err := a.enqueueTeamClusterSync(ctx, tx, projectID); err != nil {
-			return nil, err
-		}
-	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit project deletion: %w", err)

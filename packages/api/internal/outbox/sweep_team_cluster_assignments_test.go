@@ -125,9 +125,7 @@ func TestSweepFailsWhenTheClusterServiceCannotBeAsked(t *testing.T) {
 	assert.Zero(t, teamClusterSyncs(t, db, teamID))
 }
 
-// The outbox starts a sweep itself, and the sync it enqueues records a team
-// that was on its cluster before any write enqueued one.
-func TestTheOutboxRecordsATeamAssignedBeforeItStarted(t *testing.T) {
+func TestTheOutboxDrainsAnAlreadyQueuedSweep(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
@@ -147,6 +145,8 @@ func TestTheOutboxRecordsATeamAssignedBeforeItStarted(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	_, err = outboxRiver.Client().Insert(t.Context(), outbox.SweepTeamClusterAssignments{}, nil)
+	require.NoError(t, err)
 	require.NoError(t, outboxRiver.Start(t.Context()))
 	t.Cleanup(func() { require.NoError(t, outboxRiver.Stop(context.WithoutCancel(t.Context()))) })
 

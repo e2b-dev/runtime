@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,7 +16,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusterassign"
 	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
-	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
@@ -25,10 +23,9 @@ import (
 )
 
 var (
-	errLocalClusterDeletion       = errors.New("the local cluster cannot be deleted")
-	errProtectedClusterDeletion   = errors.New("the cluster has deletion protection")
-	errClusterInUse               = errors.New("a team still uses the cluster")
-	errClusterAssignmentsSettling = errors.New("the cluster service has not yet dropped every team's assignment")
+	errLocalClusterDeletion     = errors.New("the local cluster cannot be deleted")
+	errProtectedClusterDeletion = errors.New("the cluster has deletion protection")
+	errClusterInUse             = errors.New("a project still references the cluster")
 )
 
 func (a *APIStore) ManagementDeleteCluster(c *gin.Context, clusterID api.ClusterID) {
@@ -57,10 +54,7 @@ func (a *APIStore) managementRemoveCluster(c *gin.Context, clusterID uuid.UUID, 
 		a.sendAPIStoreError(c, http.StatusConflict, "Cluster has deletion protection turned on")
 	case errors.Is(err, errClusterInUse):
 		telemetry.ReportErrorByCode(ctx, http.StatusConflict, "delete cluster failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusConflict, "Cluster is still referenced by a team or environment")
-	case errors.Is(err, errClusterAssignmentsSettling):
-		telemetry.ReportErrorByCode(ctx, http.StatusServiceUnavailable, "delete cluster failed", err, attrs...)
-		a.sendAPIStoreError(c, http.StatusServiceUnavailable, "Cluster assignments are still being cleared, retry the delete")
+		a.sendAPIStoreError(c, http.StatusConflict, "Cluster is still referenced by a project")
 	case status.Code(err) == codes.Unavailable:
 		telemetry.ReportError(ctx, "delete cluster temporarily unavailable", err, attrs...)
 		apierrors.SendAPIError(c, &apierrors.APIError{Code: http.StatusServiceUnavailable, ClientMsg: "Retry the cluster deletion", Retryable: apierrors.CanRetry})
@@ -151,11 +145,8 @@ func (a *APIStore) removeCluster(ctx context.Context, clusterID uuid.UUID, orpha
 	switch clusterErrorReason(err) {
 	case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_PROTECTED:
 		return errProtectedClusterDeletion
-	// The caller found no live team on the cluster under its lock, so the
-	// cluster service's copy is behind: a detached or deleted team's sync has
-	// not run yet. That clears on its own, unlike a team still on the cluster.
 	case clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_IN_USE:
-		return errClusterAssignmentsSettling
+		return errClusterInUse
 	}
 	if err != nil {
 		return fmt.Errorf("delete cluster: %w", err)
@@ -305,16 +296,6 @@ func (a *APIStore) ManagementClusterDestroyReadiness(c *gin.Context, clusterID a
 	}
 
 	c.Status(http.StatusNoContent)
-}
-
-// enqueueTeamClusterSync has the outbox copy the team's cluster to the cluster
-// service once tx commits. Call it with every write of a team's cluster.
-func (a *APIStore) enqueueTeamClusterSync(ctx context.Context, tx pgx.Tx, teamID uuid.UUID) error {
-	if _, err := a.riverClient.InsertTx(ctx, tx, outbox.SyncTeamClusterAssignment{TeamID: teamID}, nil); err != nil {
-		return fmt.Errorf("enqueue team cluster sync: %w", err)
-	}
-
-	return nil
 }
 
 // optionalOf reads an optional proto field as a pointer.

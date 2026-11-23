@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	teamClusterSweepInterval = time.Hour
-	teamClusterSweepTimeout  = 10 * time.Minute
+	teamClusterSweepTimeout = 10 * time.Minute
 	// The most projects the cluster service looks up in one call.
 	teamClusterSweepPage = 1000
 )

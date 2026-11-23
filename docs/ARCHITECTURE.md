@@ -330,7 +330,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   the operator view that picks a sandbox to migrate. The migration manager decides whether
   a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
-  runs workload teardown, webhook retirement, and cluster assignment jobs. Its job arguments live in
+  runs workload teardown and webhook retirement. Its job arguments live in
   `packages/api/internal/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
@@ -356,33 +356,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   point and sweeps again, so work admitted before that eviction cannot outlive it. It
   is not unique: a job already running may have read the team before a later ban, so each ban
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
-  follow the teardown's. `sync_team_cluster_assignment` copies a team's cluster to the
-  cluster service, which records it as a project assignment. Every write of a team's cluster
-  enqueues it: a project deletion in its transaction when a cluster service is configured, and a
-  project upsert that leaves the project on a remote cluster after its
-  commit, because that row is written through the auth pool. A
-  failed enqueue there fails the upsert, so the caller's retry enqueues it. The job reads the
-  team when it runs, under a per-team advisory lock it holds until the cluster service has
-  answered, so two jobs for one team cannot write out of order. An attempt whose database
-  session was lost fails and retries, because the lock went with the session. A live team's
-  cluster is assigned; a team on none, deleted or gone has the recorded one detached. Until
-  that job has run for a detached or deleted team, deleting its cluster answers 503 and not
-  409: the API found no live team on it, so the cluster service's refusal clears on its own.
-  A cluster the cluster service is deleting, or does not know, takes no new team: the sync
-  completes without recording one, since a retry cannot change the answer, and the write that
-  takes the team off the cluster enqueues its own.
-  The job is not unique, and completes without a call when no cluster service is configured.
-  Retries and discarding follow the teardown's. `sweep_team_cluster_assignments` covers the
-  teams no write enqueued a sync for: those assigned before the syncs existed, and a record
-  the cluster service has lost since. With a cluster service configured, River's leader
-  enqueues it when it starts and every hour after. It pages through the live teams on a
-  remote cluster, asks the cluster service for each page's recorded clusters, and enqueues a
-  sync for every team recorded on none or on another; the syncs do the writing, at a lower
-  priority than the syncs a write enqueues. Those syncs, and the sweep itself, are unique
-  while one is open, so a team whose sync keeps failing does not gather a retrying one per
-  sweep. A record held for a team that is no
-  longer on a cluster is not found this way; the write that took the team off enqueued its
-  sync. An attempt is bounded at 10 minutes. Steps report
+  follow the teardown's. Previously queued assignment jobs drain through the same worker pool. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) controls the default queue. Each replica configured for
@@ -544,10 +518,12 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
 request has the cluster service record the deletion, returns a conflict while deletion
-protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
-temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
-with `Should-Retry: true`. Once deletion is recorded, protection stays off. A project already
-admitted to this cluster may finish creation during the drain; its claim prevents final
+protection is on, and succeeds for an absent cluster and on repeat. A cluster delete returns
+HTTP 409 while the cluster service holds a live claim or a recorded project assignment, even
+if no live team references the cluster locally. The reference must be cleared before deletion
+can succeed. If the cluster service is unavailable, both the deletion request and the cluster
+delete return HTTP 503 with `Should-Retry: true`. Once deletion is recorded, protection stays off.
+A project already admitted to this cluster may finish creation during the drain; its claim prevents final
 removal. A new remote team checks admission with `CheckProjectCreation` while holding the
 per-cluster advisory lock in the database. The response carries no cluster credentials. The
 deletion request takes that lock after recording the drain. Deleting each project clears its
