@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -40,7 +41,10 @@ func NewDriver(connectionString string) (driver.Conn, error) {
 	}
 
 	options.MaxOpenConns = 10
-	options.MaxIdleConns = 3
+	options.MaxIdleConns = 2
+	// Recycle connections so they rebalance across servers; the random part
+	// keeps pools opened together from reconnecting in step.
+	options.ConnMaxLifetime = 10*time.Minute + rand.N(5*time.Minute)
 
 	conn, err := clickhouse.Open(options)
 	if err != nil {

@@ -88,6 +88,10 @@ func NewGatedDelivery(inner *ClickhouseDelivery, featureFlags *featureflags.Clie
 func NewClickhouseSandboxEventsDelivery(ctx context.Context, conn driver.Conn, opts batcher.BatcherOptions) (*ClickhouseDelivery, error) {
 	var err error
 
+	if opts.ShouldRetry == nil {
+		opts.ShouldRetry = chconfig.IsRetryableInsertError
+	}
+
 	delivery := &ClickhouseDelivery{conn: conn, ff: opts.FeatureFlags, batcherName: opts.Name}
 	delivery.batcher, err = batcher.NewBatcher(delivery.batchInserter, opts)
 	if err != nil {
@@ -139,6 +143,9 @@ func (c *ClickhouseDelivery) Close(_ context.Context) error {
 }
 
 func (c *ClickhouseDelivery) batchInserter(ctx context.Context, events []SandboxEvent) error {
+	ctx, cancel := context.WithTimeout(ctx, chconfig.InsertTimeout)
+	defer cancel()
+
 	attr := trace.WithAttributes(attribute.Int("batch.size", len(events)))
 	ctx, span := tracer.Start(ctx, "Flush sandbox events batch to Clickhouse", attr)
 	defer span.End()
@@ -147,7 +154,7 @@ func (c *ClickhouseDelivery) batchInserter(ctx context.Context, events []Sandbox
 		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(settings))
 	}
 
-	batch, err := c.conn.PrepareBatch(ctx, InsertSandboxEventQuery, driver.WithReleaseConnection())
+	batch, err := chconfig.PrepareBatch(ctx, c.conn, InsertSandboxEventQuery)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "prepare batch failed")

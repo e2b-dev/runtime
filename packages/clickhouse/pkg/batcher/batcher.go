@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -19,7 +20,15 @@ const (
 	defaultQueueSize    = 8 * 1024
 	defaultMaxBatchSize = 64 * 1024
 	defaultMaxDelay     = 100 * time.Millisecond
+
+	// flushJitter spreads flush intervals so batchers started together drift
+	// apart instead of reaching the server in step.
+	flushJitter = 0.15
+	retryJitter = 0.25
 )
+
+// retryBackoffs are the waits before each retry of a failed flush.
+var retryBackoffs = []time.Duration{250 * time.Millisecond, 500 * time.Millisecond}
 
 var (
 	ErrBatcherAlreadyStarted = errors.New("batcher already started")
@@ -32,8 +41,9 @@ var (
 	meter = otel.Meter("github.com/e2b-dev/infra/packages/clickhouse/pkg/batcher")
 
 	mItemsDropped      = utils.Must(meter.Int64Counter("batcher.items.dropped", metric.WithDescription("Number of items dropped because the batcher queue was full"), metric.WithUnit("{item}")))
-	mFlushes           = utils.Must(meter.Int64Counter("batcher.flushes", metric.WithDescription("Completed flush attempts by result")))
-	mItemsFailed       = utils.Must(meter.Int64Counter("batcher.items.failed", metric.WithDescription("Number of items in batches whose flush returned an error; the batcher does not retry them"), metric.WithUnit("{item}")))
+	mFlushes           = utils.Must(meter.Int64Counter("batcher.flushes", metric.WithDescription("Completed flushes by result, after any retries")))
+	mItemsFailed       = utils.Must(meter.Int64Counter("batcher.items.failed", metric.WithDescription("Number of items in batches whose flush still failed after any retries"), metric.WithUnit("{item}")))
+	mFlushRetries      = utils.Must(meter.Int64Counter("batcher.flush.retries", metric.WithDescription("Flush attempts repeated on the same batch after a retryable failure")))
 	mMaxBatchSize      = utils.Must(meter.Int64Gauge("batcher.config.max_batch_size", metric.WithUnit("{item}")))
 	mMaxDelay          = utils.Must(meter.Int64Gauge("batcher.config.max_delay", metric.WithUnit("ms")))
 	mQueueSize         = utils.Must(meter.Int64Gauge("batcher.config.queue_size", metric.WithUnit("{item}")))
@@ -54,15 +64,21 @@ type Batcher[T any] struct {
 	MaxBatchSize int
 
 	// Maximum delay between the first item being enqueued in a batch and the
-	// BatcherFunc call for that batch.
+	// BatcherFunc call for that batch. Each flush interval varies by up to
+	// 15% either way.
 	MaxDelay time.Duration
 
 	// Maximum unprocessed items' queue size.
 	QueueSize int
 
-	// ErrorHandler is called when BatcherFunc returns an error.
-	// If not set, errors from BatcherFunc will be silently dropped.
+	// ErrorHandler is called when a batch's last BatcherFunc call returns an
+	// error. If not set, errors from BatcherFunc will be silently dropped.
 	ErrorHandler func(error)
+
+	// ShouldRetry reports whether a failed BatcherFunc call may run again on
+	// the same batch. An accepted failure is retried up to twice, with backoff,
+	// while the queue is less than half full. Nil disables retries.
+	ShouldRetry func(error) bool
 
 	// Synchronization primitives.
 	mu      sync.RWMutex
@@ -95,16 +111,21 @@ type BatcherOptions struct {
 	MaxBatchSize int
 
 	// MaxDelay is the maximum time between the first item being enqueued in a
-	// batch and the BatcherFunc call for that batch.
+	// batch and the BatcherFunc call for that batch. Each flush interval varies
+	// by up to 15% either way.
 	MaxDelay time.Duration
 
 	// QueueSize is the size of the channel buffer used to queue incoming items.
 	// Items pushed when the queue is full are dropped (Push returns ErrBatcherQueueFull).
 	QueueSize int
 
-	// ErrorHandler is called when BatcherFunc returns an error.
-	// If not set, errors from BatcherFunc will be silently dropped.
+	// ErrorHandler is called when a batch's last BatcherFunc call returns an
+	// error. If not set, errors from BatcherFunc will be silently dropped.
 	ErrorHandler func(error)
+
+	// ShouldRetry reports whether a failed BatcherFunc call may run again on
+	// the same batch. Nil disables retries.
+	ShouldRetry func(error) bool
 }
 
 // NewBatcher creates a new Batcher with the given parameters.
@@ -117,6 +138,7 @@ func NewBatcher[T any](fn BatcherFunc[T], cfg BatcherOptions) (*Batcher[T], erro
 		MaxDelay:     cfg.MaxDelay,
 		QueueSize:    cfg.QueueSize,
 		ErrorHandler: cfg.ErrorHandler,
+		ShouldRetry:  cfg.ShouldRetry,
 
 		attrs: metric.WithAttributeSet(attribute.NewSet(attribute.String("batcher", cfg.Name))),
 	}
@@ -232,7 +254,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		defer refresh.Stop()
 		refreshC = refresh.C
 	}
-	ticker := time.NewTicker(maxDelay)
+	ticker := time.NewTicker(jitter(maxDelay, flushJitter))
 	defer ticker.Stop()
 
 	flush := func() {
@@ -243,7 +265,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		mFlushWaitDuration.Record(ctx, time.Since(batchStartTime).Milliseconds(), b.attrs)
 		start := time.Now()
 		result := "success"
-		if err := b.Func(ctx, batch); err != nil {
+		if err := b.call(ctx, batch); err != nil {
 			result = "error"
 			mItemsFailed.Add(ctx, int64(len(batch)), b.attrs)
 			b.ErrorHandler(err)
@@ -255,7 +277,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		mQueueLen.Record(ctx, int64(len(b.ch)), b.attrs)
 
 		batch = batch[:0]
-		ticker.Reset(maxDelay)
+		ticker.Reset(jitter(maxDelay, flushJitter))
 	}
 
 	for {
@@ -297,6 +319,47 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 			recordConfig()
 		}
 	}
+}
+
+// call runs Func on the batch, retrying failures ShouldRetry accepts.
+func (b *Batcher[T]) call(ctx context.Context, batch []T) error {
+	err := b.Func(ctx, batch)
+	for _, backoff := range retryBackoffs {
+		if err == nil || !b.canRetry(ctx, err) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(jitter(backoff, retryJitter)):
+		}
+		// The queue keeps filling during the wait.
+		if !b.canRetry(ctx, err) {
+			break
+		}
+
+		mFlushRetries.Add(ctx, 1, b.attrs)
+		err = b.Func(ctx, batch)
+	}
+
+	return err
+}
+
+// canRetry holds a retry back once the queue is half full: the queue drains
+// only between flushes, and Push drops items once it is full.
+func (b *Batcher[T]) canRetry(ctx context.Context, err error) bool {
+	return b.ShouldRetry != nil && ctx.Err() == nil && len(b.ch) < cap(b.ch)/2 && b.ShouldRetry(err)
+}
+
+// jitter scales d by a random factor within fraction of 1. It returns d
+// unchanged when the result would not be a positive Duration.
+func jitter(d time.Duration, fraction float64) time.Duration {
+	scaled := float64(d) * (1 - fraction + 2*fraction*rand.Float64())
+	if scaled < 1 || scaled >= math.MaxInt64 {
+		return d
+	}
+
+	return time.Duration(scaled)
 }
 
 // limits retains the last valid values when a flag update is invalid.
