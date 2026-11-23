@@ -27,6 +27,7 @@ type keepAliveRecorder struct {
 	sbx      sandbox.Sandbox
 	duration time.Duration
 	calls    int
+	ignored  int
 }
 
 func (s *keepAliveRecorder) KeepAliveFor(_ context.Context, _ uuid.UUID, _ string, duration time.Duration, _ bool) (*sandbox.Sandbox, *api.APIError) {
@@ -38,6 +39,10 @@ func (s *keepAliveRecorder) KeepAliveFor(_ context.Context, _ uuid.UUID, _ strin
 
 func (s *keepAliveRecorder) WaitForStateChange(context.Context, uuid.UUID, string) error {
 	return nil
+}
+
+func (s *keepAliveRecorder) RecordConnectMemoryIgnored(context.Context) {
+	s.ignored++
 }
 
 func newConnectV2Request(t *testing.T, sandboxID string, body io.Reader) (*httptest.ResponseRecorder, *gin.Context) {

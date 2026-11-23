@@ -39,13 +39,17 @@ const (
 
 var memoryMeter = otel.Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator")
 
-// memoryOverrideCounter counts create and resume requests that name a
-// memoryMB, by outcome: accepted once a node took the start, rejected by the
-// API or the node (with the error code), failed for any other placement error.
-// It also counts the refusal of a size a new sandbox inherits from its build
-// (source=inherited); a request's own size is source=named.
+// memoryOverrideCounter counts each create, resume and connect request that
+// names a memoryMB once, by route and outcome: accepted once a node took a
+// start at that size, rejected by the API or the node (with the error code),
+// failed for any other error, and ignored when a connect did not resume the
+// sandbox itself (it was running, or it joined another request's start), so
+// the size did not apply. ignored is not a refusal: a rate of refusals leaves
+// it out. It also counts the refusal of a size a new sandbox inherits from its
+// build, on create and fork (source=inherited); a request's own size is
+// source=named.
 var memoryOverrideCounter, _ = memoryMeter.Int64Counter("api.sandbox.memory_override",
-	metric.WithDescription("Number of sandbox create and resume requests with an explicit memoryMB, and refusals of an inherited size, by outcome, error code and source"))
+	metric.WithDescription("Number of sandbox create, resume and connect requests with an explicit memoryMB, and refusals of a size inherited on create or fork, by route, outcome (ignored is not a refusal), error code and source"))
 
 // memorySizeUnknownCounter counts starts and pauses of a sandbox whose build
 // has a memory maximum but whose size the API does not know, by path. It
@@ -60,7 +64,7 @@ var memorySizeUnknownCounter, _ = memoryMeter.Int64Counter("api.sandbox.memory_s
 // memory maximum, the size is sent to the orchestrator, which then enforces the
 // number the API accounts and bills. create is a new sandbox, not a resume of
 // the caller's own one (see pickSandboxMemory).
-func resolveSandboxMemory(
+func (o *Orchestrator) resolveSandboxMemory(
 	ctx context.Context,
 	flags *featureflags.Client,
 	team *teamtypes.Team,
@@ -88,14 +92,14 @@ func resolveSandboxMemory(
 				zap.Int64("team_max_memory_mb", team.Limits.MaxRamMb),
 				zap.Stringp("envd_version", build.EnvdVersion),
 			)
-			recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceInherited)
+			o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceInherited)
 		}
 
 		return memoryMB, known, apiErr
 	}
 
 	if apiErr != nil {
-		recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
+		o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
 
 		return 0, false, apiErr
 	}
@@ -119,7 +123,7 @@ func resolveSandboxMemory(
 // the reason CheckSandboxCPUCount gives. CreateSandbox decides the size again
 // from the build it fetches under the reservation; this counts only its
 // refusals.
-func CheckSandboxMemory(
+func (o *Orchestrator) CheckSandboxMemory(
 	ctx context.Context,
 	flags *featureflags.Client,
 	team *teamtypes.Team,
@@ -132,7 +136,7 @@ func CheckSandboxMemory(
 
 	if _, _, apiErr := pickSandboxMemory(ctx, flags, team, build, requested, false); apiErr != nil {
 		setMemorySpanAttributes(ctx, build, requested)
-		recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
+		o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
 		// The resume handler answers this refusal directly; it reaches no other
 		// error report on the span.
 		trace.SpanFromContext(ctx).RecordError(apiErr.Err, trace.WithAttributes(attribute.String("error_code", apiErr.ErrorCode)))
@@ -171,16 +175,57 @@ const (
 	memoryOverrideAccepted = "accepted"
 	memoryOverrideRejected = "rejected"
 	memoryOverrideFailed   = "failed"
+	// memoryOverrideIgnored: a connect named a size but did not resume the
+	// sandbox itself (it was running, or it joined another request's start),
+	// so the size did not apply, as memory does not. Not a refusal.
+	memoryOverrideIgnored = "ignored"
 )
 
-func recordMemoryOverride(ctx context.Context, outcome, errorCode, source string) {
-	attrs := []attribute.KeyValue{attribute.String("outcome", outcome), attribute.String("source", source)}
+// The request route a memory decision is counted under.
+const (
+	MemoryRouteCreate  = "create"
+	MemoryRouteFork    = "fork"
+	MemoryRouteResume  = "resume"
+	MemoryRouteConnect = "connect"
+	memoryRouteOther   = "other"
+)
+
+type memoryRouteKey struct{}
+
+// WithMemoryRoute names the route whose memory decisions ctx carries, for the
+// route label on api.sandbox.memory_override.
+func WithMemoryRoute(ctx context.Context, route string) context.Context {
+	return context.WithValue(ctx, memoryRouteKey{}, route)
+}
+
+func memoryRoute(ctx context.Context) string {
+	if route, ok := ctx.Value(memoryRouteKey{}).(string); ok {
+		return route
+	}
+
+	return memoryRouteOther
+}
+
+// RecordConnectMemoryIgnored counts a connect that named memoryMB for a sandbox
+// that was already running, so the size did not apply.
+func (o *Orchestrator) RecordConnectMemoryIgnored(ctx context.Context) {
+	o.recordMemoryOverride(ctx, memoryOverrideIgnored, "", memorySourceNamed)
+}
+
+// recordMemoryOverride counts a memory decision on the orchestrator's counter,
+// the package counter unless one was set; o may be nil.
+func (o *Orchestrator) recordMemoryOverride(ctx context.Context, outcome, errorCode, source string) {
+	attrs := []attribute.KeyValue{attribute.String("outcome", outcome), attribute.String("source", source), attribute.String("route", memoryRoute(ctx))}
 	if errorCode != "" {
 		attrs = append(attrs, attribute.String("error_code", errorCode))
 	}
 	telemetry.ReportEvent(ctx, "sandbox memory override", attrs...)
-	if memoryOverrideCounter != nil {
-		memoryOverrideCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
+	counter := memoryOverrideCounter
+	if o != nil && o.memoryOverrideCounter != nil {
+		counter = o.memoryOverrideCounter
+	}
+	if counter != nil {
+		counter.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 }
 

@@ -1216,6 +1216,9 @@ type ConnectSandboxV2 struct {
 	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
+	// MemoryMB Memory for the sandbox in MiB when this connect resumes it, from its memory snapshot or by cold-booting (memory false). Defaults to the memory the sandbox had when it was paused; at least that, and at most the template's maxMemoryMB, in steps of 128 MiB above its memoryMB. Like memory, it applies only when this connect resumes a paused sandbox: a sandbox that is already running, or that another request is already resuming, keeps its size and the field is ignored. The response does not report the size; read the sandbox to see it, and note that while the API does not know a running sandbox's size (it was started by an older API version, for example), the sandbox's memoryMB may report its boot RAM.
+	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
+
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
 	Timeout *int32 `json:"timeout,omitempty"`
 }

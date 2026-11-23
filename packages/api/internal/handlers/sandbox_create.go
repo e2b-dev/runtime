@@ -154,7 +154,7 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 
 // createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
 func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) (*api.Sandbox, *api.APIError) {
-	ctx := c.Request.Context()
+	ctx := apiorch.WithMemoryRoute(c.Request.Context(), apiorch.MemoryRouteCreate)
 
 	// Get team from context, use TeamContextKey
 	teamInfo := auth.MustGetTeamInfo(c)

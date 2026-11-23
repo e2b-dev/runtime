@@ -1424,7 +1424,15 @@ inherit the stored CPU count.
 Memory follows the same shape behind the same flag. A build registered with a max memory
 (`maxMemoryMB`, whole 128 MiB slots above `memoryMB`) gets a hotplug region from template
 builders at or above the release that understands it. The build records `max_ram_mb` and, as its
-start size, its boot RAM. Create and explicit resume accept an optional `memoryMB`; memory only
+start size, its boot RAM. Create, explicit resume and the v2 connect accept an optional
+`memoryMB`. On connect it follows `memory`: it applies only when that connect resumes the
+paused sandbox, and is checked only then, so a sandbox that is already running keeps its size
+and the field is ignored. A connect that meets another start of the sandbox joins it, its size
+ignored and its own timeout applied; only a demanded cold boot of a memory snapshot
+(`memory: false`) is refused with 409 `sandbox_start_in_flight` instead, while `memory: false`
+on a filesystem-only snapshot, which cold-boots anyway, joins like any connect. When a start
+that named a size fails, the requests that joined it start the sandbox again on their own
+terms rather than take a failure that may be the size's. Memory only
 grows, a size the sandbox already has survives a lowered team limit, and a new sandbox's growth
 above boot RAM, named or inherited from a snapshot template, is held to the caller's limit. Every
 start from a build with a max memory sends the resolved size as `memory_mb` and is placed only on

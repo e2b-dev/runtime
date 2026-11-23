@@ -47,7 +47,7 @@ func (a *APIStore) resumeBackend() resumeWaitOrchestrator {
 }
 
 func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.SandboxID) {
-	ctx := c.Request.Context()
+	ctx := orchestrator.WithMemoryRoute(c.Request.Context(), orchestrator.MemoryRouteResume)
 
 	// Get team from context, use TeamContextKey
 	teamInfo := auth.MustGetTeamInfo(c)
@@ -198,7 +198,7 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		return
 	}
 
-	if apiErr := orchestrator.CheckSandboxMemory(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.MemoryMB); apiErr != nil {
+	if apiErr := a.orchestrator.CheckSandboxMemory(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.MemoryMB); apiErr != nil {
 		setMemoryOverrideOutcome(c, body.Memory, apiErr)
 		apierrors.SendAPIError(c, apiErr)
 
@@ -228,7 +228,9 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 	setResumeGateOutcome(c, body.Memory, lastSnapshot.EnvBuild, createErr)
 	if createErr != nil {
 		responseErr := *createErr
-		responseErr.Retryable = apierrors.UndefinedRetry
+		if !orchestrator.StartErrorKeepsRetryHint(createErr) {
+			responseErr.Retryable = apierrors.UndefinedRetry
+		}
 		apierrors.SendAPIError(c, &responseErr)
 
 		return

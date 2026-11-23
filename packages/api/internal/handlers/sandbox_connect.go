@@ -14,6 +14,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -29,6 +30,7 @@ import (
 type connectOrchestrator interface {
 	KeepAliveFor(ctx context.Context, teamID uuid.UUID, sandboxID string, duration time.Duration, allowShorter bool) (*sandbox.Sandbox, *api.APIError)
 	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
+	RecordConnectMemoryIgnored(ctx context.Context)
 }
 
 func (a *APIStore) connectBackend() connectOrchestrator {
@@ -60,7 +62,7 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 		return
 	}
 
-	a.connectSandbox(c, sandboxID, timeout, body.Memory)
+	a.connectSandbox(c, sandboxID, timeout, body.Memory, nil)
 }
 
 // PostV2SandboxesSandboxIDConnect accepts an optional body; an omitted timeout falls back to SandboxTimeoutDefaultV2.
@@ -85,12 +87,14 @@ func (a *APIStore) PostV2SandboxesSandboxIDConnect(c *gin.Context, sandboxID api
 		return
 	}
 
-	a.connectSandbox(c, sandboxID, timeout, body.Memory)
+	a.connectSandbox(c, sandboxID, timeout, body.Memory, body.MemoryMB)
 }
 
 // connectSandbox extends a running sandbox's TTL or resumes a paused one from its last snapshot.
-func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeout time.Duration, memory *bool) {
-	ctx := c.Request.Context()
+// memoryMB, like memory, applies only when this connect resumes the sandbox: a
+// running sandbox, or one another request is already starting, keeps its size.
+func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeout time.Duration, memory *bool, memoryMB *int32) {
+	ctx := orchestrator.WithMemoryRoute(c.Request.Context(), orchestrator.MemoryRouteConnect)
 
 	teamInfo := auth.MustGetTeamInfo(c)
 
@@ -117,6 +121,9 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 	for attempt := range maxConnectRetries {
 		sbx, apiErr := a.connectBackend().KeepAliveFor(ctx, teamID, sandboxID, timeout, false)
 		if apiErr == nil {
+			if memoryMB != nil {
+				a.connectBackend().RecordConnectMemoryIgnored(ctx)
+			}
 			apiSbx := toAPISandbox(*sbx)
 			// A cluster can move to a new domain while its sandboxes keep
 			// running. Answer with the cluster's current domain, as sandbox get
@@ -231,12 +238,20 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		true,
 		demandsFilesystemBoot(memory, lastSnapshot.Snapshot),
 		nil, // mcp
+		orchestrator.WithMemoryMB(memoryMB),
+		// The size is checked only if this connect holds the start; joining
+		// another request's start of the sandbox, it is ignored and the
+		// connect's own timeout applied. A demanded cold boot is still refused
+		// rather than ride a memory restore.
+		orchestrator.Connect(),
 	)
 	setMemoryOverrideOutcome(c, memory, createErr)
 	setResumeGateOutcome(c, memory, lastSnapshot.EnvBuild, createErr)
 	if createErr != nil {
 		responseErr := *createErr
-		responseErr.Retryable = apierrors.UndefinedRetry
+		if !orchestrator.StartErrorKeepsRetryHint(createErr) {
+			responseErr.Retryable = apierrors.UndefinedRetry
+		}
 		apierrors.SendAPIError(c, &responseErr)
 
 		return

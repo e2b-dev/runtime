@@ -220,6 +220,7 @@ type APIStore struct {
 	pauseLimiter           *pauselimit.Limiter
 	resumeBackendOverride  resumeWaitOrchestrator
 	connectBackendOverride connectOrchestrator
+	createBackendOverride  sandboxCreator
 	// snapshotBackendOverride does the same for the snapshot-template
 	// handler: the memory:false refusals must land before the sandbox leaves
 	// Running.

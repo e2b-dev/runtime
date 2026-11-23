@@ -1526,6 +1526,21 @@ components:
             snapshot taken while the sandbox guest agent was not responding
             (envdUnresponsiveAtPause) can only be resumed this way, and needs no
             enablement.
+        memoryMB:
+          allOf:
+            - $ref: "#/components/schemas/MemoryMB"
+          description: >-
+            Memory for the sandbox in MiB when this connect resumes it, from its
+            memory snapshot or by cold-booting (memory false). Defaults to the
+            memory the sandbox had when it was paused; at least that, and at most
+            the template's maxMemoryMB, in steps of 128 MiB above its memoryMB.
+            Like memory, it applies only when this connect resumes a paused
+            sandbox: a sandbox that is already running, or that another request
+            is already resuming, keeps its size and the field is ignored. The
+            response does not report the size; read the sandbox to see it, and
+            note that while the API does not know a running sandbox's size (it
+            was started by an older API version, for example), the sandbox's
+            memoryMB may report its boot RAM.
 
     SandboxTimeoutRequest:
       type: object

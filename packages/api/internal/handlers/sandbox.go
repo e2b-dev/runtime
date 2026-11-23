@@ -20,6 +20,32 @@ import (
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/handlers")
 
+// sandboxCreator is the orchestrator's start, as startSandboxInternal calls it.
+type sandboxCreator interface {
+	CreateSandbox(
+		ctx context.Context,
+		sandboxID,
+		executionID string,
+		team *typesteam.Team,
+		getSandboxData orchestrator.SandboxDataFetcher,
+		startTime time.Time,
+		endTime time.Time,
+		timeout time.Duration,
+		isResume bool,
+		demandFilesystemBoot bool,
+		creationMeta sandbox.CreationMetadata,
+		options ...orchestrator.CreateOption,
+	) (sandbox.Sandbox, *api.APIError)
+}
+
+func (a *APIStore) createBackend() sandboxCreator {
+	if a.createBackendOverride != nil {
+		return a.createBackendOverride
+	}
+
+	return a.orchestrator
+}
+
 func (a *APIStore) startSandbox(
 	ctx context.Context,
 	sandboxID string,
@@ -72,7 +98,7 @@ func (a *APIStore) startSandboxInternal(
 
 	creationMeta := buildCreationMetadata(team, requestHeader, isResume, mcp)
 
-	sbx, instanceErr := a.orchestrator.CreateSandbox(
+	sbx, instanceErr := a.createBackend().CreateSandbox(
 		ctx,
 		sandboxID,
 		executionID,
