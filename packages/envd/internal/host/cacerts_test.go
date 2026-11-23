@@ -499,6 +499,26 @@ func TestInstallCACerts_RetainsLegacyDirectoryTrust(t *testing.T) {
 	tr.requireTrust(t, r)
 }
 
+// A retained legacy alias must not keep a wide mode inherited from a template snapshot.
+func TestInstallCACerts_RestrictsRetainedLegacyCert(t *testing.T) {
+	t.Parallel()
+	tr := newTestTrust(t)
+	w := newTestCA(t, "legacy CA")
+	legacy := filepath.Join(tr.certDir, legacyCACertFile)
+	require.NoError(t, os.WriteFile(legacy, []byte(w), 0o644))
+	// WriteFile applies the umask, so set the snapshot-like mode explicitly.
+	require.NoError(t, os.Chmod(legacy, 0o777))
+	c := tr.installer()
+	tr.install(t, c, w)
+	info, err := os.Stat(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+	data, err := os.ReadFile(legacy)
+	require.NoError(t, err)
+	assert.Equal(t, w, string(data), "the retained alias keeps the trusted certificate")
+	tr.requireBundle(t, w)
+}
+
 func TestInstallCACerts_NormalizesPreexistingRequestedRoot(t *testing.T) {
 	t.Parallel()
 	tr := newTestTrust(t)

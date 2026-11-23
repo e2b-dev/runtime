@@ -346,6 +346,11 @@ func (c *CACertInstaller) removeLegacyCert(ctx context.Context, path string) err
 	if parseErr == nil && len(legacy) == 1 {
 		for _, cert := range c.requested {
 			if cert.Fingerprint == legacy[0].Fingerprint {
+				// The alias can arrive from a template with a wide mode; keep it readable, not writable.
+				if err := os.Chmod(path, 0o644); err != nil {
+					return fmt.Errorf("restrict legacy CA cert: %w", err)
+				}
+
 				return nil
 			}
 		}
