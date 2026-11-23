@@ -144,7 +144,7 @@ require (
 	github.com/miekg/dns v1.1.73 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/ngrok/firewall_toolkit v0.0.18 // indirect
-	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
+	github.com/oapi-codegen/oapi-codegen/v2 v2.8.2 // indirect
 	github.com/onsi/ginkgo v1.16.5 // indirect
 	github.com/onsi/gomega v1.38.2 // indirect
 	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect
