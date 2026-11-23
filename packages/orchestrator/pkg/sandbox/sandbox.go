@@ -2615,7 +2615,7 @@ func (f *Factory) ResumeSandbox(
 	// Collect a final stats sample on cleanup while the cgroup is still alive.
 	cleanup.Add(ctx, func(ctx context.Context) error {
 		if sbx.hostStatsCollector != nil {
-			sbx.hostStatsCollector.Stop(ctx)
+			stopHostStatsAfterMemory(ctx, sbx.hostStatsCollector, fcUffd.Exit().WaitWithContext)
 		}
 
 		return nil
@@ -2910,18 +2910,17 @@ func (s *Sandbox) MemoryHandlerErr() error {
 	}
 }
 
-// MemoryPageStates returns the guest memory in each page-tracker state, in
-// bytes, and false when no page tracker serves the guest.
-func (s *Sandbox) MemoryPageStates() ([block.NumStates]int64, bool) {
+// MemoryUsage returns false when this lifecycle has no ready page tracker.
+func (s *Sandbox) MemoryUsage() (block.MemoryUsage, bool) {
 	if s.Resources == nil {
-		return [block.NumStates]int64{}, false
+		return block.MemoryUsage{}, false
 	}
-	reporter, ok := s.memory.(uffd.PageStateReporter)
+	reporter, ok := s.memory.(uffd.MemoryUsageReporter)
 	if !ok {
-		return [block.NumStates]int64{}, false
+		return block.MemoryUsage{}, false
 	}
 
-	return reporter.PageStateBytes()
+	return reporter.MemoryUsage()
 }
 
 func (s *Sandbox) Close(ctx context.Context) error {

@@ -533,3 +533,14 @@ func (c *CoW) Sweep(_ *testharness.Empty, reply *testharness.CoWSweepReply) erro
 
 	return nil
 }
+
+func (p *Paging) MemoryUsage(_ *testharness.Empty, reply *testharness.MemoryUsageReply) error {
+	p.state.mu.Lock()
+	u := p.state.uffd
+	p.state.mu.Unlock()
+	usage := u.MemoryUsage()
+	reply.HeldBytes = usage.HeldBytes()
+	reply.HeldMiBMillis = usage.HeldMiBMillis
+
+	return nil
+}

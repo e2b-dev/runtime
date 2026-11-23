@@ -76,9 +76,9 @@ type Uffd struct {
 }
 
 var (
-	_ MemoryBackend     = (*Uffd)(nil)
-	_ CoWExporter       = (*Uffd)(nil)
-	_ PageStateReporter = (*Uffd)(nil)
+	_ MemoryBackend       = (*Uffd)(nil)
+	_ CoWExporter         = (*Uffd)(nil)
+	_ MemoryUsageReporter = (*Uffd)(nil)
 )
 
 // New builds a UFFD memory backend. lg is required and is expected to carry
@@ -525,15 +525,14 @@ func (u *Uffd) PeekMemfd(_ context.Context) *block.Memfd {
 	return u.memfd.Load()
 }
 
-// PageStateBytes returns the guest memory in each page-tracker state, in
-// bytes, and false until Firecracker has connected.
-func (u *Uffd) PageStateBytes() ([block.NumStates]int64, bool) {
+// MemoryUsage remains available after the handler closes, with its final total.
+func (u *Uffd) MemoryUsage() (block.MemoryUsage, bool) {
 	handler, err := u.handler.Result()
 	if err != nil {
-		return [block.NumStates]int64{}, false
+		return block.MemoryUsage{}, false
 	}
 
-	return handler.PageStateBytes(), true
+	return handler.MemoryUsage(), true
 }
 
 var _ BalloonModeLabeler = (*Uffd)(nil)

@@ -119,3 +119,9 @@ type CoWSweepReply struct {
 	SweepError  string
 	CancelCause string
 }
+
+// MemoryUsageReply carries the handler's cumulative installed memory measurement.
+type MemoryUsageReply struct {
+	HeldBytes     uint64
+	HeldMiBMillis uint64
+}

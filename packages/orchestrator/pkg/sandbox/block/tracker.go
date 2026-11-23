@@ -4,6 +4,7 @@ package block
 
 import (
 	"sync"
+	"time"
 
 	"github.com/RoaringBitmap/roaring/v2"
 )
@@ -78,6 +79,7 @@ func (s State) String() string {
 type Tracker struct {
 	mu                                      sync.RWMutex
 	dirty, zero, removed, clean, installing *roaring.Bitmap
+	memory                                  *heldMemory
 }
 
 func NewTracker() *Tracker {
@@ -88,6 +90,15 @@ func NewTracker() *Tracker {
 		clean:      roaring.New(),
 		installing: roaring.New(),
 	}
+}
+
+// NewMemoryTracker accounts for installed pages using the region's page size.
+func NewMemoryTracker(pageBytes uint64) *Tracker {
+	t := NewTracker()
+	origin := time.Now()
+	t.memory = &heldMemory{pageBytes: pageBytes, now: func() time.Duration { return time.Since(origin) }, anomalies: heldMemoryAnomalies}
+
+	return t
 }
 
 // BeginInstall claims idx for a demand-fault install. A NotPresent page
@@ -133,11 +144,18 @@ func (t *Tracker) SetRange(start, end uint32, state State) {
 		return
 	}
 
+	var anomalies memoryAnomalies
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer func() {
+		t.mu.Unlock()
+		if anomalies != 0 {
+			anomalies.report(t.memory.anomalies)
+		}
+	}()
 
 	s, e := uint64(start), uint64(end)
 	target := t.bitmapFor(state)
+	anomalies |= t.changeHeldRange(s, e, state)
 	for _, bm := range []*roaring.Bitmap{t.dirty, t.zero, t.removed, t.clean, t.installing} {
 		if bm == target {
 			bm.AddRange(s, e)
@@ -160,8 +178,14 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 		return
 	}
 
+	var anomalies memoryAnomalies
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer func() {
+		t.mu.Unlock()
+		if anomalies != 0 {
+			anomalies.report(t.memory.anomalies)
+		}
+	}()
 
 	// Single-page fast path: every fault-path caller passes one page, and
 	// the mask algebra below costs several bitmap allocations per call
@@ -169,12 +193,15 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 	if end-start == 1 {
 		switch t.stateOf(start) {
 		case Removed:
+			anomalies |= t.changeHeld(1)
 			t.removed.Remove(start)
 			t.bitmapFor(state).Add(start)
 		case Installing:
+			anomalies |= t.changeHeld(1)
 			t.installing.Remove(start)
 			t.bitmapFor(state).Add(start)
 		case NotPresent:
+			anomalies |= t.changeHeld(1)
 			t.bitmapFor(state).Add(start)
 		case Dirty, Zero, Clean, numStates:
 			// Installed states are never downgraded.
@@ -190,6 +217,7 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 	mask.AndNot(t.zero)
 	mask.AndNot(t.clean)
 	// mask now holds the Removed, Installing and NotPresent indices of the range.
+	anomalies |= t.changeHeld(int64(mask.GetCardinality()))
 	t.removed.AndNot(mask)
 	t.installing.AndNot(mask)
 	t.bitmapFor(state).Or(mask)
@@ -209,8 +237,14 @@ func (t *Tracker) MarkInstalled(start, end uint32, state State) {
 //
 // Returns the state the page was in before the call.
 func (t *Tracker) MarkWritten(idx uint32) (prev State) {
+	var anomalies memoryAnomalies
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer func() {
+		t.mu.Unlock()
+		if anomalies != 0 {
+			anomalies.report(t.memory.anomalies)
+		}
+	}()
 
 	prev = t.stateOf(idx)
 	switch prev {
@@ -224,6 +258,9 @@ func (t *Tracker) MarkWritten(idx uint32) (prev State) {
 		t.installing.Remove(idx)
 	case NotPresent, numStates:
 		// NotPresent: promotion sticks (see doc); numStates is unreachable.
+	}
+	if prev != Clean && prev != Zero {
+		anomalies |= t.changeHeld(1)
 	}
 	t.dirty.Add(idx)
 
@@ -240,8 +277,14 @@ func (t *Tracker) MarkWritten(idx uint32) (prev State) {
 //
 // Returns the state the page was in before the call.
 func (t *Tracker) MarkWrittenPresent(idx uint32) (prev State) {
+	var anomalies memoryAnomalies
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	defer func() {
+		t.mu.Unlock()
+		if anomalies != 0 {
+			anomalies.report(t.memory.anomalies)
+		}
+	}()
 
 	prev = t.stateOf(idx)
 	if prev == Dirty {
@@ -251,6 +294,9 @@ func (t *Tracker) MarkWrittenPresent(idx uint32) (prev State) {
 	t.removed.Remove(idx)
 	t.clean.Remove(idx)
 	t.installing.Remove(idx)
+	if prev != Clean && prev != Zero {
+		anomalies |= t.changeHeld(1)
+	}
 	t.dirty.Add(idx)
 
 	return prev
@@ -379,6 +425,10 @@ func (t *Tracker) Counts() (counts [NumStates]uint64) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
+	return t.countsLocked()
+}
+
+func (t *Tracker) countsLocked() (counts [NumStates]uint64) {
 	for state := range numStates {
 		if bm := t.bitmapFor(state); bm != nil {
 			counts[state] = bm.GetCardinality()

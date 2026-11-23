@@ -285,7 +285,7 @@ func NewUserfaultfdFromFd(fd uintptr, src PageReader, m *memory.Mapping, generat
 		fd:              Fd(fd),
 		src:             src,
 		pageSize:        pageSize,
-		pageTracker:     block.NewTracker(),
+		pageTracker:     block.NewMemoryTracker(uint64(pageSize)),
 		prefetchTracker: block.NewPrefetchTracker(int64(pageSize)),
 		ma:              m,
 		wakeupPipe:      wakeupPipe,
@@ -1248,21 +1248,19 @@ func (u *Userfaultfd) PageSize() int64 {
 	return int64(u.pageSize)
 }
 
-// PageStateBytes returns the registered guest memory in each page-tracker
-// state, in bytes. NotPresent is what no other state covers: memory the guest
-// has not faulted in.
-func (u *Userfaultfd) PageStateBytes() (bytes [block.NumStates]int64) {
+// MemoryUsage includes every registered region, including memory not yet installed.
+func (u *Userfaultfd) MemoryUsage() block.MemoryUsage {
+	usage := u.pageTracker.MemoryUsage()
 	var guest, tracked int64
 	for _, r := range u.ma.Regions {
 		guest += int64(r.Size)
 	}
-	for state, pages := range u.pageTracker.Counts() {
-		bytes[state] = int64(pages) * int64(u.pageSize)
-		tracked += bytes[state]
+	for _, bytes := range usage.PageStateBytes {
+		tracked += bytes
 	}
-	bytes[block.NotPresent] = max(0, guest-tracked)
+	usage.PageStateBytes[block.NotPresent] = max(0, guest-tracked)
 
-	return bytes
+	return usage
 }
 
 func (u *Userfaultfd) Close() error {
@@ -1281,6 +1279,7 @@ func (u *Userfaultfd) Close() error {
 		return nil
 	}
 	u.closed = true
+	u.pageTracker.StopMemoryUsage()
 
 	syscall.Close(u.wakeupPipe[0])
 	syscall.Close(u.wakeupPipe[1])

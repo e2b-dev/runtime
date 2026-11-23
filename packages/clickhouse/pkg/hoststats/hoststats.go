@@ -35,6 +35,13 @@ type SandboxHostStat struct {
 	DeltaCgroupCPUSystemUsec uint64 `ch:"delta_cgroup_cpu_system_usec"`
 	IntervalUs               uint64 `ch:"interval_us"` // microseconds since previous sample
 
+	// In-memory only; the ClickHouse insert does not persist these fields.
+	// GuestMemoryMeasured is false without a page tracker and on the zero baseline row.
+	GuestMemoryMeasured           bool   `ch:"-"`
+	GuestMemoryHeldBytes          uint64 `ch:"-"`
+	GuestMemoryHeldMiBMillis      uint64 `ch:"-"`
+	DeltaGuestMemoryHeldMiBMillis uint64 `ch:"-"`
+
 	SandboxType string `ch:"sandbox_type"` // "sandbox" or "build"
 }
 
