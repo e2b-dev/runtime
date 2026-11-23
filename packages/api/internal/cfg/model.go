@@ -198,8 +198,7 @@ type Config struct {
 	// Self-hosted deployments whose teams start each other's templates set it true.
 	TemplatesDefaultPublic bool `env:"TEMPLATES_DEFAULT_PUBLIC"`
 
-	// OutboxMaxWorkers is how many River outbox jobs one API replica works at
-	// once.
+	// OutboxMaxWorkers limits concurrent jobs on the default queue per replica.
 	OutboxMaxWorkers int `env:"OUTBOX_MAX_WORKERS" envDefault:"10"`
 	// OutboxBacklogInterval is how often the outbox backlog gauges are read
 	// from the database.

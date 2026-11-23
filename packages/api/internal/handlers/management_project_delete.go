@@ -71,6 +71,11 @@ func (a *APIStore) deleteProject(ctx context.Context, projectID uuid.UUID) ([]st
 	if _, err := a.riverClient.InsertTx(ctx, tx, outbox.TeardownTeamResources{TeamID: projectID}, nil); err != nil {
 		return nil, fmt.Errorf("enqueue team teardown: %w", err)
 	}
+	if a.webhookManagement != nil {
+		if _, err := a.riverClient.InsertTx(ctx, tx, outbox.RetireProjectWebhooks{ProjectID: projectID}, nil); err != nil {
+			return nil, fmt.Errorf("enqueue webhook retirement: %w", err)
+		}
+	}
 	// The deletion clears the project's cluster. Without a cluster service
 	// no project has one.
 	if a.clusterService != nil {

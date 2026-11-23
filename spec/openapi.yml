@@ -8027,13 +8027,14 @@ paths:
         204 and repeats every step except the deletion time: it re-blocks and
         re-scrubs the project, clears a cluster assignment written since,
         deletes any memberships, keys, templates or snapshots created since,
-        and enqueues the teardown again.
+        and enqueues the teardown again. When webhooks are configured, the
+        deletion transaction also queues retirement of the project's subscriptions.
       tags: [admin]
       security:
         - AdminJWTAuth: []
       responses:
         "204":
-          description: Project is deleted and its teardown is enqueued.
+          description: Project is deleted and cleanup is durably queued. Webhook retirement may still be pending.
         "400":
           $ref: "#/components/responses/400"
         "401":

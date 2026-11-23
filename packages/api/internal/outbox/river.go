@@ -21,6 +21,7 @@ import (
 	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
+	webhooksgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -43,6 +44,7 @@ type Config struct {
 }
 
 type Dependencies struct {
+	Webhooks    webhooksgrpc.WebhookManagementServiceClient
 	Pool        *pgxpool.Pool
 	Sandboxes   teamSandboxes
 	Containment teamContainer
@@ -66,6 +68,15 @@ func New(deps Dependencies) (*River, error) {
 	steps := sharedriver.NewSteps(deps.Telemetry, deps.Logger, sharedriver.StepsConfig{MetricPrefix: "api"})
 
 	workers := river.NewWorkers()
+	// The leader rescues jobs from every queue, including ones it does not consume.
+	river.AddWorker(workers, &retireProjectWebhooksWorker{
+		client: deps.Webhooks,
+		steps:  steps.Job(outbox.RetireProjectWebhooks{}.Kind()),
+	})
+	queues := map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: deps.Config.MaxWorkers}}
+	if deps.Webhooks != nil {
+		queues[outbox.WebhookRetirementQueue] = river.QueueConfig{MaxWorkers: 1}
+	}
 	river.AddWorker(workers, &teamResourcesTeardownWorker{
 		sandboxes: deps.Sandboxes,
 		teams:     deps.Teams,
@@ -105,7 +116,7 @@ func New(deps Dependencies) (*River, error) {
 
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
-		Queues:               map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: deps.Config.MaxWorkers}},
+		Queues:               queues,
 		Workers:              workers,
 		PeriodicJobs:         periodicJobs,
 		Plugins:              []rivertype.Plugin{sharedriver.NewOTelMiddleware(deps.Telemetry)},
@@ -126,7 +137,7 @@ func New(deps Dependencies) (*River, error) {
 
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind(), outbox.SweepTeamClusterAssignments{}.Kind()},
+		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.RetireProjectWebhooks{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind(), outbox.SweepTeamClusterAssignments{}.Kind()},
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {

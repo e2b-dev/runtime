@@ -21,8 +21,12 @@ func (TeardownTeamResources) Kind() string { return "teardown_team_resources" }
 // InsertOpts makes a repeat enqueue for a team a no-op while its teardown is
 // still open; once it finishes, a new one can be enqueued.
 func (TeardownTeamResources) InsertOpts() river.InsertOpts {
+	return teardownInsertOpts(river.QueueDefault)
+}
+
+func teardownInsertOpts(queue string) river.InsertOpts {
 	return river.InsertOpts{
-		Queue:    river.QueueDefault,
+		Queue:    queue,
 		Priority: sharedriver.PriorityNormal,
 		// At a 15-minute retry cap this keeps a teardown retrying for about a
 		// day before River discards it.

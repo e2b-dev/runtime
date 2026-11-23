@@ -560,6 +560,7 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
 	riverOutbox, err := outbox.New(outbox.Dependencies{
 		Pool:        a.sqlcDB.Pool(),
+		Webhooks:    a.webhookManagement,
 		Sandboxes:   a.orchestrator,
 		Containment: a.teamService,
 		TeamCache:   a.authService,

@@ -5537,7 +5537,7 @@ type ClientInterface interface {
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
-	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again. When webhooks are configured, the deletion transaction also queues retirement of the project's subscriptions.
 	//
 	// Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
 	ManagementDeleteProject(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8086,7 +8086,7 @@ func (c *Client) ManagementRemoveClusterRegistration(ctx context.Context, cluste
 
 // ManagementDeleteProject Soft-delete a project.
 //
-// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again. When webhooks are configured, the deletion transaction also queues retirement of the project's subscriptions.
 //
 // Corresponds with DELETE /unstable/management/projects/{projectID} (the `ManagementDeleteProject` operationId).
 func (c *Client) ManagementDeleteProject(ctx context.Context, projectID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16220,7 +16220,7 @@ type ClientWithResponsesInterface interface {
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
-	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+	// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again. When webhooks are configured, the deletion transaction also queues retirement of the project's subscriptions.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28423,7 +28423,7 @@ func (c *ClientWithResponses) ManagementRemoveClusterRegistrationWithResponse(ct
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
 //
-// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again.
+// Marks the project deleted and blocked, releases its cluster assignment, scrubs its name and email to DELETED and its slug to deleted-<project ID>, which releases the old slug for reuse, deletes its memberships and API keys, soft-deletes its templates and snapshots, and enqueues the teardown of its running sandboxes, all in one transaction. The project row remains. Afterwards the project answers 404 to other management writes. Repeating the call answers 204 and repeats every step except the deletion time: it re-blocks and re-scrubs the project, clears a cluster assignment written since, deletes any memberships, keys, templates or snapshots created since, and enqueues the teardown again. When webhooks are configured, the deletion transaction also queues retirement of the project's subscriptions.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -42875,70 +42875,71 @@ var swaggerSpec = []string{
 	"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",
-	"+FjG7jx6HgOuzIwfpP8sMIn2Zs2kuyYHcdIPtagQUwEhi5tWGr+efPI7cdbqjx+tSabm/YM4WSJJQ+BH",
-	"N5Tspu/YPy2NKG187DfvlFzP5uahSb+SR3JnNSmREOtTR3cUapZUhvluAIduMsJm0ILcJ0/wk993IE14",
-	"DN7uo9fbVoAwjXE6xErxCy4LEBWaF1KFWOvVvKWwpSSNVRRGfzjXVZHvfBS2XPUtyzV/TG2p6Zcv2z5q",
-	"ScbUZY2Z65nONiKQT8B292wqbd6IlXTRA5XyK03YXpSMS3sLpqkTHrouD6IkXnBRuVuWspBeSDx/MqSE",
-	"F/cZJwm/MNqlLY6W8CAh2vSk+/K5usDJHaoKqdzbji1mN62tKH57ZCF1G+AY17tyrjcLJxYRdjrH3LCD",
-	"S6nMc/TNLbC2VMlCbqK6kTT4jllakQfhG9VvsBnLy5nAFViIOk4Vu4gOASkH4sPKWInbd93sLZfFyvGy",
-	"l1zd1YWzbTrkH5I5twkkCDxYGqXS9HGlplqK0oj8DyDo4CHW3MZlCSd8uTbnAZn6O+A93qh2Jgu8KjCH",
-	"nX+DQVte2TmDBbsiss60Jy0rhI1KNQDcSovatW+fYvFw7opmYbJrUy0Mck+3vXRbg+falItF0szXId1B",
-	"r5s3tMA7Ql8321UR9/V0KsgMSHBFhz2zUtm81Er+6w+ArR+DXCvasCAvlpsSdp0c+Pi3ygQfy7tC4XFy",
-	"bFrIrVxre8gBXR11Eh1zYWAOck9UGaWZ0qq+MwhAN3hFDbxu3uK8d0WwNBvOf91b523Q33kYevh8F/fP",
-	"t2BAoLsKsPBClIBeIm/hYwTaa7MAIyxoe8y3IXhGOWq9m2nYu18py3VWkR7Zi3gxIQJpl2Sdt3PhM0z7",
-	"FlTtFvXGfjheCp8gacLeI5VjRukOmRtnxomGDUupVMjw8ZrU6CHAAURNib9JdcELWed3yDhFj2NGu5uV",
-	"XQ+FJ+5Df8B3xEz8fNflJB/axw7ndC/FNqXYAJyA31vwAysKsQAd3GNXt77XEQMPzzDOciwyzBaVrXjB",
-	"jt4cMpefHIgvlLoDP0s5q0rEbTcHvgUjZ3qZC2WlXU0YhatQwlbSIk01GrxEHloxpzkMmQf8dVs7XoE1",
-	"HQOyQyoDb3nC3dX3cr3grBQ4Pi+iLAe1w0A9RMtXD1ehiY+sI8Ijv/l3CN9b1Oy3ZkopfF2hxgAmhMrk",
-	"rvw1WvItz/uOaYrebW43CWwejz7vEPrt2MLstBhLA9XTBSXJUXaQ15FzMqRyiHXMBjo/NKr5jplUWVHl",
-	"gCNlpZxX+hwuC8+mhMp9JTivV0EztFbS6hIrKRR6RliHjn8Gq07S48fFfVgu1ZocUnzh3ZLWLHVtzZtu",
-	"IUfSBX2rZRzdMt0it8oKXJdNpr73oYY9N9JVAguTxSBLj0qeogN9tu+oVpGDWr0ylGLrZ7N3qXXvZ7B4",
-	"QJudqIoJSofk2w+huUCuDCtfu/Q4m0tFReUKgqZl2/xYfHHbxEKl0GB52wfBBwbjzuKeXG6SXMbXKTdV",
-	"eIwLFyW0XU9RFCy/kaJiA0CzsktUSc3faSuXbdT9fOuURhkdvllKo+Vdg9LI29LlNbgnuG+H4JoHs4nu",
-	"fPI5V+dhcPap0JNZPSMyDCknoiyky+qskFk3Gam3x2W8LFfsVPokjs8ZyMmnLo8VLWrMOIPX45ks4Knl",
-	"ElpRfHtp8WnUGj08wwpJJWu1C5vUCh6JInfUHvyCKQpaGwr1wfRX3nfYBRDCMv8lSg2cBYuVV4bPBJtK",
-	"gTno4hIgcUIuVqkCTuMUlnrKDF8Z8oW8lEa8GJBby4dNIx9C9UwNZ8MXwo186wk9Qoa8Q18Q5GoZNn3/",
-	"L+MtuujSbtXhA2LdVl0G5+8KPe4ihZeHOgHtqtzaLfh3UBD2e8gr0ipWkk4tAmoCvpQ74HK0HD0fFVQD",
-	"eDx6fPG0VgysZcfoql03TdDu354eRp/XZrR8KyzH9zzVakYHCqs9r40epFCtRExmE3aMtrD/5GcZeLk/",
-	"/RNfLv9zWer8ePRowl5DZepzsULudcELYGqLymCU96ePb5hQmc5JOZXKkLlwqxnFWvuEga5dOwoXWy/0",
-	"jMwUPiIOLVwACfF5WehcjJ5PeWFEegnYeDTetjyQA/ihdSkwm2WBxiNjVwX8ANfjqLsF4HROiSm1gg00",
-	"fFHQxz3cd4ZCD0zGHsZXzqM+qGKi2MaW1u3kPbR+5ZeSgjeJ4RG8cY2gfrRxagBpcNnG8sWyb2muJ8YS",
-	"jJKmmpxbsQPjpE21mzGBJ6te9S3It92Egb+n0lZvUFhyGHz1mlbAljrelzdT0mo8+u+dI215sfORJtjY",
-	"GVv7xrdaEuv+BmwGN0b3xcXTR2m1WvoW7Cvdte+D9zxPDAadOq3dHtyJK2PFAjN3VMq7HkdCM3WWhiFk",
-	"UyYSqDGyxeX53ufaRYWCyfRS5Hj7UWyXLVcRLdQh8eyTEewJMPGnP/7I6hJge4f7BwfHqlMJTJdsvlrO",
-	"hTLsId/515jt7vw0ZjuPxmDMnWMKg2gUyAA+Yb9gmRVffjtbUdgPyCD5+FiF0nPe27kEC/eqkUSJ3pEU",
-	"Radz2hPZtK1QCNqlKKVGhYrf2rHydZLhqpWZtMWKZQU3Rk4lZZUyfIql1hA87GHsnU9vwEcwLvlXsWkp",
-	"zPxYcQsHbVsPIC9m1EcEKRici4LvknGFxgbMcYG36LF6JaeYBizk34qGcOyMStXAdKIsdXkCUksMzhPX",
-	"82QhDQJzcqz2FJNqZ1nqWSlMJ1nMxhGlOvF9XzCuWKXOlb5Ux0pXNtMLUQ/09OnagVz7EzcA+qQbEY7a",
-	"pZ8Qn0VWuWRhfqkUkXasPrabWqHy+uAxEZk7HA/oB/WGc8HzQipQB1SGeb52rJaiNHDTqMwXtWaXcPgY",
-	"1OfeLORG7zCTZsNK3ph1QurK0KZd2euCrwSked8LyYgAJ8TnpSxB0yDp+EmColjfQIPHygsAdGXUEsBB",
-	"Dcqdv4pVQxBY8M8+P/vTH38ct/K1LwEWJYz5v//Od/61u/PTzq//49/urlbvO3HpWNffnt51TaIgPaRj",
-	"+T0PhBwHIUAykiKiJ+rtxhe95EHXe2NhQldSa97uNn/W5ZnMc6FudJM/3P7C3/nqDTe68DvK1tJiHSGv",
-	"l/HpBvLOzfNw4P3yKOTPCnd3SIzgx+oY2R3qsZWwXp0IC5GK8vF9XmIisLrdpVS5vmQPN99Qj140M6Jd",
-	"chPfKjldJTd5hk+f3s0ZXgG8IcFhB6DhKoS+S24MWagwpBEvZ/Zw2CX+FeB9FzSjNVtAFJ3bVuu1iMvZ",
-	"Id1A51GAAi75R1sSEVSFPqh6CvK9xnLiGrOp+kCfIJFHMs8E1UIchN7R82e7rWIsclEtRs93ww0ulRUz",
-	"UeLz7Frg/fEu7rpDUUK6IMSwG0SNO4kDPnTueFHo741u4Ye7EDWyc5Cb4dWhK3t7Ucnfg2rAveG9HNiv",
-	"GujowhtOcs5Jsr+aaUh35ybyOdt97uRIC0CZpvGZcAl+bBhBbqoF+AgcHb0Jxjd6/uCv0VsJ38TQxOkA",
-	"8M3mfC/9kXvzJ3KiZ7u7njHFTtXdR6Fb4olPKXIyQ0mAz4SyJ5Vylws4EdXu2I2k2eB/6/riRYFVvV1A",
-	"M9xTM/fYE6q+SGjU3Bse41dhLnNsws05KgFOF2Kh4bWOWvTTjVqU4LO37w7vuk57N/9ycitrvJ6+3L5/",
-	"4JDXkvfTLL0uc/y13m2OOPrebd9NfMztKGy3SZYYLqBNbX/4ThXBjp6uze7B87jXFvpnUU+ADddbQgMb",
-	"ekNtr8yDusY7y0vKZOXNXd63GZZFPtcG73C6Y5y9RCq2kEUh3aXQY5DKyNsgaRuTyv7ph9F4g6TazZj2",
-	"GVpH8vK6ZfYsC737Gqtyd93o+ZPd3d1xY5HPnsIiaVr/fbs1B3vkEMj2LDmYVwebQgFT1lpC39ImYDWs",
-	"EBeicJrtqlQTBr3ZmSj0Jb3dqAFH5Tg45ffDFhpus8g32CGxvn1uxI4Rykh0OjbVGekg6ZXLtMKVL4RB",
-	"nyZ/oaRXZbz/T4869E93W7DSkTMA+W9Pr+Yg02Aet3k53VsI2z73SL6bb4Xal2ajQ0zdNHkNHEWfU+Gk",
-	"HTcA9MZt8rd43gMM0JpKYqDeP3IMFi4QscEIh5oeG1wh6+yQ7OGy/MfJo7RDw+/JsSAqv3kNn4L4ZG/A",
-	"l+DLfaW8b7SgpTvmNl8IHzZ4z4V2j3/z/1xXRA/Ex8g36Iy8/YlsgQuM61rU3ouZSkJhWIFzoZXWufWG",
-	"cqnruc9Nlqq/ZddTb0Pc1t30PiTgu6ZFf/xMqqnemhTRCE7hBE28cVXzI/e6ls4Iut0Sody8vsivjnb1",
-	"lbKmthfRLwIfNSrsc8Mq7HKHqpx7+vL01SKENRS2/l5LVotN68QPyYUYkl1C2wn7xdWKb9mrx86nxoSI",
-	"FLSg6fI8KvflyiJyQ+Wc4SewsaGjWzqTEKmDE5R9vVqxMZmPh1eW3dw0MsOC/89t85CXru58aYd67TxN",
-	"V92qT8Z5Vf8+nGpud+mtRLU3bSu9d/a5d/a5d/a5d/b5Lpx9thHP7j1Xvobnyvep8yXxMyhaUEzZJPY+",
-	"a+p+NwSGgGt3iAVJC6DP1miAv0GB0L0p//ZsC5HwRlfhFuCflX4hfWInOQj4aubftmt3J7DvTOtCcDX6",
-	"8i3LnRtX/e1ImhuXegci2r4Tx6630rsQRD6pZamBXDBp/Y1g8L3z7pbOuxsA+o0JPRtX+y2KOWsX/T37",
-	"tEaqvGdrZRpdVIthpmy+YL51yp4UPt2+CZfm2tqA6/LvdHZzrze+po20gRke0/wvV42rJvE5DJ0WoCOk",
-	"u5XQRY9pdxu3SLPuqTzyDliD1z52sQuze+vJnbLcGFk7ZBCz28e/0T82lJF95YtErqMDauQo4W9u2K2f",
-	"k349KTN+sjpyhH8h0XMX9+59124Z9xyKbMK9cb+7SdQVzetrLvdbwa7dr8U2KffAxT3ifiWXjg3cEncF",
-	"jw/CsKosRs9Hc2uX5vnjx3wpJ+Lp2YQvl4hTrv9v7YxJBm2r7sfalzP6ERNRxn8v5Q6Ufox/w9Gjv2vB",
-	"sR5bZKWwBmqI//8HAA==",
+	"+FjG7jx6HgOuzIwfpP8sMIn2hP0yF4pdirO51udkBAB1gJxVJeBtc6f1wVAyKTdsKawsCbx6Gm8XIrir",
+	"s0AuA/Sg7lIexLc/1IJJTHMAYVUt8eeq5GfFitaZT9gvtM14wWB1JCH1TLClUDn4Ff1OnMj641prUq7v",
+	"pEEcNpE8IvDJG0rC04cgn5ZGlDZGkJt3lq5nc/PQpF/JU7qzmpSoinWzo7sTNV4qwzw8gEM3GfkzaEHu",
+	"k2dEk993gE94pN7uY9zbfIAwjXG6zUrxCy4LEGGaF2WFWOvVz6WwpSRNWhTefzjXVZHvfBS2XPUtyzV/",
+	"TG2p6Zcv2z62SfbVZY2Z65nONqKZTwx392wqbXaJlYfRw5nyPk3YXpQkTHvLqqkTMdb3ZkguBleau/0p",
+	"O+qFxPMnA0/QBJxxxfy1TEnHmvdwR+TqSUPmc4iB8z1UO1K5t2lbzLpaW3f89shy6zbAMd545eSAhRPX",
+	"CDudw3DYwaVU5jn6DBdY86pkIWdS3UgafF8trcjDowDVgrAZy8uZwBVYiIZOFeGIDgEpB+LWyli53Hfd",
+	"7C2Xxcrxspdc3dWFs22a5h+SucAJJAg8WBql+PTxrqZaitKI/Bvizbcl6OAh1tzGZS8nfLk25wFZ/zvg",
+	"Pd7YdyYLvCowt55/G0JbXtk5gwW74rbO5CgtK4SNSkgA3EqLWr9vn2LxcO6KZmGya1MtDHJPt710W4Pn",
+	"2pSLxdvM1yHdQa+bN7TAO0JfN9tVEff1dCrIPElwRR2CWalsXmol//UHwNaPQa4VbViQd81NCbtODnz8",
+	"W2WC7+ddofA4OTYt5FautT3kgK6+O4mOuTAwB7lNqozSX2lV3xkEoBu8ogZeN29x3rsiWJoN57/urfM2",
+	"6BU9DD18vov751swbNBdBVh4IUpAL5G38DEC7bVZgBEWtD3m2xA8o9y53v017N2vlOU6q0i/7UW8mBCB",
+	"tEvyGrBz4TNf+xZUhRf12X44XgqfuGnC3iOVY6brDpkbZ16Khg1LqVTIPPKa1Psh8AJETYm/SXXBC1nn",
+	"ncg4RbVjpr2blV0PhSfuQ3/Ad8RM/HzX5SQf2scO53QvxTal2ACcgN9b8AMrCrEAHdxjV0+/10EED88w",
+	"znIsfswWla14wY7eHDKXNx2IL5Tgqw0+LMyBb8HIyV/mQllpVxNGYTSUSJa0SFONhjiRh1bMaQ5DRgR/",
+	"3dYOYWDlx0DxkGLBW8Rwd/W9XC84KwWOz4so+0LtyFAP0fIhxFVo4iPriPDIb/4dwvcWNfutmVIKX1dA",
+	"MoAJoTK5Kz+SlnzL875jmqLXndtNApvHo887hH47tjA7LcbSQPV0oUty4B3kDeWcH6lMYx1Lgk4ZjSrD",
+	"YyZVVlRg64Ovzlt+DpeFZ1NC5b5CnderoHlcK2l1iRUeCj0jrEOHRIPVMOnx4+JRLJdqTW4rvvDuUmuW",
+	"urYWT7fAJOmCvtXykm6ZbpFbZSuuyzlT3/sQyJ4b6SoBj8kilaVHJU/RgT7bd1Sr+EKtXhlKsfWz2bv6",
+	"uvczWDygzU5UXQWlQ4o5AOM9kCvDitwubc/mElZRGYWgadk2bxdf3DaxUIk2WN72wfmBwbizuCeXmySX",
+	"8XXKYBUe48JFCW3XUxQF8W+kqNgA0Kw4E1V483faymVBdT/fOqVRpolvltJoedegNPICdfkW7gnu2yG4",
+	"5sFsojufFM/VnxicFSv0ZFbPiAxDKowoO+qyOitk1k2S6u1xGS/LFTuVPrnkcwZy8qnLr0WLGjPO4PV4",
+	"Jgt4arlEWxR3X1p8GrVGD8+wQlIpXe3CObWCR6LIHbUHf2WKztaGQpAwLZf3aXaBjbDMf4lSA2fBIuqV",
+	"4TPBplJgbry4NEmcKIxVqoDTOIWlnjLDV4Z8NC+lES8G5Pzy4dzIh1A9U8PZ8IVwI996opGQue/QFyq5",
+	"WuZP3//LeIsuurRbdfiAWLdVl8F5xUKPu0gt5qFOQLsqt3YL/h0Uqv0e8p20iqikU56AmoAv5Q64HC1H",
+	"z0cF1SYejx5fPK0VA2vZMbqQ100TtPu3p4fR57WZNt8Ky/E9TzWk0YHCas9rowcpVFERk9mEHaMt7D/5",
+	"WQbe90//xJfL/1yWOj8ePZqw11Ax+1yskHtd8AKY2qIyGH3+6eMbJlSmc1JOpTJ3LtxqRrHWPmGga9e0",
+	"wsXWCz0jM4WP1EMLF0BCfF4WOhej51NeGJFeAjYejbctW+QAfmhdas5muaLxyNhVAT/A9TjqbgE4nVNi",
+	"Sq1gAw1fFPS9D/edoZAIk7GH8ZXzqA+qmMC2saV1O3kPrV/5paTgTWJ4BG9cI6gfbZyyQBpctrF8sexb",
+	"muuJMQ6jpKkm51bswDhpU+1mTODJalx9C/JtN2Hg76nk1hsUlhwGX73WFrCljvflzZTaGo/+e+dIW17s",
+	"fKQJNnbG1r7xrZbqur8Bm0GX0X1x8fRRWq2WvgX7Sort+6BCzxODQadOt7cHd+LKWLHAjCKV8q7HkdBM",
+	"naVhCNmUiQRqn2xxeb73OYBRoWAyvRQ53n4Uc2bLVUQLdag++2QEewJM/OmPP7K6NNne4f7BwbHqVCjT",
+	"JZuvlnOhDHvId/41Zrs7P43ZzqMxGHPnmFohGgUyk7toJ+nLgmcr2LZQIIPk42MVSuJ5b+cSLNyrRnIn",
+	"ekdSdJ/OaU9k07ZCIWiXopQaFSp+a8fK12+Gq1Zm0hYrlhXcGDmVlO3K8CmWgEPwsIexdz69AR/BuORf",
+	"xaalMPNjxS0ctG09gLyYUR8RpIZwLgq+S8YVGhsw9wbeosfqlZxierKQFywawrEzKqED04my1OUJSC0x",
+	"OE9cz5OFNAjMybHaU0yqnWWpZ6UwnSQ2G0eU6sT3fcG4YpU6V/pSHStd2UwvRD3Q06drB3LtT9wA6JNu",
+	"RDhqlxZDfBZZ5ZKY+aVSpNyx+thuaoXK64PHBGnucDygH9QbzgXPC6lAHVAZ5vnasVqK0sBNozJfbJtd",
+	"wuFjsKF7s5AbvcNMmo1i8yAbhtSVoU27ctwFXwlIP78XkiQBTojPS1mCpkHS8ZMERTHIgQaPlRcA6Mqo",
+	"JYCDGpQ7fxWrhiCw4J993vinP/44buWRXwIsShjzf/+d7/xrd+ennV//x7/dXQ3hd+LSsa6/Pb3rWklB",
+	"ekjnGPA8EHIvhMDNSIqInqi3G1/0kgdd742FCV1JrXm72/xZl2cyz4W60U3+cPsLf+erStzowu8oi0yL",
+	"dYR8Y8anQcg7N8/DgffLo5DXK9zdIWGDH6tjZHeox1bCenUiLEQqyhP4eYkJyup2l1Ll+pI93HxDPXrR",
+	"zNR2yU18q+R0ldzkGT59ejdneAXwhsSLHYCGqxD6LrkxZKHCkEa8nNnDYZf4V4D3XdCM1mwBUXRuW63X",
+	"Ii5nh3QDnUcBCrjkH21JRFAV+qDqKcj3Gsuca8zy6gN9gkQeyTwTVAtxEHpHz5/ttorEyEW1GD3fDTe4",
+	"VFbMRInPs2uB98e7uOsORQlpjBDDbhA17iQO+NC540Whvze6hR/uQtTIzkFuhleHruztRSV/D6oB94b3",
+	"cmC/aqCjC284yTknyf4qqyENn5vI55L3OZ0jLQBlwMZnwqXLi1EKUy3AR+Do6E0wvtHzB3+N3kr4JoYm",
+	"TgeAbzbne+mP3Js/kRM92931jCl2qu4+Ct0ST3yqk5MZSgJ8JpQ9qZS7XMCJqHbHbiTzBv9b1xcvCqw2",
+	"7gKa4Z6auceeUPVFQqPm3vAYvwpzmWMTbs5RCXC6EAsNr3XUop9u1KIEn719d3jXddq7+ZeTW1nj9fTl",
+	"9v0Dh7yWvJ9m6XWZ46/1bnPE0fdu+27iY25HYbtNEsdwAW1q+8N3qgh29HRtdg+ex7220D+LegJsuN4S",
+	"GtjQG2p7ZR7UNd5ZXlKGLW/u8r7NsCzyuTZ4h9Md4+wlUrGFLArpLoUeg1RG3gZJ25hU9k8/jMYbJNVu",
+	"JrfP0DqSl9cts2dZ6N3XWJW760bPn+zu7o4bi3z2FBZJ0/rv26052COHQLZnycG8OtgUCpiy1hL6ljYB",
+	"q2GFuBCF02xXpZow6M3ORKEv6e1GDTgqx8Epvx+20HCbRb7BDon17XMjdoxQRqLTMeQoQx0kvXKZVrjy",
+	"hTDo0+QvlPSqjPf/6VGH/uluC2k6cgYg/+3p1RxkGszjNi+newth2+ceyXfzrVD70mx0iKmbJq+Bo+hz",
+	"Kpy04waA3rhN/hbPe4ABWlNJDNT7R47BwgUiNhjhUNNjgytknbWSPVyW/zh5lHZo+D05FkRlQa/hUxCf",
+	"7A34Eny5r+D3jRbadMfc5gvhwwbvudDu8W/+n+uK+4H4GPkGnZG3P5EtcIFxXSPbezFTqSoMK3AutNI6",
+	"t95QxnU997nJEvq37HrqbYjbupvehwR817Toj59JNdVbkyIawSmcoIk3rpp/5F7X0hlBt1silJvXF/nV",
+	"0a6+UtbU9iL6ReCjRuV/bliFXe5QlXNPX56+WoSwhsLW32vJKrZpnfghuRBDsktoO2G/uBr2LXv12PnU",
+	"mBCRghY0XZ5HZchcuUZuqMw0/AQ2NnR0S2cSInVwgrKvV8M2JvPx8Iq3m5tGZljw/7ltHvLS1cMv7VCv",
+	"nafpamD1yTiv6t+HU83tLr2VqPambaX3zj73zj73zj73zj7fhbPPNuLZvefK1/Bc+T51viR+BkULiimb",
+	"xN5nTd3vhsAQcO0OsSBpAfTZGg3wNygQujfl355tIRLe6CrcAvyz0i+kT+wkBwFfZf3bdu3uBPadaV0I",
+	"rkZfvmW5c+Oqvx1Jc+NS70BE23fi2PVWeheCyCe1LDWQCyatvxEMvnfe3dJ5dwNAvzGhZ+Nqv0UxZ+2i",
+	"v2ef1kiV92ytTKOLajHMlM0XzLdO2ZPCp9s34dJcWxtwXf6dzm7u9cbXtJE2MMNjmv/lqnHVJD6HodMC",
+	"dIR0txK66DHtbuMWadY9lUfeAWvw2scudmF2bz25U5YbI2uHDGJ2+/g3+seG8ravfJHIdXRAjRwl/M0N",
+	"u/Vz0q8nZcZPVm2O8C8keu7i3r3v2i3jnkORTbg37nc3ibqieX3N5X4r2LX7tdgm5R64uEfcr+TSsYFb",
+	"4q7g8UEYVpXF6Plobu3SPH/8mC/lRDw9m/DlEnHK9f+tnTHJoG3V/Vj7ckY/YiLK+O+l3IHSj/FvOHr0",
+	"dy041mOLrBTWQG3z//8A",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

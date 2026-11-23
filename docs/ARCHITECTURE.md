@@ -264,7 +264,13 @@ image, which E2B Embed runs on port 3001 against the API alone.
   live team row on the primary and hold `FOR SHARE` until the webhook backend answers.
   Project deletion's `FOR UPDATE` waits for that lock. An omitted cluster selects the local one;
   remote webhook writes require the exact project and cluster to match the
-  project's live claim. Without a configured address the routes stay registered and answer 503, so the surface
+  project's live claim. When webhooks are configured, the project deletion transaction enqueues
+  `retire_project_webhooks` alongside sandbox teardown. A `204` confirms that commit. A separate
+  River queue retries retirement over the private webhook connection, so a backend outage does not
+  occupy sandbox teardown workers. Subscriptions can still publish until the backend retires them.
+  Published copies are cleared by repair. The row lock orders acknowledged creates against deletion;
+  if a create loses its connection and commits after cleanup, the idempotent retirement can be replayed.
+  Without a configured address the routes stay registered and answer 503, so the surface
   does not depend on how a deployment is wired. A backend failure the caller cannot act on is
   answered with the endpoint's own message; the outcomes that keep their identity are
   not-found, a rejected request, the webhook-count limit, and a timeout. A create or update
@@ -324,8 +330,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   the operator view that picks a sandbox to migrate. The migration manager decides whether
   a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
-  works jobs that need the orchestrator connections, and one that carries the API's own
-  writes to the cluster service. Its job arguments live in
+  runs workload teardown, webhook retirement, and cluster assignment jobs. Its job arguments live in
   `packages/api/internal/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
@@ -380,7 +385,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   sync. An attempt is bounded at 10 minutes. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
-  `OUTBOX_MAX_WORKERS` (default 10) and `OUTBOX_BACKLOG_INTERVAL` (default 30s) configure it;
+  `OUTBOX_MAX_WORKERS` (default 10) controls the default queue. Each replica configured for
+  webhooks also runs one `webhook_retirement` worker. `OUTBOX_BACKLOG_INTERVAL` defaults to 30s;
   shutdown stops it after the sandbox-work drain, before the database and Redis clients close.
 - Reads ClickHouse for sandbox/team metrics endpoints. Sandbox and template-build logs default to
   Loki, with a LaunchDarkly-gated ClickHouse read path (`logs-read-config`) for local-cluster logs
@@ -487,8 +493,8 @@ may be deleted is the caller's decision. `envs`, `snapshots` and `volumes` refer
 - deletes its memberships and API keys;
 - soft-deletes its templates, snapshot templates and paused-sandbox snapshots the way a template
   deletion does, releasing their aliases and build tracking;
-- enqueues `teardown_team_resources` with `InsertTx` on the outbox's own River client, so the
-  teardown runs exactly when the deletion commits.
+- enqueues `teardown_team_resources` and, when webhooks are configured, `retire_project_webhooks`.
+  If either enqueue fails, the deletion rolls back. Once both commit, the jobs can run independently.
 
 After commit it evicts the deleted keys' auth cache entries best-effort; the team's other cached
 entries refresh or expire on their own. Repeating the call answers 204 and runs every step again,
