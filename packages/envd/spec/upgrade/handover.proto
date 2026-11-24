@@ -57,6 +57,12 @@ message HandoverState {
   // reader that predates this field leaves at most a few zombies, so the field
   // does not raise the schema.
   repeated int32 helper_pids = 10;
+  // localhost_forwarding_off is set when the host turned off forwarding of services
+  // bound to loopback, so the incoming envd keeps it off instead of forwarding them
+  // again until the next /init. False, the value an older writer leaves, means on,
+  // as before the field. A blob that sets it raises the schema, because a reader that
+  // predates the field would forward those services again.
+  bool localhost_forwarding_off = 11;
 }
 
 // HandoverDefaults is the outgoing envd's execcontext.Defaults.

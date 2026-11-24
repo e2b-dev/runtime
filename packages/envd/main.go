@@ -365,7 +365,7 @@ func run(stop <-chan struct{}) error {
 	portScanner := publicport.NewScanner(&portLogger, portScannerInterval)
 	defer portScanner.Destroy()
 
-	portForwarder := publicport.NewForwarder(&portLogger, portScanner, workloadFreezer)
+	portForwarder := publicport.NewForwarder(&portLogger, portScanner, workloadFreezer, publicport.StatePath)
 	if resumeHandover {
 		// Re-adopt the socats carried across the upgrade before the forwarder's
 		// first scan, so it recognizes already-forwarded ports instead of spawning
@@ -374,6 +374,8 @@ func run(stop <-chan struct{}) error {
 			fmt.Fprintf(os.Stderr, "envd: re-adopted %d forwarded port(s) after handover\n", readopted)
 		}
 	}
+	portForwarder.RestoreLocalhostForwarding(handover.LocalhostForwardingOff)
+	service.SetLocalhostForwarder(portForwarder)
 	if portForwarder.Forwards() {
 		go portForwarder.StartForwarding(ctx)
 
@@ -430,6 +432,8 @@ func run(stop <-chan struct{}) error {
 		mounts := service.ExportMounts()
 		forwards, releaseForwards := portForwarder.ExportForwardsHold()
 		defer releaseForwards()
+		// Under the forwarder lock, so /init cannot change it before the execve.
+		localhostForwardingOff := portForwarder.LocalhostForwardingOff()
 		helperPids, releaseHelpers := helpers.ExportHold()
 		defer releaseHelpers()
 
@@ -437,7 +441,7 @@ func run(stop <-chan struct{}) error {
 		// process (and drops the held freeze/watcher/forward locks with it). On
 		// failure the OLD envd is still running; the deferred releases + thaw keep
 		// the old version serving rather than leaving the sandbox hung.
-		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards, helperPids)
+		return processService.Upgrade(newBin, pkg.Version, watchers, mounts, forwards, localhostForwardingOff, helperPids)
 	}
 
 	// Orchestrator-driven trigger: authenticated POST /upgrade with the target

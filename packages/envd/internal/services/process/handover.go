@@ -34,7 +34,9 @@ type HandoverResult struct {
 	// returned rather than applied via a callback.
 	Mounts   []*upgrade.MountEntry
 	Forwards []*upgrade.ForwardedPort
-	Helpers  []int32
+	// LocalhostForwardingOff is nil unless a handover was decoded.
+	LocalhostForwardingOff *bool
+	Helpers                []int32
 }
 
 // ErrWorkloadNotFrozen means the pre-handover freeze was issued but the workload

@@ -8,11 +8,18 @@ package port
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -70,14 +77,44 @@ type Forwarder struct {
 	ports             map[string]*PortToForward
 	scannerSubscriber *ScannerSubscriber
 	sourceIP          net.IP
+	// off is set when the host turned forwarding of loopback listeners off.
+	// Written with mu held; atomic because /init reads it without mu.
+	off atomic.Bool
+	// held keeps a freshly booted guest from forwarding before the host's first
+	// /init has said whether it may.
+	held atomic.Bool
+	// stateFile records the setting for an envd that restarts in the same boot;
+	// empty records nothing and holds nothing.
+	stateFile string
+	// unrecorded is a setting stateFile does not hold yet; the scan loop retries it.
+	unrecorded atomic.Bool
+	// sweepPending is an off whose kill may have left a forwarding socat: one outlived the
+	// kill, or the socat cgroup could not be read. The scan loop kills again.
+	sweepPending atomic.Bool
+	// procRoot is where a process's cgroup and command line are read.
+	procRoot string
 }
 
+// StatePath records the setting on the guest's tmpfs: present means this boot's envd
+// has already heard from the host.
+const StatePath = "/run/e2b/localhost-forwarding"
+
+var errSocatSurvived = errors.New("a forwarding socat outlived the kill")
+
+// procRoot is where the forwarder reads processes from.
+const procRoot = "/proc"
+
+// NewForwarder builds the forwarder, recording the setting at stateFile.
 func NewForwarder(
 	logger *zerolog.Logger,
 	scanner *Scanner,
 	freezer *cgroups.WorkloadFreezer,
+	stateFile string,
 ) *Forwarder {
-	return newForwarder(logger, scanner, freezer, checkForwarding())
+	f := newForwarder(logger, scanner, freezer, checkForwarding())
+	f.stateFile = stateFile
+
+	return f
 }
 
 // newForwarder builds the forwarder; forwardingErr is why this build cannot
@@ -93,6 +130,7 @@ func newForwarder(
 		sourceIP: defaultGatewayIP,
 		ports:    make(map[string]*PortToForward),
 		freezer:  freezer,
+		procRoot: procRoot,
 	}
 	// Where forwarding is unavailable nothing would receive the scan results,
 	// so the forwarder does not subscribe.
@@ -119,6 +157,269 @@ func (f *Forwarder) Forwards() bool {
 	return f.scannerSubscriber != nil
 }
 
+// socatExitTimeout bounds how long turning forwarding off waits for the killed socats.
+const socatExitTimeout = 2 * time.Second
+
+// cgroupReads bounds the reads of the socat cgroup when forwarding is turned off. A
+// listener killed while it forks can leave a handler the read missed; the handler is in
+// the cgroup too, so the next read finds it.
+const cgroupReads = 3
+
+// maintenanceInterval paces the retries of an unfinished off or record. They run on
+// their own ticker as well as on each scan, because no scan arrives while the port
+// table cannot be read.
+const maintenanceInterval = time.Second
+
+// SetLocalhostForwarding turns forwarding of loopback listeners on or off. Off kills the
+// socats envd tracks and every process left in the socat cgroup, including socats an
+// earlier envd of this boot started, until the cgroup is empty. An error names what is
+// still undone: the scan loop records the setting and kills again until both succeed, and
+// an envd restart before the record lands comes back with the earlier one.
+func (f *Forwarder) SetLocalhostForwarding(on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if on {
+		if f.off.Swap(false) {
+			f.logger.Info().Msg("localhost port forwarding turned on")
+		}
+		if err := f.record(); err != nil {
+			f.logger.Warn().Err(err).Msg("could not record localhost port forwarding for an envd restart")
+		}
+
+		return nil
+	}
+
+	wasOff := f.off.Swap(true)
+	// Off spawns nothing, so an off that finished has nothing left to kill, and the /init
+	// that repeats it on every resume skips reading the socat cgroup.
+	if wasOff && !f.sweepPending.Load() && !f.unrecorded.Load() {
+		return nil
+	}
+	if !wasOff {
+		f.logger.Info().Msg("localhost port forwarding turned off")
+	}
+	// Before the kills, so an envd that dies in between restarts with forwarding off.
+	recordErr := f.record()
+
+	deadline := time.Now().Add(socatExitTimeout)
+	pids := make([]int, 0, len(f.ports))
+	for key, p := range f.ports {
+		if pid, signalled := f.killTracked(p); signalled {
+			pids = append(pids, pid)
+		}
+		p.socat, p.socatPid = nil, 0
+		delete(f.ports, key)
+	}
+	exited := waitExited(pids, deadline)
+	sweepErr := f.killSocatCgroup(deadline)
+	f.sweepPending.Store(!exited || sweepErr != nil)
+
+	var errs []error
+	if recordErr != nil {
+		errs = append(errs, fmt.Errorf("record localhost port forwarding off: %w", recordErr))
+	}
+	if !exited {
+		errs = append(errs, fmt.Errorf("%w: %v", errSocatSurvived, pids))
+	}
+	if sweepErr != nil {
+		errs = append(errs, sweepErr)
+	}
+
+	return errors.Join(errs...)
+}
+
+// killTracked kills a tracked socat without trusting its numeric pid, which a socat that
+// already exited may have handed to another process: a self-spawned one through its
+// os.Process, which knows it was reaped, a re-adopted one only while it still forwards.
+// Its connection handlers are in the socat cgroup, which the kill that follows empties.
+// signalled reports a socat that was running when it was killed.
+func (f *Forwarder) killTracked(p *PortToForward) (pid int, signalled bool) {
+	var err error
+	switch {
+	case p.socat != nil && p.socat.Process != nil:
+		pid = p.socat.Process.Pid
+		err = p.socat.Process.Signal(os.Kill)
+		if errors.Is(err, os.ErrProcessDone) {
+			return pid, false
+		}
+	case p.socatPid > 0:
+		pid = p.socatPid
+		var killed bool
+		killed, err = killForwarder(f.procRoot, f.sourceIP.To4().String(), pid)
+		if err == nil && !killed {
+			return pid, false
+		}
+	default:
+		return 0, false
+	}
+	if err != nil {
+		f.logger.Error().Err(err).Int("socat_pid", pid).Msg("could not kill a forwarding socat")
+
+		return pid, false
+	}
+
+	return pid, true
+}
+
+// killSocatCgroup kills every process in the socat cgroup: envd's socats, their connection
+// handlers and any socat an earlier envd of this boot left. It reads the cgroup again until
+// it is empty. A pid is signalled only while it still lives there, so a process outside
+// the cgroup, such as a user's own socat, is never touched. Without cgroups there is
+// nothing to read, and only the socats envd tracks are killed. An error means a socat may
+// still run.
+func (f *Forwarder) killSocatCgroup(deadline time.Time) error {
+	root, path, ok := f.socatCgroup()
+	if !ok {
+		return nil
+	}
+	member := func(pid int) bool { return inCgroup(f.procRoot, root, path, pid) }
+	var killed []int
+	exited := true
+	for range cgroupReads {
+		listed, err := cgroupProcs(path)
+		if err != nil {
+			return fmt.Errorf("read the socat cgroup: %w", err)
+		}
+		var signalled []int
+		for _, pid := range listed {
+			sent, err := killIf(pid, func() bool { return member(pid) })
+			if err != nil {
+				f.logger.Error().Err(err).Int("socat_pid", pid).Msg("could not kill a process in the socat cgroup")
+			}
+			if sent {
+				signalled = append(signalled, pid)
+			}
+		}
+		if len(signalled) == 0 {
+			break
+		}
+		killed = append(killed, signalled...)
+		exited = waitExited(signalled, deadline) && exited
+	}
+
+	listed, err := cgroupProcs(path)
+	if err != nil {
+		return fmt.Errorf("read the socat cgroup: %w", err)
+	}
+	if !exited || slices.ContainsFunc(listed, member) {
+		return fmt.Errorf("%w: %v", errSocatSurvived, killed)
+	}
+
+	return nil
+}
+
+// RestoreLocalhostForwarding applies this boot's setting before the first scan.
+// carriedOff is the setting a live upgrade handed over, nil on a plain start. It wins
+// over the record: it is newer than a record whose last write failed, and an envd that
+// predates the setting wrote none but was forwarding. On a plain start the record an
+// earlier envd of this boot left applies, and a freshly booted guest with no record
+// holds until Release.
+func (f *Forwarder) RestoreLocalhostForwarding(carriedOff *bool) {
+	if carriedOff != nil {
+		if err := f.SetLocalhostForwarding(!*carriedOff); err != nil {
+			f.logger.Warn().Err(err).Bool("off", *carriedOff).Msg("localhost port forwarding after a live upgrade")
+		}
+
+		return
+	}
+	if f.stateFile == "" {
+		return
+	}
+	recorded, err := os.ReadFile(f.stateFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		f.held.Store(true)
+	case err == nil && string(recorded) == "on":
+	case err == nil && string(recorded) == "off":
+		if err := f.SetLocalhostForwarding(false); err != nil {
+			f.logger.Warn().Err(err).Msg("restored localhost port forwarding off")
+		}
+	default:
+		f.held.Store(true)
+		f.logger.Warn().Err(err).Str("recorded", string(recorded)).Msg("unreadable localhost port forwarding record; holding it until /init")
+	}
+}
+
+// Release ends the hold on a freshly booted guest once the host's /init was applied,
+// and records the setting for a restart.
+func (f *Forwarder) Release() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if !f.held.Swap(false) {
+		return
+	}
+	if err := f.record(); err != nil {
+		f.logger.Warn().Err(err).Msg("could not record localhost port forwarding for an envd restart")
+	}
+}
+
+// record replaces stateFile with the setting, so a reader sees the old record or the
+// new one and never an empty one. The caller holds mu.
+func (f *Forwarder) record() error {
+	if f.stateFile == "" {
+		return nil
+	}
+	err := writeRecord(f.stateFile, f.off.Load())
+	f.unrecorded.Store(err != nil)
+
+	return err
+}
+
+func writeRecord(stateFile string, off bool) error {
+	value := "on"
+	if off {
+		value = "off"
+	}
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		return err
+	}
+	next := stateFile + ".next"
+	if err := os.WriteFile(next, []byte(value), 0o600); err != nil {
+		return err
+	}
+
+	return os.Rename(next, stateFile)
+}
+
+// waitExited reports whether every pid exited and was reaped by deadline.
+func waitExited(pids []int, deadline time.Time) bool {
+	for _, pid := range pids {
+		for processAlive(pid) {
+			if time.Now().After(deadline) {
+				return false
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	return true
+}
+
+// LocalhostForwardingOff reports the host's setting alone, the value a live
+// upgrade carries. Safe to call with mu held.
+func (f *Forwarder) LocalhostForwardingOff() bool {
+	return f.off.Load()
+}
+
+// maintain retries a record that failed and the kill of an off that did not finish.
+// The caller holds mu.
+func (f *Forwarder) maintain() {
+	if f.unrecorded.Load() {
+		if err := f.record(); err == nil {
+			f.logger.Info().Msg("recorded localhost port forwarding for an envd restart")
+		}
+	}
+	if f.off.Load() && f.sweepPending.Load() {
+		err := f.killSocatCgroup(time.Now().Add(socatExitTimeout))
+		f.sweepPending.Store(err != nil)
+		if err == nil {
+			f.logger.Info().Msg("killed the forwarding socats left after localhost port forwarding was turned off")
+		}
+	}
+}
+
 func (f *Forwarder) StartForwarding(ctx context.Context) {
 	if f.scannerSubscriber == nil {
 		f.logger.Error().Msg("Cannot start forwarding because scanner subscriber is nil")
@@ -126,11 +427,18 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 		return
 	}
 
+	maintenance := time.NewTicker(maintenanceInterval)
+	defer maintenance.Stop()
+
 	for {
 		// Wait for the next scan result or context cancellation.
 		select {
 		case <-ctx.Done():
 			return
+		case <-maintenance.C:
+			f.mu.Lock()
+			f.maintain()
+			f.mu.Unlock()
 		case procs, ok := <-f.scannerSubscriber.Messages:
 			if !ok {
 				return
@@ -140,6 +448,14 @@ func (f *Forwarder) StartForwarding(ctx context.Context) {
 			// (live-upgrade). stop/startPortForwarding below are called with the
 			// lock held and must not take it themselves.
 			f.mu.Lock()
+
+			f.maintain()
+
+			if f.off.Load() || f.held.Load() {
+				f.mu.Unlock()
+
+				continue
+			}
 
 			// Now we are going to refresh all ports that are being forwarded in the `ports` map. Maybe add new ones
 			// and maybe remove some.

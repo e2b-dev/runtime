@@ -37,6 +37,13 @@ func (noopLogFlusher) FlushAndPurge(context.Context) error { return nil }
 // NewNoopLogFlusher returns a log flusher that performs no work.
 func NewNoopLogFlusher() LogFlusher { return noopLogFlusher{} }
 
+// LocalhostForwarder is the port forwarder's switch for services bound to
+// loopback, set by /init.
+type LocalhostForwarder interface {
+	SetLocalhostForwarding(on bool) error
+	Release()
+}
+
 // DefaultMMDSClient is the production implementation that calls the real MMDS endpoint.
 type DefaultMMDSClient struct{}
 
@@ -111,6 +118,14 @@ type API struct {
 	// re-adopted (possibly hostile) guest process can neither drive an upgrade
 	// nor be handed a running workload before /init has re-established auth.
 	initialized atomic.Bool
+
+	forwarder LocalhostForwarder
+}
+
+// SetLocalhostForwarder must be called before serving: the forwarder is built
+// after the API.
+func (a *API) SetLocalhostForwarder(f LocalhostForwarder) {
+	a.forwarder = f
 }
 
 // Initialized reports whether the first authenticated /init has completed.

@@ -740,13 +740,18 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
   the orchestrator swap envd inside a *running* sandbox at resume. It streams the new binary in the
   request body and envd `syscall.Exec`s into it **with the same PID**, carrying the workload's
   stdio/PTY fds, process table, recently-retained exit codes, filesystem watchers, default
-  user/workdir and user environment variables forward via a tmpfs handover blob. The workload
+  user/workdir, user environment variables and the localhost forwarding setting forward via a
+  tmpfs handover blob. The workload
   cgroups stay frozen until the post-upgrade `/init` restores the access token (so no re-adopted
   process runs unauthenticated), and the handover outcome (procs/watchers re-adopted, environment
   variables restored, plus any failures) rides back on that `/init`'s `X-Envd-Handover` header
   for fleet visibility.
-- Scans guest ports and forwards them so any port a user process opens becomes reachable through
-  sandbox URLs. **`pkg/version.go` carries the released version**, maintained by release-please from
+- Scans guest ports and forwards services listening only on loopback onto the sandbox's network
+  interface, so they become reachable through sandbox URLs. `/init`'s `exposeLocalhostPorts: false`
+  turns that off (services bound to all interfaces stay reachable). envd records the setting on
+  the guest's tmpfs, so an envd that restarts in the same boot keeps it, and a freshly booted
+  guest forwards nothing until the host's first `/init`.
+  **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and
   the orchestrator gate features on the envd version recorded in each template build — the
   orchestrator's held `/init`, the CA bundle each `/init` sends and the network-assign hook read
