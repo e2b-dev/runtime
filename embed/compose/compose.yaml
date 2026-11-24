@@ -61,7 +61,7 @@ services:
 
   redis:
     logging: *logging
-    image: redis:7.4.6
+    image: redis:7.4.11
     restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"

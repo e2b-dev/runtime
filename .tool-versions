@@ -11,5 +11,5 @@ protoc 34.1
 protoc-gen-connect-go 1.19.2
 protoc-gen-go 1.36.11
 protoc-gen-go-grpc 1.6.1
-python 3.15.0
+python 3.15.2
 azure-cli 2.93.0

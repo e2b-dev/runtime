@@ -76,7 +76,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 20
         - name: redis
-          image: redis:7.4.6
+          image: redis:7.4.11
           restartPolicy: Always
           # The official image compiles protected mode off; bind loopback explicitly.
           args: ["--bind", "127.0.0.1"]
