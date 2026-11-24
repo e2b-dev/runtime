@@ -353,7 +353,8 @@ func (s *Sandbox) newEnvdInitRequest(address, envdVersion string) *envdInitReque
 			VolumeMounts:   s.convertMounts(s.Config.VolumeMounts),
 			CaBundle:       envdCABundleFor(s.Config, s.egressProxy.CABundle(envdVersion)),
 			// A snapshot may resume with a different number of guest CPUs online.
-			CpuCount: s.guestCpuCount(),
+			CpuCount:             s.guestCpuCount(),
+			ExposeLocalhostPorts: s.exposeLocalhostPorts(envdVersion),
 		},
 		accessToken: s.Config.Envd.AccessToken,
 	}

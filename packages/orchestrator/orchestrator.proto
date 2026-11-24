@@ -152,6 +152,11 @@ message SandboxNetworkIngressConfig {
   optional string traffic_access_token = 1;
   optional string mask_request_host = 2;
   repeated uint32 https_ports = 3;
+  // Whether envd forwards services listening only on loopback onto the
+  // sandbox's network interface. Sent to envd only at or above the version that
+  // applies it; an older envd keeps forwarding. Absent sends nothing, so envd
+  // keeps what it has.
+  optional bool expose_localhost_ports = 4;
 }
 
 message SandboxCreateRequest {

@@ -42,6 +42,11 @@ const MinEnvdVersionForUpgrade = "0.6.12"
 // above it.
 const MinEnvdVersionForHeldInit = "0.10.0"
 
+// MinEnvdVersionForExposeLocalhostPorts is the first envd that applies /init's exposeLocalhostPorts.
+// The field is sent only at or above it; an older envd keeps forwarding services bound to
+// loopback until its template is rebuilt.
+const MinEnvdVersionForExposeLocalhostPorts = "0.12.0"
+
 func sanitizeVersion(version string) string {
 	if len(version) > 0 && version[0] != 'v' {
 		version = "v" + version

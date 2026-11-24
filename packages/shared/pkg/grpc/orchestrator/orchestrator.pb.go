@@ -966,8 +966,13 @@ type SandboxNetworkIngressConfig struct {
 	TrafficAccessToken *string                `protobuf:"bytes,1,opt,name=traffic_access_token,json=trafficAccessToken,proto3,oneof" json:"traffic_access_token,omitempty"`
 	MaskRequestHost    *string                `protobuf:"bytes,2,opt,name=mask_request_host,json=maskRequestHost,proto3,oneof" json:"mask_request_host,omitempty"`
 	HttpsPorts         []uint32               `protobuf:"varint,3,rep,packed,name=https_ports,json=httpsPorts,proto3" json:"https_ports,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Whether envd forwards services listening only on loopback onto the
+	// sandbox's network interface. Sent to envd only at or above the version that
+	// applies it; an older envd keeps forwarding. Absent sends nothing, so envd
+	// keeps what it has.
+	ExposeLocalhostPorts *bool `protobuf:"varint,4,opt,name=expose_localhost_ports,json=exposeLocalhostPorts,proto3,oneof" json:"expose_localhost_ports,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SandboxNetworkIngressConfig) Reset() {
@@ -1019,6 +1024,13 @@ func (x *SandboxNetworkIngressConfig) GetHttpsPorts() []uint32 {
 		return x.HttpsPorts
 	}
 	return nil
+}
+
+func (x *SandboxNetworkIngressConfig) GetExposeLocalhostPorts() bool {
+	if x != nil && x.ExposeLocalhostPorts != nil {
+		return *x.ExposeLocalhostPorts
+	}
+	return false
 }
 
 type SandboxCreateRequest struct {
@@ -2129,14 +2141,16 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1f\n" +
 	"\vserver_name\x18\x02 \x01(\tR\n" +
 	"serverName\x12\x17\n" +
-	"\aca_cert\x18\x03 \x01(\fR\x06caCert\"\xd5\x01\n" +
+	"\aca_cert\x18\x03 \x01(\fR\x06caCert\"\xab\x02\n" +
 	"\x1bSandboxNetworkIngressConfig\x125\n" +
 	"\x14traffic_access_token\x18\x01 \x01(\tH\x00R\x12trafficAccessToken\x88\x01\x01\x12/\n" +
 	"\x11mask_request_host\x18\x02 \x01(\tH\x01R\x0fmaskRequestHost\x88\x01\x01\x12\x1f\n" +
 	"\vhttps_ports\x18\x03 \x03(\rR\n" +
-	"httpsPortsB\x17\n" +
+	"httpsPorts\x129\n" +
+	"\x16expose_localhost_ports\x18\x04 \x01(\bH\x02R\x14exposeLocalhostPorts\x88\x01\x01B\x17\n" +
 	"\x15_traffic_access_tokenB\x14\n" +
-	"\x12_mask_request_host\"\xf4\x01\n" +
+	"\x12_mask_request_hostB\x19\n" +
+	"\x17_expose_localhost_ports\"\xf4\x01\n" +
 	"\x14SandboxCreateRequest\x12(\n" +
 	"\asandbox\x18\x01 \x01(\v2\x0e.SandboxConfigR\asandbox\x129\n" +
 	"\n" +
