@@ -418,18 +418,23 @@ func TestNodesAddsANewNodeWhileAnotherHangsForTheWholeRound(t *testing.T) {
 	t.Parallel()
 
 	h := newNodesHarness(t)
-	h.nodes.syncTimeout = time.Second
+	h.nodes.syncTimeout = 10 * time.Second
 	hung, fake := discoveredNode(t, "hung", &infogrpc.ServiceInfoResponse{NodeId: "node-hung"})
 	h.discovery.set(hung)
 	h.sync(t)
 
-	_, release := fake.hold()
+	arrived, release := fake.hold()
 	t.Cleanup(release)
 	fresh, _ := discoveredNode(t, "fresh", &infogrpc.ServiceInfoResponse{NodeId: "node-fresh"})
 	h.discovery.set(hung, fresh)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
+	go func() {
+		<-arrived
+		<-ctx.Done()
+		release()
+	}()
 	require.NoError(t, h.nodes.Sync(ctx))
 
 	info, ok := h.nodes.Get("fresh")
