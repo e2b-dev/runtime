@@ -38,6 +38,7 @@ type PreBuildFunc func(tb testing.TB, ctx context.Context, templateID string)
 type buildOutcome struct {
 	ready  bool
 	reason string
+	step   *string
 }
 
 func buildTemplate(
@@ -133,7 +134,7 @@ func runTemplateBuild(
 
 			return buildOutcome{ready: true}
 		case api.TemplateBuildStatusError:
-			return buildOutcome{reason: safe(statusResp.JSON200.Reason).Message}
+			return buildOutcome{reason: safe(statusResp.JSON200.Reason).Message, step: safe(statusResp.JSON200.Reason).Step}
 		}
 
 		time.Sleep(time.Second)

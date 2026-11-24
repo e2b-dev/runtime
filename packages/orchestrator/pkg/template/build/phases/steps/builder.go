@@ -20,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/fc"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/guest"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/buildcontext"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/commands"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/template/build/layer"
@@ -217,6 +218,16 @@ func (sb *StepBuilder) Build(
 		)
 		if err != nil {
 			return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), guestEnded(ctx, sbx, err))
+		}
+
+		// The next cold boot (the first uncached step after a cache hit, finalize)
+		// seeds the /etc/ssl/certs tmpfs from the packed tar, so this step's writes
+		// under it survive only through the tar.
+		if !guestTemplate.Skips(guest.PhaseCertBundle) {
+			err = sandboxtools.PackCertBundle(ctx, sb.proxy, userLogger, sbx.Runtime.SandboxID)
+			if err != nil {
+				return metadata.Template{}, phases.NewPhaseBuildError(sb.Metadata(), guestEnded(ctx, sbx, err))
+			}
 		}
 
 		err = sandboxtools.SyncChangesToDiskWith(

@@ -42,7 +42,7 @@ var ConfigureScriptTemplate = tt.Must(tt.New("provisioning-finish-script").Parse
 // a 20-byte symlink, and envd's egress-CA install needs a real file. Provisioning
 // already refreshes the store per family; this step only has to merge CAs that
 // later build layers dropped in, which is a Debian/Alpine convention anyway.
-const packCertBundleCmd = `set -e
+var packCertBundleCmd = `set -e
 # Recreate dpkg-recorded paths under /etc/ssl/certs lost to this fresh boot's
 # tmpfs re-seed (build-layer dpkg writes never reach the rootfs), then settle
 # dpkg before update-ca-certificates fires the packages' triggers against them.
@@ -78,9 +78,7 @@ if command -v dpkg-query >/dev/null 2>&1; then
 		exit 1
 	fi
 fi
-mkdir -p /usr/local/share/e2b
-tar -C /etc/ssl/certs -chf /usr/local/share/e2b/ssl-certs.tar .
-`
+` + sandboxtools.PackCertBundleTar
 
 // packCertBundle runs packCertBundleCmd in the guest as root.
 func packCertBundle(

@@ -135,3 +135,102 @@ func TestCACertFromBuildSurvivesInBakedBundle(t *testing.T) {
 		})
 	}
 }
+
+// TestCertDirWriteInBuildStepSurvivesColdBoot verifies that a file a build step
+// writes straight into /etc/ssl/certs is still there after the next cold boot.
+// The directory is a tmpfs seeded from the baked tar on every cold boot, which
+// the finalize phase and the first uncached step after a cache hit both do, so
+// the step's writes reach them only because the step packs the tar itself.
+// Before that, the finalize boot came up without them and the sandbox lost
+// both a dropped-in file and the keystore ca-certificates-java had written.
+func TestCertDirWriteInBuildStepSurvivesColdBoot(t *testing.T) {
+	t.Parallel()
+
+	c := setup.GetAPIClient()
+	client := setup.GetEnvdClient(t, t.Context())
+
+	const marker = "e2b-test-buildstep-marker"
+
+	tmpl := utils.BuildTemplate(t, utils.TemplateBuildOptions{
+		Name: "test-cert-dir-buildstep-write",
+		BuildData: api.TemplateBuildStartV2{
+			FromImage: new("ubuntu:22.04"),
+			Steps: new([]api.TemplateStep{
+				{
+					Type:  "RUN",
+					Force: new(true),
+					Args:  new([]string{"echo buildstep > /etc/ssl/certs/" + marker, "root"}),
+				},
+			}),
+		},
+		LogHandler: utils.DefaultBuildLogHandler(t),
+		ReqEditors: []api.RequestEditorFn{setup.WithAPIKey()},
+	})
+
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithTemplateID(tmpl.TemplateID))
+
+	baked, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client,
+		"tar", "-xOf", bakedCertBundlePath, "./"+marker)
+	require.NoError(t, err, "a file written to /etc/ssl/certs in a build step must be in the baked tar")
+	assert.Equal(t, "buildstep", strings.TrimSpace(baked))
+
+	live, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client,
+		"cat", "/etc/ssl/certs/"+marker)
+	require.NoError(t, err, "a file written to /etc/ssl/certs in a build step must survive the finalize cold boot")
+	assert.Equal(t, "buildstep", strings.TrimSpace(live))
+}
+
+// Two builds exercise both cache-boundary seeding and replacement of an older
+// archive: the second build reuses the certificate-writing layer, reads it in
+// the changed next step, then deletes it before finalize cold-boots again.
+func TestCACertCachedStepAndDeletionSurviveColdBoot(t *testing.T) {
+	t.Parallel()
+
+	c := setup.GetAPIClient()
+	client := setup.GetEnvdClient(t, t.Context())
+	cert := generateSelfSignedCA(t, "e2b-cache-boundary-ca")
+	const source = "/usr/local/share/ca-certificates/e2b-cache-boundary.crt"
+	const direct = "/etc/ssl/certs/e2b-cache-boundary-direct.pem"
+	// Each generated certificate makes this layer unique, so its cache entry can
+	// only come from this test's first build, not an older CI run.
+	install := injectCACommand(cert, source) + " && update-ca-certificates && cp " + source + " " + direct
+	verify := "cmp " + source + " " + direct + " && openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt " + source
+	buildData := api.TemplateBuildStartV2{
+		FromImage: new("ubuntu:22.04"),
+		Steps: new([]api.TemplateStep{
+			{Type: "RUN", Args: new([]string{install, "root"})},
+			{Type: "RUN", Args: new([]string{verify, "root"})},
+		}),
+	}
+	first := utils.BuildTemplate(t, utils.TemplateBuildOptions{
+		Name: "test-cert-cache-and-delete", BuildData: buildData,
+		LogHandler: utils.DefaultBuildLogHandler(t), ReqEditors: []api.RequestEditorFn{setup.WithAPIKey()},
+	})
+	sbx := utils.SetupSandboxWithCleanup(t, c, utils.WithTemplateID(first.TemplateID))
+	_, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client, "sh", "-ec", verify)
+	require.NoError(t, err, "first build must contain the custom CA and direct cert file")
+
+	// No Force: the first layer must be reused, while changing step 2 makes it
+	// cold-boot the cached rootfs rather than resume the previous step's memory.
+	(*buildData.Steps)[1].Args = new([]string{verify + " && rm " + source + " " + direct + " && update-ca-certificates --fresh", "root"})
+	var messages []string
+	second := utils.BuildTemplate(t, utils.TemplateBuildOptions{
+		Name: "test-cert-cache-and-delete", BuildData: buildData,
+		LogHandler: func(alias string, entry api.BuildLogEntry) {
+			messages = append(messages, entry.Message)
+			utils.DefaultBuildLogHandler(t)(alias, entry)
+		},
+		ReqEditors: []api.RequestEditorFn{setup.WithAPIKey()},
+	})
+	logs := strings.Join(messages, "\n")
+	require.Contains(t, logs, "CACHED [builder 1/2] RUN "+install)
+	require.NotContains(t, logs, "CACHED [builder 2/2]", "the verifying/removing step must execute")
+
+	sbx = utils.SetupSandboxWithCleanup(t, c, utils.WithTemplateID(second.TemplateID))
+	_, err = utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client, "sh", "-ec", "test ! -e "+direct+" && test ! -e "+source)
+	require.NoError(t, err, "deleted certificates must not reappear after finalize's cold boot")
+	listing, err := utils.ExecCommandAsRootWithOutput(t, t.Context(), sbx, client, "tar", "-tf", bakedCertBundlePath)
+	require.NoError(t, err)
+	require.NotContains(t, listing, "e2b-cache-boundary-direct.pem")
+	require.NotContains(t, readBakedCertBundle(t, sbx, client), strings.TrimSpace(cert), "the removed CA must leave the baked trust store")
+}
