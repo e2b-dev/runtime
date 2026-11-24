@@ -39,7 +39,6 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/team"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
-	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/sandboxlogs"
@@ -753,6 +752,8 @@ func (a *APIStore) GetTeamFromAuthProviderToken(ctx context.Context, ginCtx *gin
 	return a.authService.ValidateAuthProviderTeam(ctx, ginCtx, teamID)
 }
 
+// GetTeamFromAdminToken resolves the team an admin request names, banned or
+// not; middleware.EnforceBannedTeam limits a banned team to reads and deletes.
 func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, teamID string) (*types.Team, *api.APIError) {
 	ctx, span := tracer.Start(ctx, "get team from admin token")
 	defer span.End()
@@ -766,16 +767,8 @@ func (a *APIStore) GetTeamFromAdminToken(ctx context.Context, _ *gin.Context, te
 		}
 	}
 
-	team, err := a.authService.GetTeamByID(ctx, teamUUID)
+	team, err := a.authService.GetTeamByIDIncludingBanned(ctx, teamUUID)
 	if err != nil {
-		if _, ok := errors.AsType[*sharedauth.TeamForbiddenError](err); ok {
-			return nil, &api.APIError{
-				Code:      http.StatusForbidden,
-				ClientMsg: err.Error(),
-				Err:       fmt.Errorf("failed getting team: %w", err),
-			}
-		}
-
 		if dberrors.IsNotFoundError(err) {
 			return nil, &api.APIError{
 				Code:      http.StatusNotFound,

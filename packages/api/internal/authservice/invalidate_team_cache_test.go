@@ -26,6 +26,10 @@ func (s staticAuthStore) GetTeamByID(context.Context, uuid.UUID) (*types.Team, e
 	return nil, nil
 }
 
+func (s staticAuthStore) GetTeamByIDIncludingBanned(context.Context, uuid.UUID) (*types.Team, error) {
+	return nil, nil
+}
+
 func (s staticAuthStore) GetTeamByIDAndUserID(context.Context, uuid.UUID, string) (*types.Team, error) {
 	return nil, nil
 }

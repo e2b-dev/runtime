@@ -237,6 +237,9 @@ func NewGinServer(ctx context.Context, config cfg.Config, tel *telemetry.Client,
 	// refused before they reach a handler.
 	r.Use(customMiddleware.RefuseDeletedProject(apiStore.IsProjectDeleted)) //nolint:contextcheck // Gin middleware gets context from the request.
 
+	// Limit a banned team, which only an admin request resolves, to reads and
+	// deletes. Same ordering constraint as below.
+	r.Use(customMiddleware.EnforceBannedTeam())
 	// Deny blocked teams on every mutating route unless allowlisted in
 	// EnforceBlockedTeam. Must run after auth (which populates team info on
 	// the gin context) and before the handlers.

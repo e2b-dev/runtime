@@ -504,6 +504,12 @@ answers 404 to the single-team routes and counts as not found in the bulk route.
 in `internal/team`. These routes keep no revision; the next management ban delivery the fence accepts
 replaces what they wrote.
 
+An admin token or service JWT naming a banned team in `X-Team-ID` still resolves it, so an operator
+can inspect and clean up after a ban: such a request reaches the reads a read-only member may make
+and every delete, and any other route answers 403. Nothing it can reach starts a workload, so the
+containment above is not undone. The banned team is read from Postgres on each such request and
+never written to the Redis team cache, whose other readers check the ban only on a miss.
+
 #### Cluster lifecycle (`/unstable/management/clusters`)
 
 The owning management service also drives a replay-safe cluster lifecycle under

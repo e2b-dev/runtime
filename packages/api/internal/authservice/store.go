@@ -63,6 +63,19 @@ func (s *authStoreImpl) GetTeamByHashedAPIKey(ctx context.Context, hashedKey str
 }
 
 func (s *authStoreImpl) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*types.Team, error) {
+	team, err := s.GetTeamByIDIncludingBanned(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := auth.CheckTeamBanned(*team.Team); err != nil {
+		return nil, err
+	}
+
+	return team, nil
+}
+
+func (s *authStoreImpl) GetTeamByIDIncludingBanned(ctx context.Context, teamID uuid.UUID) (*types.Team, error) {
 	ctx, span := tracer.Start(ctx, "get team by id auth")
 	defer span.End()
 
@@ -71,12 +84,7 @@ func (s *authStoreImpl) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*typ
 		return nil, fmt.Errorf("failed to get team from team ID: %w", err)
 	}
 
-	team := db.NewTeam(result)
-	if err := auth.CheckTeamBanned(*team.Team); err != nil {
-		return nil, err
-	}
-
-	return team, nil
+	return db.NewTeam(result), nil
 }
 
 func (s *authStoreImpl) GetTeamByIDAndUserID(ctx context.Context, userID uuid.UUID, teamID string) (*types.Team, error) {

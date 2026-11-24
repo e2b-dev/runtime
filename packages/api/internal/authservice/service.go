@@ -26,6 +26,7 @@ import (
 type authStore interface {
 	GetTeamByHashedAPIKey(ctx context.Context, hashedKey string) (*types.Team, error)
 	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*types.Team, error)
+	GetTeamByIDIncludingBanned(ctx context.Context, teamID uuid.UUID) (*types.Team, error)
 	GetTeamByIDAndUserID(ctx context.Context, userID uuid.UUID, teamID string) (*types.Team, error)
 	GetTeamAPIKeyHashes(ctx context.Context, teamID uuid.UUID) ([]string, error)
 	GetTeamMemberIDs(ctx context.Context, teamID uuid.UUID) ([]uuid.UUID, error)
@@ -41,6 +42,7 @@ type Service interface {
 	ValidateAuthProviderToken(ctx context.Context, ginCtx *gin.Context, token string) (uuid.UUID, *APIError)
 	ValidateAuthProviderTeam(ctx context.Context, ginCtx *gin.Context, teamID string) (*types.Team, *APIError)
 	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*types.Team, error)
+	GetTeamByIDIncludingBanned(ctx context.Context, teamID uuid.UUID) (*types.Team, error)
 	InvalidateTeamMemberCache(ctx context.Context, userID uuid.UUID, teamID string)
 	InvalidateTeamCache(ctx context.Context, teamID uuid.UUID) error
 	InvalidateAPIKeyCache(ctx context.Context, hashedKey string)
@@ -141,11 +143,24 @@ func (s *AuthService) ValidateAPIKey(ctx context.Context, ginCtx *gin.Context, a
 	return result, nil
 }
 
-// GetTeamByID fetches team auth data via cache + store.
+// GetTeamByID fetches team auth data via cache + store. A banned team is
+// refused with *auth.TeamForbiddenError.
 func (s *AuthService) GetTeamByID(ctx context.Context, teamID uuid.UUID) (*types.Team, error) {
 	return s.teamCache.GetOrSet(ctx, teamCacheKey(teamID), func(ctx context.Context, _ string) (*types.Team, error) {
 		return s.store.GetTeamByID(ctx, teamID)
 	})
+}
+
+// GetTeamByIDIncludingBanned is GetTeamByID that also returns a banned team,
+// for admin requests. A banned team is read from the database every time and
+// never cached: GetTeamByID checks the ban only on a cache miss.
+func (s *AuthService) GetTeamByIDIncludingBanned(ctx context.Context, teamID uuid.UUID) (*types.Team, error) {
+	team, err := s.GetTeamByID(ctx, teamID)
+	if _, banned := errors.AsType[*auth.TeamForbiddenError](err); banned {
+		return s.store.GetTeamByIDIncludingBanned(ctx, teamID)
+	}
+
+	return team, err
 }
 
 // ValidateAuthProviderToken verifies a JWT against the configured auth provider and resolves an internal user ID.

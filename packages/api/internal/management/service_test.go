@@ -159,6 +159,10 @@ func (noopAuthService) GetTeamByID(context.Context, uuid.UUID) (*authtypes.Team,
 	return nil, nil
 }
 
+func (noopAuthService) GetTeamByIDIncludingBanned(context.Context, uuid.UUID) (*authtypes.Team, error) {
+	return nil, nil
+}
+
 func (noopAuthService) InvalidateTeamMemberCache(context.Context, uuid.UUID, string) {}
 
 func (noopAuthService) InvalidateAPIKeyCache(context.Context, string) {}

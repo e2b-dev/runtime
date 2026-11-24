@@ -281,6 +281,10 @@ func (f fakeAPIKeyAuthService) GetTeamByID(context.Context, uuid.UUID) (*authtyp
 	return f.team, nil
 }
 
+func (f fakeAPIKeyAuthService) GetTeamByIDIncludingBanned(ctx context.Context, teamID uuid.UUID) (*authtypes.Team, error) {
+	return f.GetTeamByID(ctx, teamID)
+}
+
 func (f fakeAPIKeyAuthService) InvalidateTeamMemberCache(context.Context, uuid.UUID, string) {}
 
 func (f fakeAPIKeyAuthService) InvalidateAPIKeyCache(_ context.Context, hashedKey string) {
