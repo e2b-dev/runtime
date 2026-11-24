@@ -20,13 +20,41 @@ type fakeInfoServer struct {
 	mu       sync.Mutex
 	response *infogrpc.ServiceInfoResponse
 	err      error
+	arrived  chan struct{}
+	release  chan struct{}
 }
 
-func (s *fakeInfoServer) ServiceInfo(context.Context, *emptypb.Empty) (*infogrpc.ServiceInfoResponse, error) {
+func (s *fakeInfoServer) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*infogrpc.ServiceInfoResponse, error) {
+	s.mu.Lock()
+	arrived, release := s.arrived, s.release
+	s.mu.Unlock()
+
+	if release != nil {
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.response, s.err
+}
+
+func (s *fakeInfoServer) hold() (<-chan struct{}, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	s.arrived, s.release = arrived, release
+
+	return arrived, sync.OnceFunc(func() { close(release) })
 }
 
 func (s *fakeInfoServer) set(response *infogrpc.ServiceInfoResponse, err error) {
