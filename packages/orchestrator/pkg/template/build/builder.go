@@ -302,6 +302,12 @@ func resolveRootfsOptions(ctx context.Context, featureFlags *featureflags.Client
 			featureflags.TemplateContext(cfg.TemplateID),
 			featureflags.TeamContext(cfg.TeamID),
 		),
+		InlineData: featureFlags.BoolFlag(
+			ctx,
+			featureflags.BuildExt4InlineData,
+			featureflags.TemplateContext(cfg.TemplateID),
+			featureflags.TeamContext(cfg.TeamID),
+		),
 	}
 }
 

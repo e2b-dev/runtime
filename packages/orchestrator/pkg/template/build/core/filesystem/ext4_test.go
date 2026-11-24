@@ -25,10 +25,44 @@ func TestMakeKeepsDirIndex(t *testing.T) {
 	requireTools(t, "mkfs.ext4", "dumpe2fs")
 
 	rootfsPath := filepath.Join(t.TempDir(), "rootfs.ext4")
-	require.NoError(t, Make(t.Context(), rootfsPath, 64, makeBlockSize))
+	require.NoError(t, Make(t.Context(), rootfsPath, 64, makeBlockSize, MakeOptions{InlineData: true}))
 
 	features := filesystemFeatures(t, rootfsPath)
 	assert.Contains(t, features, "dir_index", "mkfs.ext4 feature set %v", features)
+}
+
+// TestMakeInlineData covers both states of the option against the real
+// mkfs.ext4. The off case is the one that would otherwise rot into an option
+// that switches nothing.
+func TestMakeInlineData(t *testing.T) {
+	t.Parallel()
+
+	requireTools(t, "mkfs.ext4", "dumpe2fs")
+
+	tests := []struct {
+		name string
+		opts MakeOptions
+		want bool
+	}{
+		{name: "kept when enabled", opts: MakeOptions{InlineData: true}, want: true},
+		{name: "left out when disabled", opts: MakeOptions{}, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rootfsPath := filepath.Join(t.TempDir(), "rootfs.ext4")
+			require.NoError(t, Make(t.Context(), rootfsPath, 64, makeBlockSize, tc.opts))
+
+			features := filesystemFeatures(t, rootfsPath)
+			if tc.want {
+				assert.Contains(t, features, "inline_data", "mkfs.ext4 feature set %v", features)
+			} else {
+				assert.NotContains(t, features, "inline_data", "mkfs.ext4 feature set %v", features)
+			}
+		})
+	}
 }
 
 func requireTools(t *testing.T, tools ...string) {

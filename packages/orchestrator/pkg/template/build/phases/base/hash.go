@@ -106,6 +106,11 @@ func envdMemoryMinMiB(buildContext buildcontext.BuildContext) int64 {
 // return a team to the key its existing layers are stored under.
 const envdMemoryProtectionKey = "envd-memory-protection"
 
+// noInlineDataKey is the base-layer key's contribution when the rootfs is made
+// without inline_data, appended only then so that builds keeping the feature
+// stay on the key their existing layers are stored under.
+const noInlineDataKey = "ext4:^inline_data"
+
 // baseLayerKey assembles the base layer's cache key from inputs that are
 // already resolved. It is pure so that the properties the key must have — the
 // same digest as before for a build that opts into nothing, a distinct one for
@@ -152,6 +157,14 @@ func baseLayerKey(indexVersion, provisionVersion, baseSource string, buildContex
 	// of this contribution.
 	if rendersRootfsFiles(buildContext) && buildContext.Rootfs.EnvdMemoryProtection {
 		keys = append(keys, fmt.Sprintf("%s:%d:%d", envdMemoryProtectionKey, rootfs.EnvdMemoryMinMiB, rootfs.EnvdMemoryLowMiB))
+	}
+
+	// The mkfs feature set is otherwise not part of the key, so without this a
+	// build with inline_data off would reuse a cached layer made with it. Made
+	// only when this build creates its own rootfs: a from-template build takes
+	// its parent's filesystem whatever its own flag says.
+	if rendersRootfsFiles(buildContext) && !buildContext.Rootfs.InlineData {
+		keys = append(keys, noInlineDataKey)
 	}
 
 	return cache.HashKeys(indexVersion, keys...)

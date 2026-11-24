@@ -47,7 +47,13 @@ const (
 	e2fsckRebootRecommended = 2
 )
 
-func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64) error {
+// MakeOptions carries the mkfs.ext4 choices that vary from build to build.
+type MakeOptions struct {
+	// InlineData stores the contents of very small files inside their inodes.
+	InlineData bool
+}
+
+func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64, opts MakeOptions) error {
 	ctx, tuneSpan := tracer.Start(ctx, "make-ext4")
 	defer tuneSpan.End()
 
@@ -67,10 +73,13 @@ func Make(ctx context.Context, rootfsPath string, sizeMb int64, blockSize int64)
 		"filetype",
 		"flex_bg",
 		"huge_file",
-		// Pack file data <~160 B inside the inode to avoid a 4 KiB data block per tiny file.
-		"inline_data",
 		"large_file",
 		"sparse_super2",
+	}
+	if opts.InlineData {
+		// Pack file data <~160 B inside the inode to avoid a 4 KiB data block per tiny file.
+		// Not a mkfs.ext4 default, so leaving it out is enough to turn it off.
+		features = append(features, "inline_data")
 	}
 
 	cmd := exec.CommandContext(ctx,

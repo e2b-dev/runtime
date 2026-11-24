@@ -41,6 +41,7 @@ func cmdlineContext(args map[string]string) buildcontext.BuildContext {
 			DiskSizeMB:  testDiskSizeMB,
 			CmdlineArgs: args,
 		},
+		Rootfs: buildcontext.RootfsOptions{InlineData: true},
 	}
 }
 

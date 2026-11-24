@@ -19,7 +19,7 @@ func envdMemoryContext(on bool, memoryMB int64) buildcontext.BuildContext {
 			DiskSizeMB: testDiskSizeMB,
 			MemoryMB:   memoryMB,
 		},
-		Rootfs: buildcontext.RootfsOptions{EnvdMemoryProtection: on},
+		Rootfs: buildcontext.RootfsOptions{EnvdMemoryProtection: on, InlineData: true},
 	}
 }
 

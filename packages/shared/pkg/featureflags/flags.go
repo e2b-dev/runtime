@@ -833,6 +833,15 @@ var (
 	// Disabled by default: the unit keeps the request it carries today.
 	BuildEnvdMemoryProtection = NewBoolFlag("build-envd-memory-protection", false)
 
+	// BuildExt4InlineData keeps the ext4 inline_data feature on the rootfs, which
+	// stores the contents of very small files inside their inodes. Evaluated once
+	// per build with the template and team contexts, at mkfs time, so it governs
+	// only rootfs images built after a change. Off enters the base-layer cache key
+	// of every build that creates its own rootfs, so such a build never reuses a
+	// layer made with inline_data; on keeps the key existing layers are stored
+	// under. Enabled by default: the rootfs keeps the feature set it has today.
+	BuildExt4InlineData = NewBoolFlag("build-ext4-inline-data", true)
+
 	// NBDConnectionsPerDevice the number of NBD socket connections per device
 	NBDConnectionsPerDevice = NewIntFlag("nbd-connections-per-device", 1)
 

@@ -19,6 +19,7 @@ func cpuTemplateContext(tmpl *cputemplate.Template) buildcontext.BuildContext {
 			DiskSizeMB:  testDiskSizeMB,
 			CPUTemplate: tmpl,
 		},
+		Rootfs: buildcontext.RootfsOptions{InlineData: true},
 	}
 }
 
@@ -89,6 +90,7 @@ func TestCPUTemplateCacheKey(t *testing.T) {
 				CmdlineArgs: map[string]string{"psi": "1"},
 				CPUTemplate: &cputemplate.Template{X86TscKhz: 3_200_000},
 			},
+			Rootfs: buildcontext.RootfsOptions{InlineData: true},
 		}
 
 		assert.NotEqual(t, testLayerKey(cmdlineContext(map[string]string{"psi": "1"})), testLayerKey(both))
