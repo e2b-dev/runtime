@@ -243,7 +243,8 @@ func TestCreateSandbox_ConnectMemoryCheckedWhenItStarts(t *testing.T) {
 
 // A connect that joins another request's start ignores its size, whatever the
 // size and whether the team may choose one: never a 400 for a size that does
-// not apply. It gets the sandbox that start produced, at that start's size,
+// not apply. (The connect handler refuses a size the snapshot or the team
+// cannot take before it gets here; this pins the start's own rule.) It gets the sandbox that start produced, at that start's size,
 // for its own timeout, and counts as ignored once the start succeeded.
 func TestCreateSandbox_ConnectJoinIgnoresItsSize(t *testing.T) {
 	t.Parallel()
@@ -503,6 +504,7 @@ func TestCreateSandbox_SecondSizedRefusalAnswersRetryable(t *testing.T) {
 	t.Parallel()
 
 	o, signal, _ := newJoinTestOrchestrator(t, true)
+	restarts := countJoinerRestarts(t, o)
 	team := memoryTeam()
 	sandboxID := newSandboxID()
 	build := growableBuild(4096, 1024)
@@ -546,6 +548,8 @@ func TestCreateSandbox_SecondSizedRefusalAnswersRetryable(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, joiner.apiErr.Code)
 	assert.Equal(t, errCodeSizedStartFailed, joiner.apiErr.ErrorCode)
 	assert.Equal(t, apierrors.CanRetry, joiner.apiErr.Retryable)
+	assert.Equal(t, int64(1), metricCount(t, restarts, "api.sandbox.start_joiner_restart", map[string]string{"outcome": joinerRestarted}))
+	assert.Equal(t, int64(1), metricCount(t, restarts, "api.sandbox.start_joiner_restart", map[string]string{"outcome": joinerGaveUp}))
 	for _, h := range []*heldStart{h1, h2} {
 		select {
 		case r := <-h.done:

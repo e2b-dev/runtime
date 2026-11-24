@@ -31,6 +31,7 @@ type connectOrchestrator interface {
 	KeepAliveFor(ctx context.Context, teamID uuid.UUID, sandboxID string, duration time.Duration, allowShorter bool) (*sandbox.Sandbox, *api.APIError)
 	WaitForStateChange(ctx context.Context, teamID uuid.UUID, sandboxID string) error
 	RecordConnectMemoryIgnored(ctx context.Context)
+	RecordConnectCPUCountIgnored(ctx context.Context)
 }
 
 func (a *APIStore) connectBackend() connectOrchestrator {
@@ -62,7 +63,7 @@ func (a *APIStore) PostSandboxesSandboxIDConnect(c *gin.Context, sandboxID api.S
 		return
 	}
 
-	a.connectSandbox(c, sandboxID, timeout, body.Memory, nil)
+	a.connectSandbox(c, sandboxID, timeout, body.Memory, nil, nil)
 }
 
 // PostV2SandboxesSandboxIDConnect accepts an optional body; an omitted timeout falls back to SandboxTimeoutDefaultV2.
@@ -87,13 +88,15 @@ func (a *APIStore) PostV2SandboxesSandboxIDConnect(c *gin.Context, sandboxID api
 		return
 	}
 
-	a.connectSandbox(c, sandboxID, timeout, body.Memory, body.MemoryMB)
+	a.connectSandbox(c, sandboxID, timeout, body.Memory, body.MemoryMB, body.CpuCount)
 }
 
 // connectSandbox extends a running sandbox's TTL or resumes a paused one from its last snapshot.
-// memoryMB, like memory, applies only when this connect resumes the sandbox: a
-// running sandbox, or one another request is already starting, keeps its size.
-func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeout time.Duration, memory *bool, memoryMB *int32) {
+// memoryMB and cpuCount, like memory, apply only when this connect resumes the
+// sandbox: a running sandbox, or one another request is already starting, keeps
+// its size and count. For a paused sandbox, a size or count its snapshot or the
+// team cannot take is refused first, as resume refuses it.
+func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeout time.Duration, memory *bool, memoryMB, cpuCount *int32) {
 	ctx := orchestrator.WithMemoryRoute(c.Request.Context(), orchestrator.MemoryRouteConnect)
 
 	teamInfo := auth.MustGetTeamInfo(c)
@@ -123,6 +126,9 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		if apiErr == nil {
 			if memoryMB != nil {
 				a.connectBackend().RecordConnectMemoryIgnored(ctx)
+			}
+			if cpuCount != nil {
+				a.connectBackend().RecordConnectCPUCountIgnored(ctx)
 			}
 			apiSbx := toAPISandbox(*sbx)
 			// A cluster can move to a new domain while its sandboxes keep
@@ -222,6 +228,15 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		return
 	}
 
+	// As resume does; the check under the start stays for what changes in
+	// between.
+	if apiErr := a.validateResumeSize(ctx, teamInfo, lastSnapshot.EnvBuild, cpuCount, memoryMB); apiErr != nil {
+		setMemoryOverrideOutcome(c, memory, apiErr)
+		apierrors.SendAPIError(c, apiErr)
+
+		return
+	}
+
 	sbxlogger.E(&sbxlogger.SandboxMetadata{
 		SandboxID:  sandboxID,
 		TemplateID: lastSnapshot.Snapshot.EnvID,
@@ -239,10 +254,11 @@ func (a *APIStore) connectSandbox(c *gin.Context, sandboxID api.SandboxID, timeo
 		demandsFilesystemBoot(memory, lastSnapshot.Snapshot),
 		nil, // mcp
 		orchestrator.WithMemoryMB(memoryMB),
-		// The size is checked only if this connect holds the start; joining
-		// another request's start of the sandbox, it is ignored and the
-		// connect's own timeout applied. A demanded cold boot is still refused
-		// rather than ride a memory restore.
+		orchestrator.WithCPUCount(cpuCount),
+		// A valid size and count apply only if this connect holds the start;
+		// joining another request's start of the sandbox, they are ignored and
+		// the connect's own timeout applied. A demanded cold boot is still
+		// refused rather than ride a memory restore.
 		orchestrator.Connect(),
 	)
 	setMemoryOverrideOutcome(c, memory, createErr)

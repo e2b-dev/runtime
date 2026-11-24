@@ -1213,10 +1213,13 @@ type ConnectSandbox struct {
 
 // ConnectSandboxV2 defines model for ConnectSandboxV2.
 type ConnectSandboxV2 struct {
+	// CpuCount Online vCPU target for the sandbox when this connect resumes it, from its memory snapshot or by cold-booting (memory false). Defaults to the snapshot's cpuCount; for a resizable template (one with maxCpuCount) that count is lowered to the team's vCPU limit when above it. A requested count is at most the template's maxCpuCount (fixed-size templates accept only their cpuCount) and the team's vCPU limit, and is refused when resizable templates are not enabled for the team. Like memoryMB: a sandbox that is already running keeps its count and the field is ignored. For a paused sandbox, a count the snapshot or the team cannot take is refused with 400; a count it can take applies only when this connect resumes the sandbox, and is ignored when another request is already resuming it. The response's cpuCount reports the count the sandbox runs with.
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
 	// Memory Defaults to true. When false and the sandbox is paused, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB when this connect resumes it, from its memory snapshot or by cold-booting (memory false). Defaults to the memory the sandbox had when it was paused; at least that, and at most the template's maxMemoryMB, in steps of 128 MiB above its memoryMB. Like memory, it applies only when this connect resumes a paused sandbox: a sandbox that is already running, or that another request is already resuming, keeps its size and the field is ignored. The response does not report the size; read the sandbox to see it, and note that while the API does not know a running sandbox's size (it was started by an older API version, for example), the sandbox's memoryMB may report its boot RAM.
+	// MemoryMB Memory for the sandbox in MiB when this connect resumes it, from its memory snapshot or by cold-booting (memory false). Defaults to the memory the sandbox had when it was paused; at least that, and at most the template's maxMemoryMB, in steps of 128 MiB above its memoryMB. A sandbox that is already running keeps its size and the field is ignored. For a paused sandbox, a size the snapshot or the team cannot take is refused with 400; a size it can take applies only when this connect resumes the sandbox, and is ignored when another request is already resuming it. The response's memoryMB reports the size the sandbox runs with.
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
 
 	// Timeout Timeout in seconds from the current time after which the sandbox should expire
@@ -2003,6 +2006,9 @@ type Sandbox struct {
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ClientID string `json:"clientID"`
 
+	// CpuCount Online vCPUs the sandbox runs with. A connect reports the count of the sandbox it returns, which differs from a requested cpuCount when the request was ignored. Absent from older API versions.
+	CpuCount *CPUCount `json:"cpuCount,omitempty"`
+
 	// Domain Base domain where the sandbox traffic is accessible
 	Domain *string `json:"domain,omitempty"`
 
@@ -2011,6 +2017,9 @@ type Sandbox struct {
 
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
+
+	// MemoryMB Memory the sandbox runs with in MiB. A connect reports the size of the sandbox it returns, which differs from a requested memoryMB when the request was ignored. While the API does not know a sandbox's size (it was started by an older API version, for example), this reports its boot RAM. Absent from older API versions.
+	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
 
 	// SandboxID Identifier of the sandbox
 	SandboxID string `json:"sandboxID"`

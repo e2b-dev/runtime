@@ -45,6 +45,8 @@ func (notFoundResumeBackend) WaitForStateChange(context.Context, uuid.UUID, stri
 
 func (notFoundResumeBackend) RecordConnectMemoryIgnored(context.Context) {}
 
+func (notFoundResumeBackend) RecordConnectCPUCountIgnored(context.Context) {}
+
 func (notFoundResumeBackend) KeepAliveFor(context.Context, uuid.UUID, string, time.Duration, bool) (*sandbox.Sandbox, *api.APIError) {
 	return nil, &api.APIError{Code: http.StatusNotFound, ClientMsg: "not found", Err: sandbox.ErrNotFound}
 }

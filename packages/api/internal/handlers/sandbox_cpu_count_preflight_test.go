@@ -44,7 +44,7 @@ func resizableTemplatesFlags(t *testing.T, enabled bool) *featureflags.Client {
 	return flags
 }
 
-func requireCPUCountRefused(t *testing.T, recorder *httptest.ResponseRecorder, wantCode string) {
+func requireSizeRefused(t *testing.T, recorder *httptest.ResponseRecorder, wantCode string) {
 	t.Helper()
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
@@ -123,7 +123,7 @@ func TestResume_CPUCountRefusedBeforeTheStartIsReserved(t *testing.T) {
 
 			store.PostSandboxesSandboxIDResume(ginCtx, sandboxID)
 
-			requireCPUCountRefused(t, recorder, tt.wantCode)
+			requireSizeRefused(t, recorder, tt.wantCode)
 		})
 	}
 }
@@ -186,7 +186,7 @@ func TestResume_MemoryRefusedBeforeTheStartIsReserved(t *testing.T) {
 
 			store.PostSandboxesSandboxIDResume(ginCtx, sandboxID)
 
-			requireCPUCountRefused(t, recorder, tt.wantCode)
+			requireSizeRefused(t, recorder, tt.wantCode)
 		})
 	}
 }

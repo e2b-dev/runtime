@@ -119,8 +119,8 @@ func (o *Orchestrator) resolveSandboxMemory(
 }
 
 // CheckSandboxMemory refuses a requested memoryMB that the build or the team
-// cannot honour. The resume handler runs it before the start is reserved, for
-// the reason CheckSandboxCPUCount gives. CreateSandbox decides the size again
+// cannot honour. The resume and connect handlers run it before the start is
+// reserved, for the reason CheckSandboxCPUCount gives. CreateSandbox decides the size again
 // from the build it fetches under the reservation; this counts only its
 // refusals.
 func (o *Orchestrator) CheckSandboxMemory(
@@ -137,8 +137,8 @@ func (o *Orchestrator) CheckSandboxMemory(
 	if _, _, apiErr := pickSandboxMemory(ctx, flags, team, build, requested, false); apiErr != nil {
 		setMemorySpanAttributes(ctx, build, requested)
 		o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
-		// The resume handler answers this refusal directly; it reaches no other
-		// error report on the span.
+		// The handler answers this refusal directly; it reaches no other error
+		// report on the span.
 		trace.SpanFromContext(ctx).RecordError(apiErr.Err, trace.WithAttributes(attribute.String("error_code", apiErr.ErrorCode)))
 
 		return apiErr

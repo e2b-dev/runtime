@@ -28,6 +28,8 @@ type keepAliveRecorder struct {
 	duration time.Duration
 	calls    int
 	ignored  int
+	// cpuIgnored counts the connects reported to have ignored their cpuCount.
+	cpuIgnored int
 }
 
 func (s *keepAliveRecorder) KeepAliveFor(_ context.Context, _ uuid.UUID, _ string, duration time.Duration, _ bool) (*sandbox.Sandbox, *api.APIError) {
@@ -43,6 +45,10 @@ func (s *keepAliveRecorder) WaitForStateChange(context.Context, uuid.UUID, strin
 
 func (s *keepAliveRecorder) RecordConnectMemoryIgnored(context.Context) {
 	s.ignored++
+}
+
+func (s *keepAliveRecorder) RecordConnectCPUCountIgnored(context.Context) {
+	s.cpuIgnored++
 }
 
 func newConnectV2Request(t *testing.T, sandboxID string, body io.Reader) (*httptest.ResponseRecorder, *gin.Context) {

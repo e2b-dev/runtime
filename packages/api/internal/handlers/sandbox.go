@@ -141,6 +141,8 @@ func toAPISandbox(sbx sandbox.Sandbox) *api.Sandbox {
 		EnvdAccessToken:    sbx.EnvdAccessToken,
 		TrafficAccessToken: sbx.TrafficAccessToken,
 		Domain:             sbx.Domain,
+		CpuCount:           new(api.CPUCount(sbx.VCpu)),
+		MemoryMB:           new(api.MemoryMB(sbx.TotalMemoryMB())),
 	}
 }
 

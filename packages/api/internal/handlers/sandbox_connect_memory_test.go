@@ -112,10 +112,11 @@ func connectMemoryFlags(t *testing.T, resizable bool) *featureflags.Client {
 	return flags
 }
 
-// newPausedMemorySnapshotStore seeds a paused sandbox booted with 2048 MiB whose
-// build can grow to maxRAMMB (fixed when nil), was paused at pausedMB (unknown
-// when 0) and baked envdVersion, and returns a store whose connect reads it.
-func newPausedMemorySnapshotStore(t *testing.T, resizable bool, maxRAMMB *int64, pausedMB int64, envdVersion string) (*APIStore, uuid.UUID, string) {
+// newPausedSnapshotStore seeds a paused sandbox booted with 2048 MiB and 2
+// vCPUs whose build can grow to maxRAMMB (fixed when nil) and be resized up to
+// maxVcpu vCPUs (fixed when nil), was paused at pausedMB (unknown when 0) and
+// baked envdVersion, and returns a store whose connect reads it.
+func newPausedSnapshotStore(t *testing.T, resizable bool, maxRAMMB *int64, pausedMB int64, envdVersion string, maxVcpu *int64) (*APIStore, uuid.UUID, string) {
 	t.Helper()
 
 	db := testutils.SetupDatabase(t)
@@ -142,7 +143,7 @@ func newPausedMemorySnapshotStore(t *testing.T, resizable bool, maxRAMMB *int64,
 	})
 	require.NoError(t, err)
 	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(),
-		"UPDATE public.env_builds SET max_ram_mb = $1 WHERE id = $2", maxRAMMB, row.BuildID))
+		"UPDATE public.env_builds SET max_ram_mb = $1, max_vcpu = $2 WHERE id = $3", maxRAMMB, maxVcpu, row.BuildID))
 
 	return &APIStore{
 		snapshotCache:          snapshotcache.NewSnapshotCache(db.SqlcClient, redis_utils.SetupInstance(t)),
@@ -153,11 +154,10 @@ func newPausedMemorySnapshotStore(t *testing.T, resizable bool, maxRAMMB *int64,
 
 const currentEnvd = "0.10.202611200046-e581f4205ef"
 
-// A connect does not check its size before the start: the size is checked
-// only when the connect holds the start (in the orchestrator), and ignored when
-// it joins another request's start. So a size the paused snapshot could not
-// take still reaches the start rather than being refused up front.
-func TestConnectV2_MemoryIsLeftToTheStart(t *testing.T) {
+// A connect refuses a size the paused snapshot or the team can never take
+// before it reserves the start, as resume does, so the refused size never
+// holds the start and no request joined to it has to start the sandbox again.
+func TestConnectV2_MemoryRefusedBeforeTheStart(t *testing.T) {
 	t.Parallel()
 
 	grows := new(int64(8192))
@@ -169,18 +169,19 @@ func TestConnectV2_MemoryIsLeftToTheStart(t *testing.T) {
 		envd      string
 		coldBoot  bool
 		requested api.MemoryMB
+		wantCode  string
 	}{
-		{name: "fixed-size snapshot", resizable: true, envd: currentEnvd, requested: 4096},
-		{name: "feature off", maxRAMMB: grows, envd: currentEnvd, requested: 4096},
-		{name: "above the maximum", resizable: true, maxRAMMB: grows, envd: currentEnvd, requested: 9216},
-		{name: "shrink below the paused size", resizable: true, maxRAMMB: grows, pausedMB: 4096, envd: currentEnvd, requested: 3072},
-		{name: "cold boot shrink below the paused size", resizable: true, maxRAMMB: grows, pausedMB: 4096, envd: currentEnvd, coldBoot: true, requested: 3072},
-		{name: "growth on an outdated envd", resizable: true, maxRAMMB: grows, envd: "0.10.2", requested: 4096},
+		{name: "fixed-size snapshot", resizable: true, envd: currentEnvd, requested: 4096, wantCode: "sandbox_memory_not_resizable"},
+		{name: "feature off", maxRAMMB: grows, envd: currentEnvd, requested: 4096, wantCode: "sandbox_memory_disabled"},
+		{name: "above the maximum", resizable: true, maxRAMMB: grows, envd: currentEnvd, requested: 9216, wantCode: "sandbox_memory_out_of_range"},
+		{name: "shrink below the paused size", resizable: true, maxRAMMB: grows, pausedMB: 4096, envd: currentEnvd, requested: 3072, wantCode: "sandbox_memory_shrink_unsupported"},
+		{name: "cold boot shrink below the paused size", resizable: true, maxRAMMB: grows, pausedMB: 4096, envd: currentEnvd, coldBoot: true, requested: 3072, wantCode: "sandbox_memory_shrink_unsupported"},
+		{name: "growth on an outdated envd", resizable: true, maxRAMMB: grows, envd: "0.10.2", requested: 4096, wantCode: "sandbox_memory_envd_outdated"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			store, teamID, sandboxID := newPausedMemorySnapshotStore(t, tt.resizable, tt.maxRAMMB, tt.pausedMB, tt.envd)
+			store, teamID, sandboxID := newPausedSnapshotStore(t, tt.resizable, tt.maxRAMMB, tt.pausedMB, tt.envd, nil)
 			starts := &startRecorder{}
 			store.createBackendOverride, store.templateSpawnCounter = starts, testSpawnCounter(t)
 			body := api.PostV2SandboxesSandboxIDConnectJSONRequestBody{MemoryMB: &tt.requested}
@@ -191,8 +192,8 @@ func TestConnectV2_MemoryIsLeftToTheStart(t *testing.T) {
 
 			store.PostV2SandboxesSandboxIDConnect(ginCtx, sandboxID)
 
-			require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
-			assert.Equal(t, 1, starts.calls)
+			requireSizeRefused(t, recorder, tt.wantCode)
+			assert.Zero(t, starts.calls, "a refused size never takes the start")
 		})
 	}
 }
@@ -222,7 +223,7 @@ func (r *startRecorder) CreateSandbox(_ context.Context, sandboxID, _ string, _ 
 	r.timeout = timeout
 	r.options = len(options)
 
-	return sandbox.Sandbox{SandboxID: sandboxID, State: sandbox.StateRunning, RamMB: 2048}, nil
+	return sandbox.Sandbox{SandboxID: sandboxID, State: sandbox.StateRunning, VCpu: 2, RamMB: 2048}, nil
 }
 
 // A connect to a paused sandbox resumes it through the orchestrator's start,
@@ -240,7 +241,7 @@ func TestConnectV2_MemoryAcceptedGoesToTheStart(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			store, teamID, sandboxID := newPausedMemorySnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd)
+			store, teamID, sandboxID := newPausedSnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd, nil)
 			starts := &startRecorder{}
 			store.createBackendOverride, store.templateSpawnCounter = starts, testSpawnCounter(t)
 			body := api.PostV2SandboxesSandboxIDConnectJSONRequestBody{MemoryMB: new(api.MemoryMB(4096)), Timeout: new(int32(600))}
@@ -293,6 +294,8 @@ func (s *transitionStub) RecordConnectMemoryIgnored(context.Context) {
 	s.ignored++
 }
 
+func (s *transitionStub) RecordConnectCPUCountIgnored(context.Context) {}
+
 // A connect that finds the sandbox pausing waits for the pause. When the pause
 // goes through, the connect resumes it at the requested size; when the pause is
 // refused and the sandbox restored, it is running again, keeps its size and the
@@ -303,7 +306,7 @@ func TestConnectV2_MemoryAcrossAPause(t *testing.T) {
 	t.Run("pausing, paused, resumed at the size", func(t *testing.T) {
 		t.Parallel()
 
-		store, teamID, sandboxID := newPausedMemorySnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd)
+		store, teamID, sandboxID := newPausedSnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd, nil)
 		starts := &startRecorder{}
 		store.createBackendOverride, store.templateSpawnCounter = starts, testSpawnCounter(t)
 		stub := &transitionStub{paused: true}
@@ -366,7 +369,7 @@ func TestStartErrorsKeepTheirRetryHint(t *testing.T) {
 		t.Run(tt.name+"/connect", func(t *testing.T) {
 			t.Parallel()
 
-			store, teamID, sandboxID := newPausedMemorySnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd)
+			store, teamID, sandboxID := newPausedSnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd, nil)
 			store.createBackendOverride, store.templateSpawnCounter = failingStart{err: tt.err}, testSpawnCounter(t)
 			recorder, ginCtx := connectMemoryRequest(t, teamID, sandboxID, api.PostV2SandboxesSandboxIDConnectJSONRequestBody{MemoryMB: new(api.MemoryMB(4096))})
 
@@ -378,7 +381,7 @@ func TestStartErrorsKeepTheirRetryHint(t *testing.T) {
 		t.Run(tt.name+"/resume", func(t *testing.T) {
 			t.Parallel()
 
-			store, teamID, sandboxID := newPausedMemorySnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd)
+			store, teamID, sandboxID := newPausedSnapshotStore(t, true, new(int64(8192)), 2048, currentEnvd, nil)
 			store.createBackendOverride, store.templateSpawnCounter = failingStart{err: tt.err}, testSpawnCounter(t)
 			store.resumeBackendOverride = notFoundResumeBackend{}
 			raw, err := json.Marshal(api.PostSandboxesSandboxIDResumeJSONRequestBody{})

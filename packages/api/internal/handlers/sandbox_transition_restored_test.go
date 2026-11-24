@@ -118,6 +118,8 @@ func (s *connectStub) WaitForStateChange(context.Context, uuid.UUID, string) err
 
 func (s *connectStub) RecordConnectMemoryIgnored(context.Context) {}
 
+func (s *connectStub) RecordConnectCPUCountIgnored(context.Context) {}
+
 // A connect that waited on a refused-and-restored pause re-reads and connects
 // to the running sandbox.
 func TestConnect_RestoredPauseConnects(t *testing.T) {

@@ -76,9 +76,15 @@ type Orchestrator struct {
 	// memoryOverrideCounter replaces the package api.sandbox.memory_override
 	// counter when set.
 	memoryOverrideCounter metric.Int64Counter
+	// cpuCountOverrideCounter replaces the package
+	// api.sandbox.cpu_count_override counter when set.
+	cpuCountOverrideCounter metric.Int64Counter
 	// joinExtensionFailedCounter replaces the package
 	// api.sandbox.connect_join_extension_failed counter when set.
-	joinExtensionFailedCounter   metric.Int64Counter
+	joinExtensionFailedCounter metric.Int64Counter
+	// joinerRestartCounter replaces the package
+	// api.sandbox.start_joiner_restart counter when set.
+	joinerRestartCounter         metric.Int64Counter
 	resumeOriginNodeRemapCounter metric.Int64Counter
 	pauseRefusalRestoreCounter   metric.Int64Counter
 	networkUpdateUnstoredCounter metric.Int64Counter

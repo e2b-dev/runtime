@@ -1415,29 +1415,34 @@ reports show its VMs, so a burst of builds between reports spreads instead of fo
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
 with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies
-`max_vcpu` from the source build into the snapshot build row. Create and explicit resume
-accept an optional `cpuCount` while the team's `resizable-templates` flag is on. The shared
-start path validates it against the build capacity and the caller's current CPU limit.
+`max_vcpu` from the source build into the snapshot build row. Create, explicit resume and the
+v2 connect accept an optional `cpuCount` while the team's `resizable-templates` flag is on. The
+shared start path validates it against the build capacity and the caller's current CPU limit.
 A resizable build that inherits a count above that limit starts at the limit instead, so
-connect and auto-resume, which cannot name a count, still reach the sandbox. The resume handler
-refuses a `cpuCount` the snapshot or the team cannot honour before the start is reserved,
+auto-resume and a connect without a count still reach the sandbox. The resume and v2 connect
+handlers refuse a `cpuCount` the snapshot or the team cannot honour before the start is reserved,
 so the 400 reaches only the request that named it, never a connect or auto-resume joined
-to the same start. A valid `cpuCount` returns 409 if another start is already in
-flight, since it cannot apply the override to that start. Connect, auto-resume, and fork
-inherit the stored CPU count.
+to the same start. A valid `cpuCount` on create or resume returns 409 if another start is
+already in flight, since it cannot apply the override to that start. On connect, `cpuCount`
+follows `memoryMB` (below): a valid count applies only when that connect resumes the paused
+sandbox, and is ignored when the sandbox is running or the connect joins another start.
+Auto-resume, fork and a connect without `cpuCount` inherit the stored CPU count.
 
 Memory follows the same shape behind the same flag. A build registered with a max memory
 (`maxMemoryMB`, whole 128 MiB slots above `memoryMB`) gets a hotplug region from template
 builders at or above the release that understands it. The build records `max_ram_mb` and, as its
 start size, its boot RAM. Create, explicit resume and the v2 connect accept an optional
-`memoryMB`. On connect it follows `memory`: it applies only when that connect resumes the
-paused sandbox, and is checked only then, so a sandbox that is already running keeps its size
-and the field is ignored. A connect that meets another start of the sandbox joins it, its size
+`memoryMB`. On connect it follows `memory`: for a running sandbox the field is ignored and the
+sandbox keeps its size. For a paused one, the connect first refuses a size the snapshot or the
+team cannot take, as resume does, before it reserves the start, so a refused size never
+holds the start; a valid size then applies only when that connect resumes the sandbox. A connect that meets another start of the sandbox joins it, its size
 ignored and its own timeout applied; only a demanded cold boot of a memory snapshot
 (`memory: false`) is refused with 409 `sandbox_start_in_flight` instead, while `memory: false`
 on a filesystem-only snapshot, which cold-boots anyway, joins like any connect. When a start
-that named a size fails, the requests that joined it start the sandbox again on their own
-terms rather than take a failure that may be the size's. Memory only
+that named a size or count fails before any sandbox was created, because a field it named was
+refused or no node could be found for it, the requests that joined it start the sandbox again on
+their own terms; any other failure reaches them unchanged, so none starts a sandbox that may
+still be being removed. Memory only
 grows, a size the sandbox already has survives a lowered team limit, and a new sandbox's growth
 above boot RAM, named or inherited from a snapshot template, is held to the caller's limit. Every
 start from a build with a max memory sends the resolved size as `memory_mb` and is placed only on

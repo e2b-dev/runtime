@@ -21,10 +21,24 @@ import (
 )
 
 // errCodeSizedStartFailed is what the requests that joined a start see when
-// that start named a memory size and the size was refused: the failure is the
-// size's alone, so each of them starts the sandbox again on its own terms
-// instead of taking it.
+// that start named a memoryMB or a cpuCount and failed before any sandbox was
+// created, on a cause the joiners need not share (see joinersMayRestart): each
+// of them starts the sandbox again on its own terms instead of taking it.
 const errCodeSizedStartFailed = "sandbox_sized_start_failed"
+
+// joinerRestartCounter counts the requests that joined a start that named a
+// cpuCount or memoryMB and failed before creating the sandbox
+// (errCodeSizedStartFailed), by route and outcome: restarted when the request
+// went on to start the sandbox itself, gave_up when it had already done so
+// once and answered the 503.
+var joinerRestartCounter, _ = memoryMeter.Int64Counter("api.sandbox.start_joiner_restart",
+	metric.WithDescription("Number of requests that joined a start with a requested cpuCount or memoryMB that failed before creating the sandbox, by route and outcome (restarted, gave_up)"))
+
+// The outcomes api.sandbox.start_joiner_restart counts.
+const (
+	joinerRestarted = "restarted"
+	joinerGaveUp    = "gave_up"
+)
 
 // joinExtensionFailedCounter counts connects that joined a start, got its
 // sandbox running, and could not extend its timeout for a reason other than
@@ -33,10 +47,10 @@ const errCodeSizedStartFailed = "sandbox_sized_start_failed"
 var joinExtensionFailedCounter, _ = memoryMeter.Int64Counter("api.sandbox.connect_join_extension_failed",
 	metric.WithDescription("Number of connects that joined a running start but could not extend the sandbox's timeout, by error code"))
 
-// isSizeRefusal reports whether a start's error is a refusal of the memory size
-// the request named, by the API's check under the start. No sandbox was created.
-func isSizeRefusal(apiErr *api.APIError) bool {
-	switch apiErr.ErrorCode {
+// isMemoryRefusal reports a refusal of a memory size, by the API's check under
+// the start or by the node asked to create the sandbox. No sandbox is created.
+func isMemoryRefusal(code string) bool {
+	switch code {
 	case errCodeSandboxMemoryDisabled,
 		errCodeSandboxMemoryNotResizable,
 		errCodeSandboxMemoryOutOfRange,
@@ -49,34 +63,72 @@ func isSizeRefusal(apiErr *api.APIError) bool {
 	return false
 }
 
+// isCPUCountRefusal reports a refusal of a cpuCount by the API's check under
+// the start. No sandbox is created.
+func isCPUCountRefusal(code string) bool {
+	switch code {
+	case errCodeSandboxCpuCountDisabled,
+		errCodeSandboxCpuCountNotResizable,
+		errCodeSandboxCpuCountOutOfRange,
+		errCodeSandboxCpuCountTeamLimit:
+		return true
+	}
+
+	return false
+}
+
+// joinersMayRestart reports whether the requests that joined a failed start may
+// start the sandbox again themselves. Only a start that named a memoryMB or a
+// cpuCount qualifies, and only for a failure before any sandbox was created
+// whose cause may be that request's own: the refusal of a field it named, or a
+// placement that found no node for it (the three placement codes are answered
+// only when no create ran). Any other failure, one after the sandbox was
+// created included, reaches the joiners unchanged, so none starts a sandbox
+// that may still be being removed.
+func joinersMayRestart(apiErr *api.APIError, opts createOptions) bool {
+	switch {
+	case opts.memoryMB != nil && isMemoryRefusal(apiErr.ErrorCode),
+		opts.cpuCount != nil && isCPUCountRefusal(apiErr.ErrorCode):
+		return true
+	case opts.memoryMB == nil && opts.cpuCount == nil:
+		return false
+	}
+
+	switch apiErr.ErrorCode {
+	case errCodeCapacityUnavailable, errCodeNoCompatibleNode, errCodeFeatureUnsupported:
+		return true
+	}
+
+	return false
+}
+
 // StartErrorKeepsRetryHint reports whether a start's error carries its own retry
-// hint that a handler must pass through: the refusals of a requested memory size,
-// which no retry changes, and a joined sized start that failed, which a retry may
-// pass.
+// hint that a handler must pass through: the refusals of a requested memoryMB
+// or cpuCount, which no retry changes, and a joined start that named one and
+// failed, which a retry may pass.
 func StartErrorKeepsRetryHint(apiErr *api.APIError) bool {
 	if apiErr == nil {
 		return false
 	}
 
-	return isSizeRefusal(apiErr) || apiErr.ErrorCode == errCodeSizedStartFailed
+	return isMemoryRefusal(apiErr.ErrorCode) || isCPUCountRefusal(apiErr.ErrorCode) || apiErr.ErrorCode == errCodeSizedStartFailed
 }
 
 // publishedStartError is what a failed start hands the requests that joined
-// it. When the start named a size and the size was refused, it hands them
-// errCodeSizedStartFailed, since the refusal is the size's alone. Every other
-// failure reaches them unchanged: one that came after the sandbox was created
-// keeps its own retry hint, so no joiner starts the sandbox again while it is
-// being removed.
-func publishedStartError(apiErr *api.APIError, sized bool) error {
-	if !sized || !isSizeRefusal(apiErr) {
+// it: errCodeSizedStartFailed when they may start the sandbox again
+// (joinersMayRestart), and the start's own error otherwise. The error reaches
+// them through the start result in the store, which keeps its code and message
+// but not its retry hint.
+func publishedStartError(apiErr *api.APIError, opts createOptions) error {
+	if !joinersMayRestart(apiErr, opts) {
 		return apiErr
 	}
 
 	return &api.APIError{
 		Code:      http.StatusServiceUnavailable,
 		ErrorCode: errCodeSizedStartFailed,
-		ClientMsg: "The sandbox's start with a requested memory size failed; retry",
-		Err:       fmt.Errorf("a start of the sandbox with a requested memory size failed: %w", apiErr.Err),
+		ClientMsg: "The sandbox's start with a requested cpuCount or memoryMB failed; retry",
+		Err:       fmt.Errorf("a start of the sandbox with a requested cpuCount or memoryMB failed: %w", apiErr.Err),
 		Retryable: apierrors.CanRetry,
 	}
 }
@@ -97,7 +149,7 @@ func (o *Orchestrator) reserveStart(ctx context.Context, team *teamtypes.Team, s
 			ClientMsg: fmt.Sprintf(
 				"you have reached the maximum number of concurrent E2B sandboxes (%d). If you need more, "+
 					"please visit 'https://e2b.dev/docs/billing'", limit),
-			Err:       fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, limit),
+			Err:       fmt.Errorf("team '%s' has reached the maximum number of sandboxes (%d)", team.ID, limit),
 			Retryable: apierrors.CanRetry,
 		}
 	case errors.Is(err, sandbox.ErrSandboxKilled):
@@ -119,9 +171,9 @@ func (o *Orchestrator) reserveStart(ctx context.Context, team *teamtypes.Team, s
 }
 
 // joinStart rides the start another request holds, or takes the sandbox it
-// finds running. retry reports that the start joined named a memory size that
-// was refused, and that the caller may start the sandbox itself once
-// (mayRetry).
+// finds running. retry reports that the start joined failed with
+// errCodeSizedStartFailed, and that the caller may start the sandbox itself
+// once (mayRetry).
 func (o *Orchestrator) joinStart(
 	ctx context.Context,
 	team *teamtypes.Team,
@@ -132,8 +184,14 @@ func (o *Orchestrator) joinStart(
 	waitForStart func(context.Context) (sandbox.Sandbox, error),
 	mayRetry bool,
 ) (sbx sandbox.Sandbox, apiErr *api.APIError, retry bool) {
-	ignoresMemory := opts.connect && !demandFilesystemBoot && opts.cpuCount == nil
-	if opts.memoryMB != nil && !ignoresMemory {
+	// A connect rides the start in flight with its size and count ignored,
+	// unless it demands a cold boot, which is refused below.
+	ignoresSize := opts.connect && !demandFilesystemBoot
+	if opts.cpuCount != nil && !ignoresSize {
+		// Every branch below refuses this request.
+		o.recordCPUCountOverride(ctx, cpuCountOverrideRejected, ErrCodeStartInFlight)
+	}
+	if opts.memoryMB != nil && !ignoresSize {
 		// Every branch below refuses this request.
 		o.recordMemoryOverride(ctx, memoryOverrideRejected, ErrCodeStartInFlight, memorySourceNamed)
 	}
@@ -150,7 +208,7 @@ func (o *Orchestrator) joinStart(
 		}, false
 	}
 
-	if opts.cpuCount != nil {
+	if opts.cpuCount != nil && !ignoresSize {
 		return sandbox.Sandbox{}, &api.APIError{
 			Code:      http.StatusConflict,
 			ErrorCode: ErrCodeStartInFlight,
@@ -160,7 +218,7 @@ func (o *Orchestrator) joinStart(
 		}, false
 	}
 
-	if opts.memoryMB != nil && !ignoresMemory {
+	if opts.memoryMB != nil && !ignoresSize {
 		return sandbox.Sandbox{}, &api.APIError{
 			Code:      http.StatusConflict,
 			ErrorCode: ErrCodeStartInFlight,
@@ -189,15 +247,20 @@ func (o *Orchestrator) joinStart(
 			if mayRetry {
 				// Not marked as joined: this request goes on to start the
 				// sandbox itself.
-				logger.L().Info(ctx, "the start joined named a memory size that was refused; starting the sandbox again", logger.WithSandboxID(sandboxID))
+				logger.L().Info(ctx, "the start joined named a cpuCount or memoryMB and failed before creating the sandbox; starting the sandbox again", logger.WithSandboxID(sandboxID))
+				o.recordJoinerRestart(ctx, joinerRestarted)
 
 				return sandbox.Sandbox{}, nil, true
 			}
+			o.recordJoinerRestart(ctx, joinerGaveUp)
 			apiErr.Retryable = apierrors.CanRetry
 		}
 		joined.Mark(ctx)
 		if opts.memoryMB != nil {
 			o.recordMemoryOverride(ctx, memoryOverrideFailed, apiErr.ErrorCode, memorySourceNamed)
+		}
+		if opts.cpuCount != nil {
+			o.recordCPUCountOverride(ctx, cpuCountOverrideFailed, apiErr.ErrorCode)
 		}
 
 		return sandbox.Sandbox{}, apiErr, false
@@ -225,6 +288,9 @@ func (o *Orchestrator) joinStart(
 	if opts.memoryMB != nil {
 		o.recordMemoryOverride(ctx, memoryOverrideIgnored, "", memorySourceNamed)
 	}
+	if opts.cpuCount != nil {
+		o.RecordConnectCPUCountIgnored(ctx)
+	}
 
 	return sbx, nil, false
 }
@@ -248,6 +314,21 @@ func (o *Orchestrator) recordJoinExtensionFailed(ctx context.Context, errorCode 
 	counter := joinExtensionFailedCounter
 	if o != nil && o.joinExtensionFailedCounter != nil {
 		counter = o.joinExtensionFailedCounter
+	}
+	if counter != nil {
+		counter.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// recordJoinerRestart counts a request that joined a start which failed with
+// errCodeSizedStartFailed, under the route ctx carries, on the orchestrator's
+// counter, the package counter unless one was set; o may be nil.
+func (o *Orchestrator) recordJoinerRestart(ctx context.Context, outcome string) {
+	attrs := []attribute.KeyValue{attribute.String("outcome", outcome), attribute.String("route", memoryRoute(ctx))}
+	telemetry.ReportEvent(ctx, "joined start failed on its size", attrs...)
+	counter := joinerRestartCounter
+	if o != nil && o.joinerRestartCounter != nil {
+		counter = o.joinerRestartCounter
 	}
 	if counter != nil {
 		counter.Add(ctx, 1, metric.WithAttributes(attrs...))

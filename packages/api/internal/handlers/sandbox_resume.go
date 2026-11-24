@@ -20,6 +20,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	typesteam "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/ginutils"
@@ -188,17 +189,7 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 		return
 	}
 
-	// Refuse a cpuCount the snapshot or the team cannot honour before the start
-	// is reserved, so the 400 reaches only this request and never a connect or
-	// auto-resume joined to the same start.
-	if apiErr := orchestrator.CheckSandboxCPUCount(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.CpuCount); apiErr != nil {
-		setMemoryOverrideOutcome(c, body.Memory, apiErr)
-		apierrors.SendAPIError(c, apiErr)
-
-		return
-	}
-
-	if apiErr := a.orchestrator.CheckSandboxMemory(ctx, a.featureFlags, teamInfo, lastSnapshot.EnvBuild, body.MemoryMB); apiErr != nil {
+	if apiErr := a.validateResumeSize(ctx, teamInfo, lastSnapshot.EnvBuild, body.CpuCount, body.MemoryMB); apiErr != nil {
 		setMemoryOverrideOutcome(c, body.Memory, apiErr)
 		apierrors.SendAPIError(c, apiErr)
 
@@ -237,6 +228,18 @@ func (a *APIStore) PostSandboxesSandboxIDResume(c *gin.Context, sandboxID api.Sa
 	}
 
 	c.JSON(http.StatusCreated, &sbx)
+}
+
+// validateResumeSize refuses a cpuCount or memoryMB that the paused sandbox's
+// build or the team cannot honour. Resume and connect run it before the start
+// is reserved, so the 400 reaches only the request that named the size and a
+// refused size never holds the start other requests join.
+func (a *APIStore) validateResumeSize(ctx context.Context, team *typesteam.Team, build queries.EnvBuild, cpuCount, memoryMB *int32) *api.APIError {
+	if apiErr := a.orchestrator.CheckSandboxCPUCount(ctx, a.featureFlags, team, build, cpuCount); apiErr != nil {
+		return apiErr
+	}
+
+	return a.orchestrator.CheckSandboxMemory(ctx, a.featureFlags, team, build, memoryMB)
 }
 
 func convertDatabaseMountsToOrchestratorMounts(volumes []*types.SandboxVolumeMountConfig) []*orchestratorgrpc.SandboxVolumeMount {

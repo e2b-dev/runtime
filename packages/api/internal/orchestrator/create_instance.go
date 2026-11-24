@@ -283,10 +283,12 @@ func WithMemoryMB(memoryMB *int32) CreateOption {
 	return func(o *createOptions) { o.memoryMB = memoryMB }
 }
 
-// Connect marks a start asked for by connect. Its memoryMB, like memory,
-// applies only when this request starts the sandbox: it is checked once the
-// request holds the start, and ignored when the request joins another start of
-// the sandbox, or finds it running. A connect that joins applies its own
+// Connect marks a start asked for by connect. Its memoryMB and cpuCount, like
+// memory, apply only when this request starts the sandbox: the connect handler
+// has already refused a size the snapshot or the team cannot take
+// (CheckSandboxMemory, CheckSandboxCPUCount); here they are checked again once
+// the request holds the start, and ignored when the request joins another start
+// of the sandbox, or finds it running. A connect that joins applies its own
 // timeout to the sandbox it gets, as a connect to a running sandbox does.
 // Create and resume keep refusing to join with a size.
 func Connect() CreateOption {
@@ -325,14 +327,18 @@ func (o *Orchestrator) CreateSandbox(
 		option(&opts)
 	}
 
-	if opts.cpuCount != nil {
+	// A connect's count, checked by its handler before the start, is checked
+	// again only once it holds the start, as its size is.
+	if opts.cpuCount != nil && !opts.connect {
 		if apiErr := cpuCountDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			o.recordCPUCountOverride(ctx, cpuCountOverrideRejected, apiErr.ErrorCode)
+
 			return sandbox.Sandbox{}, apiErr
 		}
 	}
 
-	// A connect's size is checked only once it holds the start: joining or
-	// finding the sandbox running, it is ignored, never refused.
+	// A connect's size, checked by its handler before the start, is checked
+	// again only once it holds the start: joining another start, it is ignored.
 	if opts.memoryMB != nil && !opts.connect {
 		if apiErr := memoryDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
 			o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
@@ -391,7 +397,7 @@ func (o *Orchestrator) CreateSandbox(
 		// Don't change this handling
 		// https://go.dev/play/p/4oy02s7BDMc
 		if apiErr != nil {
-			finishStart(sbx, publishedStartError(apiErr, opts.memoryMB != nil))
+			finishStart(sbx, publishedStartError(apiErr, opts))
 		} else {
 			finishStart(sbx, nil)
 		}
@@ -402,7 +408,7 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, fetchErr
 	}
 
-	vcpu, cpuErr := resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
+	vcpu, cpuErr := o.resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
 	if cpuErr != nil {
 		return sandbox.Sandbox{}, cpuErr
 	}
