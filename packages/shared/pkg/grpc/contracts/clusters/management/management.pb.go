@@ -1601,7 +1601,7 @@ func (x *DeleteClusterRequest) SetClusterId(v string) {
 type DeleteClusterRequest_builder struct {
 	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
 
-	// Keep project placements pointed at the unavailable cluster until reassigned.
+	// Keep project placements pointed at the unavailable cluster until project deletion.
 	OrphanProjects bool
 	ClusterId      string
 }
@@ -1660,428 +1660,6 @@ func (b0 DeleteClusterResponse_builder) Build() *DeleteClusterResponse {
 	return m0
 }
 
-// Assigns the project to the cluster, moving it from any other. NOT_FOUND
-// names an unknown cluster. A cluster whose deletion is requested takes no new
-// project and fails with FAILED_PRECONDITION; a project already on it is left
-// there and the call succeeds.
-type AssignProjectRequest struct {
-	state                protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ProjectId string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId"`
-	xxx_hidden_ClusterId string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *AssignProjectRequest) Reset() {
-	*x = AssignProjectRequest{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AssignProjectRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AssignProjectRequest) ProtoMessage() {}
-
-func (x *AssignProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *AssignProjectRequest) GetProjectId() string {
-	if x != nil {
-		return x.xxx_hidden_ProjectId
-	}
-	return ""
-}
-
-func (x *AssignProjectRequest) GetClusterId() string {
-	if x != nil {
-		return x.xxx_hidden_ClusterId
-	}
-	return ""
-}
-
-func (x *AssignProjectRequest) SetProjectId(v string) {
-	x.xxx_hidden_ProjectId = v
-}
-
-func (x *AssignProjectRequest) SetClusterId(v string) {
-	x.xxx_hidden_ClusterId = v
-}
-
-type AssignProjectRequest_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	ProjectId string
-	ClusterId string
-}
-
-func (b0 AssignProjectRequest_builder) Build() *AssignProjectRequest {
-	m0 := &AssignProjectRequest{}
-	b, x := &b0, m0
-	_, _ = b, x
-	x.xxx_hidden_ProjectId = b.ProjectId
-	x.xxx_hidden_ClusterId = b.ClusterId
-	return m0
-}
-
-type AssignProjectResponse struct {
-	state         protoimpl.MessageState `protogen:"opaque.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AssignProjectResponse) Reset() {
-	*x = AssignProjectResponse{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AssignProjectResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AssignProjectResponse) ProtoMessage() {}
-
-func (x *AssignProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-type AssignProjectResponse_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-}
-
-func (b0 AssignProjectResponse_builder) Build() *AssignProjectResponse {
-	m0 := &AssignProjectResponse{}
-	b, x := &b0, m0
-	_, _ = b, x
-	return m0
-}
-
-// Returns the project to the local cluster. A project that is not assigned to
-// this cluster keeps the assignment it has, and the call succeeds.
-type DetachProjectRequest struct {
-	state                protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ProjectId string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId"`
-	xxx_hidden_ClusterId string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *DetachProjectRequest) Reset() {
-	*x = DetachProjectRequest{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DetachProjectRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DetachProjectRequest) ProtoMessage() {}
-
-func (x *DetachProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[16]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *DetachProjectRequest) GetProjectId() string {
-	if x != nil {
-		return x.xxx_hidden_ProjectId
-	}
-	return ""
-}
-
-func (x *DetachProjectRequest) GetClusterId() string {
-	if x != nil {
-		return x.xxx_hidden_ClusterId
-	}
-	return ""
-}
-
-func (x *DetachProjectRequest) SetProjectId(v string) {
-	x.xxx_hidden_ProjectId = v
-}
-
-func (x *DetachProjectRequest) SetClusterId(v string) {
-	x.xxx_hidden_ClusterId = v
-}
-
-type DetachProjectRequest_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	ProjectId string
-	ClusterId string
-}
-
-func (b0 DetachProjectRequest_builder) Build() *DetachProjectRequest {
-	m0 := &DetachProjectRequest{}
-	b, x := &b0, m0
-	_, _ = b, x
-	x.xxx_hidden_ProjectId = b.ProjectId
-	x.xxx_hidden_ClusterId = b.ClusterId
-	return m0
-}
-
-type DetachProjectResponse struct {
-	state         protoimpl.MessageState `protogen:"opaque.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DetachProjectResponse) Reset() {
-	*x = DetachProjectResponse{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[17]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DetachProjectResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DetachProjectResponse) ProtoMessage() {}
-
-func (x *DetachProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[17]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-type DetachProjectResponse_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-}
-
-func (b0 DetachProjectResponse_builder) Build() *DetachProjectResponse {
-	m0 := &DetachProjectResponse{}
-	b, x := &b0, m0
-	_, _ = b, x
-	return m0
-}
-
-type LookupProjectAssignmentsRequest struct {
-	state                 protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ProjectIds []string               `protobuf:"bytes,1,rep,name=project_ids,json=projectIds"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
-}
-
-func (x *LookupProjectAssignmentsRequest) Reset() {
-	*x = LookupProjectAssignmentsRequest{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[18]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *LookupProjectAssignmentsRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LookupProjectAssignmentsRequest) ProtoMessage() {}
-
-func (x *LookupProjectAssignmentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[18]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *LookupProjectAssignmentsRequest) GetProjectIds() []string {
-	if x != nil {
-		return x.xxx_hidden_ProjectIds
-	}
-	return nil
-}
-
-func (x *LookupProjectAssignmentsRequest) SetProjectIds(v []string) {
-	x.xxx_hidden_ProjectIds = v
-}
-
-type LookupProjectAssignmentsRequest_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	ProjectIds []string
-}
-
-func (b0 LookupProjectAssignmentsRequest_builder) Build() *LookupProjectAssignmentsRequest {
-	m0 := &LookupProjectAssignmentsRequest{}
-	b, x := &b0, m0
-	_, _ = b, x
-	x.xxx_hidden_ProjectIds = b.ProjectIds
-	return m0
-}
-
-type LookupProjectAssignmentsResponse struct {
-	state                  protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_Assignments *[]*ProjectAssignment  `protobuf:"bytes,1,rep,name=assignments"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
-}
-
-func (x *LookupProjectAssignmentsResponse) Reset() {
-	*x = LookupProjectAssignmentsResponse{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[19]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *LookupProjectAssignmentsResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LookupProjectAssignmentsResponse) ProtoMessage() {}
-
-func (x *LookupProjectAssignmentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[19]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *LookupProjectAssignmentsResponse) GetAssignments() []*ProjectAssignment {
-	if x != nil {
-		if x.xxx_hidden_Assignments != nil {
-			return *x.xxx_hidden_Assignments
-		}
-	}
-	return nil
-}
-
-func (x *LookupProjectAssignmentsResponse) SetAssignments(v []*ProjectAssignment) {
-	x.xxx_hidden_Assignments = &v
-}
-
-type LookupProjectAssignmentsResponse_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	// Projects on the local cluster are absent, and the order is unspecified.
-	Assignments []*ProjectAssignment
-}
-
-func (b0 LookupProjectAssignmentsResponse_builder) Build() *LookupProjectAssignmentsResponse {
-	m0 := &LookupProjectAssignmentsResponse{}
-	b, x := &b0, m0
-	_, _ = b, x
-	x.xxx_hidden_Assignments = &b.Assignments
-	return m0
-}
-
-type ProjectAssignment struct {
-	state                protoimpl.MessageState `protogen:"opaque.v1"`
-	xxx_hidden_ProjectId string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId"`
-	xxx_hidden_ClusterId string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *ProjectAssignment) Reset() {
-	*x = ProjectAssignment{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[20]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ProjectAssignment) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProjectAssignment) ProtoMessage() {}
-
-func (x *ProjectAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[20]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-func (x *ProjectAssignment) GetProjectId() string {
-	if x != nil {
-		return x.xxx_hidden_ProjectId
-	}
-	return ""
-}
-
-func (x *ProjectAssignment) GetClusterId() string {
-	if x != nil {
-		return x.xxx_hidden_ClusterId
-	}
-	return ""
-}
-
-func (x *ProjectAssignment) SetProjectId(v string) {
-	x.xxx_hidden_ProjectId = v
-}
-
-func (x *ProjectAssignment) SetClusterId(v string) {
-	x.xxx_hidden_ClusterId = v
-}
-
-type ProjectAssignment_builder struct {
-	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
-
-	ProjectId string
-	ClusterId string
-}
-
-func (b0 ProjectAssignment_builder) Build() *ProjectAssignment {
-	m0 := &ProjectAssignment{}
-	b, x := &b0, m0
-	_, _ = b, x
-	x.xxx_hidden_ProjectId = b.ProjectId
-	x.xxx_hidden_ClusterId = b.ClusterId
-	return m0
-}
-
 // Attached to every FAILED_PRECONDITION status the service returns.
 type ClusterErrorDetail struct {
 	state             protoimpl.MessageState `protogen:"opaque.v1"`
@@ -2092,7 +1670,7 @@ type ClusterErrorDetail struct {
 
 func (x *ClusterErrorDetail) Reset() {
 	*x = ClusterErrorDetail{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[21]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2104,7 +1682,7 @@ func (x *ClusterErrorDetail) String() string {
 func (*ClusterErrorDetail) ProtoMessage() {}
 
 func (x *ClusterErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[21]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2150,7 +1728,7 @@ type AuthenticateWorkloadRequest struct {
 
 func (x *AuthenticateWorkloadRequest) Reset() {
 	*x = AuthenticateWorkloadRequest{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[22]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2162,7 +1740,7 @@ func (x *AuthenticateWorkloadRequest) String() string {
 func (*AuthenticateWorkloadRequest) ProtoMessage() {}
 
 func (x *AuthenticateWorkloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[22]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2208,7 +1786,7 @@ type AuthenticateWorkloadResponse struct {
 
 func (x *AuthenticateWorkloadResponse) Reset() {
 	*x = AuthenticateWorkloadResponse{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[23]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2220,7 +1798,7 @@ func (x *AuthenticateWorkloadResponse) String() string {
 func (*AuthenticateWorkloadResponse) ProtoMessage() {}
 
 func (x *AuthenticateWorkloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[23]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2277,7 +1855,7 @@ type AuthenticateTelemetryRequest struct {
 
 func (x *AuthenticateTelemetryRequest) Reset() {
 	*x = AuthenticateTelemetryRequest{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[24]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2289,7 +1867,7 @@ func (x *AuthenticateTelemetryRequest) String() string {
 func (*AuthenticateTelemetryRequest) ProtoMessage() {}
 
 func (x *AuthenticateTelemetryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[24]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2322,7 +1900,7 @@ type AuthenticateTelemetryResponse struct {
 
 func (x *AuthenticateTelemetryResponse) Reset() {
 	*x = AuthenticateTelemetryResponse{}
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[25]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2334,7 +1912,7 @@ func (x *AuthenticateTelemetryResponse) String() string {
 func (*AuthenticateTelemetryResponse) ProtoMessage() {}
 
 func (x *AuthenticateTelemetryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[25]
+	mi := &file_e2b_clusters_management_v1_management_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2451,29 +2029,7 @@ const file_e2b_clusters_management_v1_management_proto_rawDesc = "" +
 	"\x0forphan_projects\x18\x02 \x01(\bR\x0eorphanProjects\x12M\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tB.\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01R\tclusterId\"\x17\n" +
-	"\x15DeleteClusterResponse\"\x8e\x01\n" +
-	"\x14AssignProjectRequest\x12'\n" +
-	"\n" +
-	"project_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tprojectId\x12M\n" +
-	"\n" +
-	"cluster_id\x18\x02 \x01(\tB.\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01R\tclusterId\"\x17\n" +
-	"\x15AssignProjectResponse\"\x8e\x01\n" +
-	"\x14DetachProjectRequest\x12'\n" +
-	"\n" +
-	"project_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tprojectId\x12M\n" +
-	"\n" +
-	"cluster_id\x18\x02 \x01(\tB.\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01R\tclusterId\"\x17\n" +
-	"\x15DetachProjectResponse\"X\n" +
-	"\x1fLookupProjectAssignmentsRequest\x125\n" +
-	"\vproject_ids\x18\x01 \x03(\tB\x14\xbaH\x11\x92\x01\x0e\b\x01\x10\xe8\a\x18\x01\"\x05r\x03\xb0\x01\x01R\n" +
-	"projectIds\"s\n" +
-	" LookupProjectAssignmentsResponse\x12O\n" +
-	"\vassignments\x18\x01 \x03(\v2-.e2b.clusters.management.v1.ProjectAssignmentR\vassignments\"e\n" +
-	"\x11ProjectAssignment\x12'\n" +
-	"\n" +
-	"project_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tprojectId\x12'\n" +
-	"\n" +
-	"cluster_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tclusterId\"\\\n" +
+	"\x15DeleteClusterResponse\"\\\n" +
 	"\x12ClusterErrorDetail\x12F\n" +
 	"\x06reason\x18\x01 \x01(\x0e2..e2b.clusters.management.v1.ClusterErrorReasonR\x06reason\"t\n" +
 	"\x1bAuthenticateWorkloadRequest\x12U\n" +
@@ -2495,7 +2051,7 @@ const file_e2b_clusters_management_v1_management_proto_rawDesc = "" +
 	".CLUSTER_ERROR_REASON_TELEMETRY_CLIENT_ASSIGNED\x10\x04\x123\n" +
 	"/CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT\x10\x052\xa8\x01\n" +
 	"\x17WorkloadIdentityService\x12\x8c\x01\n" +
-	"\x15AuthenticateTelemetry\x128.e2b.clusters.management.v1.AuthenticateTelemetryRequest\x1a9.e2b.clusters.management.v1.AuthenticateTelemetryResponse2\xee\t\n" +
+	"\x15AuthenticateTelemetry\x128.e2b.clusters.management.v1.AuthenticateTelemetryRequest\x1a9.e2b.clusters.management.v1.AuthenticateTelemetryResponse2\xea\x06\n" +
 	"\x0eClusterService\x12\x89\x01\n" +
 	"\x14AuthenticateWorkload\x127.e2b.clusters.management.v1.AuthenticateWorkloadRequest\x1a8.e2b.clusters.management.v1.AuthenticateWorkloadResponse\x12t\n" +
 	"\rCreateCluster\x120.e2b.clusters.management.v1.CreateClusterRequest\x1a1.e2b.clusters.management.v1.CreateClusterResponse\x12k\n" +
@@ -2504,80 +2060,63 @@ const file_e2b_clusters_management_v1_management_proto_rawDesc = "" +
 	"\x14CheckProjectCreation\x127.e2b.clusters.management.v1.CheckProjectCreationRequest\x1a8.e2b.clusters.management.v1.CheckProjectCreationResponse\x12q\n" +
 	"\fListClusters\x12/.e2b.clusters.management.v1.ListClustersRequest\x1a0.e2b.clusters.management.v1.ListClustersResponse\x12t\n" +
 	"\rUpdateCluster\x120.e2b.clusters.management.v1.UpdateClusterRequest\x1a1.e2b.clusters.management.v1.UpdateClusterResponse\x12t\n" +
-	"\rDeleteCluster\x120.e2b.clusters.management.v1.DeleteClusterRequest\x1a1.e2b.clusters.management.v1.DeleteClusterResponse\x12t\n" +
-	"\rAssignProject\x120.e2b.clusters.management.v1.AssignProjectRequest\x1a1.e2b.clusters.management.v1.AssignProjectResponse\x12t\n" +
-	"\rDetachProject\x120.e2b.clusters.management.v1.DetachProjectRequest\x1a1.e2b.clusters.management.v1.DetachProjectResponse\x12\x95\x01\n" +
-	"\x18LookupProjectAssignments\x12;.e2b.clusters.management.v1.LookupProjectAssignmentsRequest\x1a<.e2b.clusters.management.v1.LookupProjectAssignmentsResponseB\x05\x92\x03\x02\b\x02b\beditionsp\xe9\a"
+	"\rDeleteCluster\x120.e2b.clusters.management.v1.DeleteClusterRequest\x1a1.e2b.clusters.management.v1.DeleteClusterResponseB\x05\x92\x03\x02\b\x02b\beditionsp\xe9\a"
 
 var file_e2b_clusters_management_v1_management_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_e2b_clusters_management_v1_management_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_e2b_clusters_management_v1_management_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_e2b_clusters_management_v1_management_proto_goTypes = []any{
-	(ClusterErrorReason)(0),                  // 0: e2b.clusters.management.v1.ClusterErrorReason
-	(*Cluster)(nil),                          // 1: e2b.clusters.management.v1.Cluster
-	(*CreateClusterRequest)(nil),             // 2: e2b.clusters.management.v1.CreateClusterRequest
-	(*CreateClusterResponse)(nil),            // 3: e2b.clusters.management.v1.CreateClusterResponse
-	(*GetClusterRequest)(nil),                // 4: e2b.clusters.management.v1.GetClusterRequest
-	(*GetClusterResponse)(nil),               // 5: e2b.clusters.management.v1.GetClusterResponse
-	(*CheckProjectCreationRequest)(nil),      // 6: e2b.clusters.management.v1.CheckProjectCreationRequest
-	(*CheckProjectCreationResponse)(nil),     // 7: e2b.clusters.management.v1.CheckProjectCreationResponse
-	(*ListClustersRequest)(nil),              // 8: e2b.clusters.management.v1.ListClustersRequest
-	(*ListClustersResponse)(nil),             // 9: e2b.clusters.management.v1.ListClustersResponse
-	(*NullableStringUpdate)(nil),             // 10: e2b.clusters.management.v1.NullableStringUpdate
-	(*UpdateClusterRequest)(nil),             // 11: e2b.clusters.management.v1.UpdateClusterRequest
-	(*UpdateClusterResponse)(nil),            // 12: e2b.clusters.management.v1.UpdateClusterResponse
-	(*DeleteClusterRequest)(nil),             // 13: e2b.clusters.management.v1.DeleteClusterRequest
-	(*DeleteClusterResponse)(nil),            // 14: e2b.clusters.management.v1.DeleteClusterResponse
-	(*AssignProjectRequest)(nil),             // 15: e2b.clusters.management.v1.AssignProjectRequest
-	(*AssignProjectResponse)(nil),            // 16: e2b.clusters.management.v1.AssignProjectResponse
-	(*DetachProjectRequest)(nil),             // 17: e2b.clusters.management.v1.DetachProjectRequest
-	(*DetachProjectResponse)(nil),            // 18: e2b.clusters.management.v1.DetachProjectResponse
-	(*LookupProjectAssignmentsRequest)(nil),  // 19: e2b.clusters.management.v1.LookupProjectAssignmentsRequest
-	(*LookupProjectAssignmentsResponse)(nil), // 20: e2b.clusters.management.v1.LookupProjectAssignmentsResponse
-	(*ProjectAssignment)(nil),                // 21: e2b.clusters.management.v1.ProjectAssignment
-	(*ClusterErrorDetail)(nil),               // 22: e2b.clusters.management.v1.ClusterErrorDetail
-	(*AuthenticateWorkloadRequest)(nil),      // 23: e2b.clusters.management.v1.AuthenticateWorkloadRequest
-	(*AuthenticateWorkloadResponse)(nil),     // 24: e2b.clusters.management.v1.AuthenticateWorkloadResponse
-	(*AuthenticateTelemetryRequest)(nil),     // 25: e2b.clusters.management.v1.AuthenticateTelemetryRequest
-	(*AuthenticateTelemetryResponse)(nil),    // 26: e2b.clusters.management.v1.AuthenticateTelemetryResponse
-	(*timestamppb.Timestamp)(nil),            // 27: google.protobuf.Timestamp
+	(ClusterErrorReason)(0),               // 0: e2b.clusters.management.v1.ClusterErrorReason
+	(*Cluster)(nil),                       // 1: e2b.clusters.management.v1.Cluster
+	(*CreateClusterRequest)(nil),          // 2: e2b.clusters.management.v1.CreateClusterRequest
+	(*CreateClusterResponse)(nil),         // 3: e2b.clusters.management.v1.CreateClusterResponse
+	(*GetClusterRequest)(nil),             // 4: e2b.clusters.management.v1.GetClusterRequest
+	(*GetClusterResponse)(nil),            // 5: e2b.clusters.management.v1.GetClusterResponse
+	(*CheckProjectCreationRequest)(nil),   // 6: e2b.clusters.management.v1.CheckProjectCreationRequest
+	(*CheckProjectCreationResponse)(nil),  // 7: e2b.clusters.management.v1.CheckProjectCreationResponse
+	(*ListClustersRequest)(nil),           // 8: e2b.clusters.management.v1.ListClustersRequest
+	(*ListClustersResponse)(nil),          // 9: e2b.clusters.management.v1.ListClustersResponse
+	(*NullableStringUpdate)(nil),          // 10: e2b.clusters.management.v1.NullableStringUpdate
+	(*UpdateClusterRequest)(nil),          // 11: e2b.clusters.management.v1.UpdateClusterRequest
+	(*UpdateClusterResponse)(nil),         // 12: e2b.clusters.management.v1.UpdateClusterResponse
+	(*DeleteClusterRequest)(nil),          // 13: e2b.clusters.management.v1.DeleteClusterRequest
+	(*DeleteClusterResponse)(nil),         // 14: e2b.clusters.management.v1.DeleteClusterResponse
+	(*ClusterErrorDetail)(nil),            // 15: e2b.clusters.management.v1.ClusterErrorDetail
+	(*AuthenticateWorkloadRequest)(nil),   // 16: e2b.clusters.management.v1.AuthenticateWorkloadRequest
+	(*AuthenticateWorkloadResponse)(nil),  // 17: e2b.clusters.management.v1.AuthenticateWorkloadResponse
+	(*AuthenticateTelemetryRequest)(nil),  // 18: e2b.clusters.management.v1.AuthenticateTelemetryRequest
+	(*AuthenticateTelemetryResponse)(nil), // 19: e2b.clusters.management.v1.AuthenticateTelemetryResponse
+	(*timestamppb.Timestamp)(nil),         // 20: google.protobuf.Timestamp
 }
 var file_e2b_clusters_management_v1_management_proto_depIdxs = []int32{
-	27, // 0: e2b.clusters.management.v1.Cluster.deletion_requested_at:type_name -> google.protobuf.Timestamp
+	20, // 0: e2b.clusters.management.v1.Cluster.deletion_requested_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: e2b.clusters.management.v1.CreateClusterResponse.cluster:type_name -> e2b.clusters.management.v1.Cluster
 	1,  // 2: e2b.clusters.management.v1.GetClusterResponse.cluster:type_name -> e2b.clusters.management.v1.Cluster
 	1,  // 3: e2b.clusters.management.v1.ListClustersResponse.clusters:type_name -> e2b.clusters.management.v1.Cluster
 	10, // 4: e2b.clusters.management.v1.UpdateClusterRequest.sandbox_proxy_domain:type_name -> e2b.clusters.management.v1.NullableStringUpdate
 	10, // 5: e2b.clusters.management.v1.UpdateClusterRequest.auth_org_id:type_name -> e2b.clusters.management.v1.NullableStringUpdate
 	1,  // 6: e2b.clusters.management.v1.UpdateClusterResponse.cluster:type_name -> e2b.clusters.management.v1.Cluster
-	21, // 7: e2b.clusters.management.v1.LookupProjectAssignmentsResponse.assignments:type_name -> e2b.clusters.management.v1.ProjectAssignment
-	0,  // 8: e2b.clusters.management.v1.ClusterErrorDetail.reason:type_name -> e2b.clusters.management.v1.ClusterErrorReason
-	25, // 9: e2b.clusters.management.v1.WorkloadIdentityService.AuthenticateTelemetry:input_type -> e2b.clusters.management.v1.AuthenticateTelemetryRequest
-	23, // 10: e2b.clusters.management.v1.ClusterService.AuthenticateWorkload:input_type -> e2b.clusters.management.v1.AuthenticateWorkloadRequest
-	2,  // 11: e2b.clusters.management.v1.ClusterService.CreateCluster:input_type -> e2b.clusters.management.v1.CreateClusterRequest
-	4,  // 12: e2b.clusters.management.v1.ClusterService.GetCluster:input_type -> e2b.clusters.management.v1.GetClusterRequest
-	6,  // 13: e2b.clusters.management.v1.ClusterService.CheckProjectCreation:input_type -> e2b.clusters.management.v1.CheckProjectCreationRequest
-	8,  // 14: e2b.clusters.management.v1.ClusterService.ListClusters:input_type -> e2b.clusters.management.v1.ListClustersRequest
-	11, // 15: e2b.clusters.management.v1.ClusterService.UpdateCluster:input_type -> e2b.clusters.management.v1.UpdateClusterRequest
-	13, // 16: e2b.clusters.management.v1.ClusterService.DeleteCluster:input_type -> e2b.clusters.management.v1.DeleteClusterRequest
-	15, // 17: e2b.clusters.management.v1.ClusterService.AssignProject:input_type -> e2b.clusters.management.v1.AssignProjectRequest
-	17, // 18: e2b.clusters.management.v1.ClusterService.DetachProject:input_type -> e2b.clusters.management.v1.DetachProjectRequest
-	19, // 19: e2b.clusters.management.v1.ClusterService.LookupProjectAssignments:input_type -> e2b.clusters.management.v1.LookupProjectAssignmentsRequest
-	26, // 20: e2b.clusters.management.v1.WorkloadIdentityService.AuthenticateTelemetry:output_type -> e2b.clusters.management.v1.AuthenticateTelemetryResponse
-	24, // 21: e2b.clusters.management.v1.ClusterService.AuthenticateWorkload:output_type -> e2b.clusters.management.v1.AuthenticateWorkloadResponse
-	3,  // 22: e2b.clusters.management.v1.ClusterService.CreateCluster:output_type -> e2b.clusters.management.v1.CreateClusterResponse
-	5,  // 23: e2b.clusters.management.v1.ClusterService.GetCluster:output_type -> e2b.clusters.management.v1.GetClusterResponse
-	7,  // 24: e2b.clusters.management.v1.ClusterService.CheckProjectCreation:output_type -> e2b.clusters.management.v1.CheckProjectCreationResponse
-	9,  // 25: e2b.clusters.management.v1.ClusterService.ListClusters:output_type -> e2b.clusters.management.v1.ListClustersResponse
-	12, // 26: e2b.clusters.management.v1.ClusterService.UpdateCluster:output_type -> e2b.clusters.management.v1.UpdateClusterResponse
-	14, // 27: e2b.clusters.management.v1.ClusterService.DeleteCluster:output_type -> e2b.clusters.management.v1.DeleteClusterResponse
-	16, // 28: e2b.clusters.management.v1.ClusterService.AssignProject:output_type -> e2b.clusters.management.v1.AssignProjectResponse
-	18, // 29: e2b.clusters.management.v1.ClusterService.DetachProject:output_type -> e2b.clusters.management.v1.DetachProjectResponse
-	20, // 30: e2b.clusters.management.v1.ClusterService.LookupProjectAssignments:output_type -> e2b.clusters.management.v1.LookupProjectAssignmentsResponse
-	20, // [20:31] is the sub-list for method output_type
-	9,  // [9:20] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	0,  // 7: e2b.clusters.management.v1.ClusterErrorDetail.reason:type_name -> e2b.clusters.management.v1.ClusterErrorReason
+	18, // 8: e2b.clusters.management.v1.WorkloadIdentityService.AuthenticateTelemetry:input_type -> e2b.clusters.management.v1.AuthenticateTelemetryRequest
+	16, // 9: e2b.clusters.management.v1.ClusterService.AuthenticateWorkload:input_type -> e2b.clusters.management.v1.AuthenticateWorkloadRequest
+	2,  // 10: e2b.clusters.management.v1.ClusterService.CreateCluster:input_type -> e2b.clusters.management.v1.CreateClusterRequest
+	4,  // 11: e2b.clusters.management.v1.ClusterService.GetCluster:input_type -> e2b.clusters.management.v1.GetClusterRequest
+	6,  // 12: e2b.clusters.management.v1.ClusterService.CheckProjectCreation:input_type -> e2b.clusters.management.v1.CheckProjectCreationRequest
+	8,  // 13: e2b.clusters.management.v1.ClusterService.ListClusters:input_type -> e2b.clusters.management.v1.ListClustersRequest
+	11, // 14: e2b.clusters.management.v1.ClusterService.UpdateCluster:input_type -> e2b.clusters.management.v1.UpdateClusterRequest
+	13, // 15: e2b.clusters.management.v1.ClusterService.DeleteCluster:input_type -> e2b.clusters.management.v1.DeleteClusterRequest
+	19, // 16: e2b.clusters.management.v1.WorkloadIdentityService.AuthenticateTelemetry:output_type -> e2b.clusters.management.v1.AuthenticateTelemetryResponse
+	17, // 17: e2b.clusters.management.v1.ClusterService.AuthenticateWorkload:output_type -> e2b.clusters.management.v1.AuthenticateWorkloadResponse
+	3,  // 18: e2b.clusters.management.v1.ClusterService.CreateCluster:output_type -> e2b.clusters.management.v1.CreateClusterResponse
+	5,  // 19: e2b.clusters.management.v1.ClusterService.GetCluster:output_type -> e2b.clusters.management.v1.GetClusterResponse
+	7,  // 20: e2b.clusters.management.v1.ClusterService.CheckProjectCreation:output_type -> e2b.clusters.management.v1.CheckProjectCreationResponse
+	9,  // 21: e2b.clusters.management.v1.ClusterService.ListClusters:output_type -> e2b.clusters.management.v1.ListClustersResponse
+	12, // 22: e2b.clusters.management.v1.ClusterService.UpdateCluster:output_type -> e2b.clusters.management.v1.UpdateClusterResponse
+	14, // 23: e2b.clusters.management.v1.ClusterService.DeleteCluster:output_type -> e2b.clusters.management.v1.DeleteClusterResponse
+	16, // [16:24] is the sub-list for method output_type
+	8,  // [8:16] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_e2b_clusters_management_v1_management_proto_init() }
@@ -2591,7 +2130,7 @@ func file_e2b_clusters_management_v1_management_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_e2b_clusters_management_v1_management_proto_rawDesc), len(file_e2b_clusters_management_v1_management_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   26,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
