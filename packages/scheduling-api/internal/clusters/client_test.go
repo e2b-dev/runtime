@@ -1,57 +1,19 @@
 package clusters
 
 import (
-	"context"
-	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/servicetest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
-
-type fakeInfoServer struct {
-	infogrpc.UnimplementedInfoServiceServer
-
-	response *infogrpc.ServiceInfoResponse
-}
-
-func (s *fakeInfoServer) ServiceInfo(context.Context, *emptypb.Empty) (*infogrpc.ServiceInfoResponse, error) {
-	return s.response, nil
-}
-
-func serveInfo(t *testing.T, response *infogrpc.ServiceInfoResponse) string {
-	t.Helper()
-
-	var lc net.ListenConfig
-	lis, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
-	infogrpc.RegisterInfoServiceServer(server, &fakeInfoServer{response: response})
-	go func() { _ = server.Serve(lis) }()
-	t.Cleanup(server.Stop)
-
-	return lis.Addr().String()
-}
-
-func callContext(t *testing.T) context.Context {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	t.Cleanup(cancel)
-
-	return ctx
-}
 
 func TestServiceInfoRoundTripsThroughTheCallerCredentials(t *testing.T) {
 	t.Parallel()
