@@ -33,7 +33,7 @@ func TestHTTPTransportOffDialsPlaintext(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	transport := NewHTTPTransport(ClientConfig{Name: "plain-hop", Mode: StaticClientMode(ClientOff), Metrics: metrics}, nil)
-	assert.Equal(t, int64(1), mustPoint(t, reader, MetricClientMode, attribute.String(AttrClientHop, "plain-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceFallback)), "reported before the first dial")
+	assert.Equal(t, int64(1), mustPoint(t, reader, MetricClientMode, attribute.String(AttrClientHop, "plain-hop"), attribute.String(AttrMode, "off"), attribute.String(AttrSource, SourceStatic)), "reported before the first dial")
 
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 	assert.Equal(t, http.StatusNoContent, get(t, client, server.URL).status)

@@ -2,11 +2,8 @@
 -- supplies the id, so create and reconcile are one request and these are its
 -- branches.
 
--- Taken first, so the branch is decided by whether the project exists rather
--- than by an insert failing. Returns the slug and the cluster so a reconcile
--- can tell whether either moves.
 -- name: LockManagedTeam :one
-SELECT slug, cluster_id FROM public.teams
+SELECT slug, cluster_id, deleted_at FROM public.teams
 WHERE id = sqlc.arg(id)::uuid
 FOR UPDATE;
 
@@ -33,8 +30,7 @@ UPDATE public.teams
 SET
     name = sqlc.arg(name)::text,
     slug = sqlc.arg(slug)::text,
-    email = sqlc.arg(email)::text,
-    cluster_id = COALESCE(sqlc.narg(cluster_id)::uuid, cluster_id)
+    email = sqlc.arg(email)::text
 WHERE id = sqlc.arg(id)::uuid
 RETURNING id, name, slug, email, cluster_id;
 

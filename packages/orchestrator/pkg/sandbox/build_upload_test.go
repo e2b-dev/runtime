@@ -85,7 +85,7 @@ func putV3Header(t *testing.T, cache *fakeCache, buildID uuid.UUID, fileType bui
 	case build.Memfile:
 		tpl.EXPECT().Memfile(mock.Anything).Return(dev, nil).Maybe()
 	case build.Rootfs:
-		tpl.EXPECT().Rootfs().Return(dev, nil).Maybe()
+		tpl.EXPECT().Rootfs(mock.Anything).Return(dev, nil).Maybe()
 	}
 
 	cache.put(buildID.String(), tpl)

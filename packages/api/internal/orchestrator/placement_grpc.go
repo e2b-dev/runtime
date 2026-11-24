@@ -15,6 +15,10 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
+	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
@@ -34,8 +38,9 @@ var (
 
 // migrationNodes allows a source that is ready or draining existing work.
 // The target must accept new requests, run in a different process, have
-// a matching CPU, and pass the same memory admission as a create.
-func (o *Orchestrator) migrationNodes(ctx context.Context, sbx sandbox.Sandbox, targetNodeID string) (*nodemanager.Node, *nodemanager.Node, error) {
+// a matching CPU, carry requiredLabels when filterByLabels is set, and pass
+// the same memory admission as a create.
+func (o *Orchestrator) migrationNodes(ctx context.Context, sbx sandbox.Sandbox, targetNodeID string, filterByLabels bool, requiredLabels []string) (*nodemanager.Node, *nodemanager.Node, error) {
 	source, err := o.migrationNode(sbx.ClusterID, sbx.NodeID, func(n *nodemanager.Node) bool {
 		status := n.Status()
 
@@ -53,6 +58,12 @@ func (o *Orchestrator) migrationNodes(ctx context.Context, sbx sandbox.Sandbox, 
 	}
 	if !source.MachineInfo().IsExactMatch(target.MachineInfo()) {
 		return nil, nil, fmt.Errorf("%w: the target's CPU differs from the source's", errNodeUnavailable)
+	}
+	if filterByLabels && !placement.NodeSatisfiesLabels(target, requiredLabels) {
+		return nil, nil, fmt.Errorf("%w: the target lacks the sandbox's scheduling labels", errNodeUnavailable)
+	}
+	if !placement.NodeSatisfiesFeatures(target, placement.RequireNamed(sbx.RequiredFeatures)) {
+		return nil, nil, fmt.Errorf("%w: the target's orchestrator predates a capability the sandbox runs with", errNodeUnavailable)
 	}
 	node := sbx.ToNodeSandbox()
 	resources := nodemanager.SandboxResources{CPUs: node.VCpu, MiBMemory: node.RamMB, HugePages: node.HugePages}
@@ -91,10 +102,50 @@ type SandboxPlacementService struct {
 
 	orchestrator *Orchestrator
 	callers      *mtls.AllowList
+	teams        teamReader
 }
 
-func NewSandboxPlacementService(o *Orchestrator, callers *mtls.AllowList) *SandboxPlacementService {
-	return &SandboxPlacementService{orchestrator: o, callers: callers}
+// teamReader reads the team whose scheduling labels a move's target must
+// carry.
+type teamReader interface {
+	GetTeamByID(ctx context.Context, teamID uuid.UUID) (*teamtypes.Team, error)
+}
+
+func NewSandboxPlacementService(o *Orchestrator, callers *mtls.AllowList, teams teamReader) *SandboxPlacementService {
+	return &SandboxPlacementService{orchestrator: o, callers: callers, teams: teams}
+}
+
+// requiredNodeLabels are the node labels a create of sbx requires, and
+// whether label scheduling applies to it. The flag is evaluated with the
+// team and cluster contexts a create request carries, so that targeting on
+// either applies to a move too. The labels of attached volumes are left
+// out: the caller does not move a sandbox that has any.
+func (s *SandboxPlacementService) requiredNodeLabels(ctx context.Context, sbx sandbox.Sandbox) ([]string, bool, error) {
+	team, err := s.teams.GetTeamByID(ctx, sbx.TeamID)
+	if err != nil {
+		return nil, false, err
+	}
+	ctx = featureflags.AddToContext(ctx,
+		featureflags.TeamContextWithName(team.ID.String(), team.Name),
+		featureflags.ClusterContext(clusters.WithClusterFallback(team.ClusterID)),
+	)
+	labels, filterByLabels := s.orchestrator.generateRequiredNodeLabels(ctx, sbx.SandboxID, team, SandboxMetadata{})
+
+	return labels, filterByLabels, nil
+}
+
+// teamReadError answers a failed team read. A banned or missing team will
+// not become readable, so the move is refused. Any other failure may pass.
+func teamReadError(ctx context.Context, sbx sandbox.Sandbox, err error) error {
+	if forbidden, ok := errors.AsType[*auth.TeamForbiddenError](err); ok {
+		return status.Error(codes.FailedPrecondition, forbidden.Error())
+	}
+	if dberrors.IsNotFoundError(err) {
+		return status.Error(codes.FailedPrecondition, "the sandbox's team does not exist")
+	}
+	logger.L().Error(ctx, "Sandbox placement team read failed", logger.WithTeamID(sbx.TeamID.String()), zap.Error(err))
+
+	return status.Error(codes.Unavailable, "team unavailable")
 }
 
 func (s *SandboxPlacementService) authorize(ctx context.Context) error {
@@ -135,7 +186,11 @@ func (s *SandboxPlacementService) GetSandboxPlacement(ctx context.Context, req *
 	case sbx.NetworkPlacement != nil && sbx.NetworkPlacement.GetExecutionId() != sbx.ExecutionID:
 		return nil, status.Error(codes.FailedPrecondition, "network placement belongs to another execution")
 	}
-	source, target, err := o.migrationNodes(ctx, sbx, req.GetTargetNodeId())
+	requiredLabels, filterByLabels, err := s.requiredNodeLabels(ctx, sbx)
+	if err != nil {
+		return nil, teamReadError(ctx, sbx, err)
+	}
+	source, target, err := o.migrationNodes(ctx, sbx, req.GetTargetNodeId(), filterByLabels, requiredLabels)
 	if errors.Is(err, errNodeUnknown) {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}

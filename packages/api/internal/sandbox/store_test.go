@@ -791,3 +791,83 @@ func TestStartRemoving_FinishCallback(t *testing.T) {
 		assert.Empty(t, storage.finishes)
 	})
 }
+
+// holdRefusals calls refused for each begin a lifecycle hold refuses, once
+// the storage has answered and before the store sees the refusal.
+type holdRefusals struct {
+	Storage
+
+	refused func()
+}
+
+func (s *holdRefusals) BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string) (Sandbox, sandboxtypes.UpdateToken, error) {
+	sbx, token, err := s.Storage.BeginUpdate(ctx, teamID, sandboxID)
+	if errors.Is(err, ErrLifecycleHeld) {
+		s.refused()
+	}
+
+	return sbx, token, err
+}
+
+func (s *holdRefusals) BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts RemoveOpts) (StateTransition, bool, error) {
+	transition, alreadyDone, err := s.Storage.BeginRemoving(ctx, teamID, sandboxID, opts)
+	if errors.Is(err, ErrLifecycleHeld) {
+		s.refused()
+	}
+
+	return transition, alreadyDone, err
+}
+
+func TestWritesWaitOutALifecycleHold(t *testing.T) {
+	t.Parallel()
+
+	writes := map[string]func(ctx context.Context, store *Store, sbx Sandbox) (appliedOnNode string, err error){
+		"update": func(ctx context.Context, store *Store, sbx Sandbox) (string, error) {
+			updated, err := store.Update(ctx, sbx.TeamID, sbx.SandboxID, func(current Sandbox) (Sandbox, error) { return current, nil })
+
+			return updated.NodeID, err
+		},
+		"removal": func(ctx context.Context, store *Store, sbx Sandbox) (string, error) {
+			transition, _, _, err := store.StartRemoving(ctx, sbx.TeamID, sbx.SandboxID, RemoveOpts{Action: StateActionKill, WaitForLifecycleHold: true})
+
+			return transition.Sandbox.NodeID, err
+		},
+	}
+	for name, write := range writes {
+		for _, moved := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/moved_%t", name, moved), func(t *testing.T) {
+				t.Parallel()
+
+				backend := &holdRefusals{Storage: newTestStorage(t)}
+				store := NewStore(backend, nil, Callbacks{})
+				sbx := createTestSandbox()
+				sbx.ExecutionID = uuid.NewString()
+				require.NoError(t, backend.Add(t.Context(), sbx))
+				hold := Hold{TeamID: sbx.TeamID, SandboxID: sbx.SandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: sbx.NodeID, ID: uuid.NewString()}
+				require.NoError(t, store.HoldExecution(t.Context(), hold, time.Now().Add(time.Minute)))
+
+				// The first refusal either ends the hold or ends the wait.
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				backend.refused = sync.OnceFunc(func() {
+					if !moved {
+						cancel()
+
+						return
+					}
+					_, err := store.MoveHeldExecution(t.Context(), hold, "moved-node")
+					assert.NoError(t, err)
+				})
+
+				node, err := write(ctx, store, sbx)
+				if !moved {
+					require.ErrorIs(t, err, ErrLifecycleHeld, "a wait that ends is refused as retryable")
+
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, "moved-node", node)
+			})
+		}
+	}
+}

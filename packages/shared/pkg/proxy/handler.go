@@ -53,6 +53,9 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// answer would reach it as an empty 200, so the status says the
 		// request ended; a client that is gone reads nothing either way.
 		if ctxErr := ctx.Err(); err != nil && ctxErr != nil && errors.Is(err, ctxErr) {
+			if o.probe && isProbeRequest(r) {
+				o.observe(ctx, ProbeCanceled)
+			}
 			l.Debug(ctx, "request ended before it was routed", zap.String("host", r.Host))
 			cors.Error(w, "Request ended before it was routed", http.StatusRequestTimeout)
 
@@ -62,14 +65,26 @@ func handler(p *pool.ProxyPool, getDestination func(r *http.Request) (*pool.Dest
 		// A probe for a routed sandbox is answered here, before any connection
 		// to it; any other outcome gets its usual page, now carrying the answer.
 		if o.probe && isProbeRequest(r) {
+			answer := ProbeUnknown
 			switch routePresence(err) {
 			case PresenceHeld:
 				w.Header().Set(HeaderProbe, "true")
+				answer = ProbeClaimed
+				if err == nil {
+					answer = ProbeFound
+				}
 			case PresenceAbsent:
+				// Not the not-found page's 502, which load balancers count as
+				// a server error; the asker reads only the header.
 				w.Header().Set(HeaderProbe, "false")
+				o.observe(ctx, ProbeNotFound)
+				w.WriteHeader(http.StatusNotFound)
+
+				return
 			case PresenceUnknown:
 				// No header: the asker cannot tell from this proxy.
 			}
+			o.observe(ctx, answer)
 
 			if err == nil {
 				w.WriteHeader(http.StatusNoContent)

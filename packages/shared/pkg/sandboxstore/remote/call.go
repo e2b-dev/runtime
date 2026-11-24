@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -21,31 +21,31 @@ const (
 	maxMessageSize  = 32 << 20
 )
 
-var stateErrors = map[scheduling.StateOutcome]error{
-	scheduling.StateOutcome_STATE_OUTCOME_OK:                   nil,
-	scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND:            sandboxtypes.ErrNotFound,
-	scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD:       sandboxtypes.ErrLifecycleHeld,
-	scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH:   sandboxtypes.ErrExecutionMismatch,
-	scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST:            sandboxtypes.ErrLockLost,
-	scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT:        sandboxtypes.ErrHoldConflict,
-	scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD:             sandboxtypes.ErrNotHeld,
-	scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS: sandboxtypes.ErrEvictionInProgress,
-	scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED:  sandboxtypes.ErrEvictionNotNeeded,
-	scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT:     sandboxtypes.ErrRestoreConflict,
+var stateErrors = map[statepb.StateOutcome]error{
+	statepb.StateOutcome_STATE_OUTCOME_OK:                   nil,
+	statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND:            sandboxtypes.ErrNotFound,
+	statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD:       sandboxtypes.ErrLifecycleHeld,
+	statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH:   sandboxtypes.ErrExecutionMismatch,
+	statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST:            sandboxtypes.ErrLockLost,
+	statepb.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT:        sandboxtypes.ErrHoldConflict,
+	statepb.StateOutcome_STATE_OUTCOME_NOT_HELD:             sandboxtypes.ErrNotHeld,
+	statepb.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS: sandboxtypes.ErrEvictionInProgress,
+	statepb.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED:  sandboxtypes.ErrEvictionNotNeeded,
+	statepb.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT:     sandboxtypes.ErrRestoreConflict,
 }
 
-var states = map[scheduling.SandboxState]sandboxtypes.State{
-	scheduling.SandboxState_SANDBOX_STATE_RUNNING:      sandboxtypes.StateRunning,
-	scheduling.SandboxState_SANDBOX_STATE_PAUSING:      sandboxtypes.StatePausing,
-	scheduling.SandboxState_SANDBOX_STATE_KILLING:      sandboxtypes.StateKilling,
-	scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING: sandboxtypes.StateSnapshotting,
+var states = map[statepb.SandboxState]sandboxtypes.State{
+	statepb.SandboxState_SANDBOX_STATE_RUNNING:      sandboxtypes.StateRunning,
+	statepb.SandboxState_SANDBOX_STATE_PAUSING:      sandboxtypes.StatePausing,
+	statepb.SandboxState_SANDBOX_STATE_KILLING:      sandboxtypes.StateKilling,
+	statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING: sandboxtypes.StateSnapshotting,
 }
 
-var wireStates = map[sandboxtypes.State]scheduling.SandboxState{
-	sandboxtypes.StateRunning:      scheduling.SandboxState_SANDBOX_STATE_RUNNING,
-	sandboxtypes.StatePausing:      scheduling.SandboxState_SANDBOX_STATE_PAUSING,
-	sandboxtypes.StateKilling:      scheduling.SandboxState_SANDBOX_STATE_KILLING,
-	sandboxtypes.StateSnapshotting: scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
+var wireStates = map[sandboxtypes.State]statepb.SandboxState{
+	sandboxtypes.StateRunning:      statepb.SandboxState_SANDBOX_STATE_RUNNING,
+	sandboxtypes.StatePausing:      statepb.SandboxState_SANDBOX_STATE_PAUSING,
+	sandboxtypes.StateKilling:      statepb.SandboxState_SANDBOX_STATE_KILLING,
+	sandboxtypes.StateSnapshotting: statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING,
 }
 
 type rpc[Req, Resp any] func(context.Context, Req, ...grpc.CallOption) (Resp, error)
@@ -135,7 +135,7 @@ func callerError(ctx context.Context) error {
 	return nil
 }
 
-func outcomeError(method string, outcome scheduling.StateOutcome) error {
+func outcomeError(method string, outcome statepb.StateOutcome) error {
 	err, ok := stateErrors[outcome]
 	if !ok {
 		return unknownOutcome(method, outcome)
@@ -144,8 +144,8 @@ func outcomeError(method string, outcome scheduling.StateOutcome) error {
 	return err
 }
 
-func transitionError(method string, outcome scheduling.StateOutcome, current scheduling.SandboxState, target sandboxtypes.State) error {
-	if outcome != scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION {
+func transitionError(method string, outcome statepb.StateOutcome, current statepb.SandboxState, target sandboxtypes.State) error {
+	if outcome != statepb.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION {
 		return outcomeError(method, outcome)
 	}
 	state, ok := states[current]

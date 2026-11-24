@@ -4,11 +4,11 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 )
 
-// isNodeLabelsCompatible checks if a single node is compatible with the build labels.
+// NodeSatisfiesLabels checks if a single node is compatible with the build labels.
 // Returns true if:
 // - Build has no labels (empty slice)
 // - Node has all required labels
-func isNodeLabelsCompatible(node *nodemanager.Node, requiredLabels []string) bool {
+func NodeSatisfiesLabels(node *nodemanager.Node, requiredLabels []string) bool {
 	nodeLabels := node.Labels()
 
 	for _, req := range requiredLabels {

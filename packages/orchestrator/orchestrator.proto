@@ -317,7 +317,9 @@ message RunningSandbox {
   string client_id = 2;
 
   google.protobuf.Timestamp start_time = 3;
-  google.protobuf.Timestamp end_time = 4;
+
+  reserved 4;
+  reserved "end_time";
 
   // Minimal set required to detect an orphaned sandbox and kill it.
   // sandbox_id + team_id form the store key. execution_id is carried in the

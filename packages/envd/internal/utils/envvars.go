@@ -60,6 +60,20 @@ func (e *EnvVars) All() map[string]string {
 	return out
 }
 
+// UserVars returns a snapshot of the user entries only.
+func (e *EnvVars) UserVars() map[string]string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	out := make(map[string]string)
+	for k, v := range e.m {
+		if !v.internal {
+			out[k] = v.value
+		}
+	}
+
+	return out
+}
+
 // ReplaceUserVars replaces all user entries with newVars; internal entries
 // are left untouched even if they appear in newVars.
 func (e *EnvVars) ReplaceUserVars(newVars map[string]string) {

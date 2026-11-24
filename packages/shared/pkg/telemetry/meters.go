@@ -207,6 +207,9 @@ const (
 
 	OrchestratorBlockCachePunchBytes CounterType = "orchestrator.block.cache.punch.bytes"
 
+	OrchestratorBlockReadAheadBytes   CounterType = "orchestrator.block.readahead.bytes"
+	OrchestratorBlockReadAheadStreams CounterType = "orchestrator.block.readahead.streams"
+
 	// SandboxPauseFsQuiescedCounterName counts filesystem-only pauses by whether
 	// the captured rootfs was frozen (quiesced=true, crash-consistent) vs a plain
 	// sync fallback (quiesced=false). quiesced/total is the fraction of newly
@@ -285,7 +288,7 @@ const (
 	// gated{reason="binary_not_cached"} a node that merely has not warmed yet emits.
 	OrchestratorEnvdBinaryCacheWarms CounterType = "orchestrator.envd.binary_cache.warms"
 	// OrchestratorEnvdUpgradeHandover counts live-upgrade handover items by item
-	// (proc|retained|watcher) and result (ok|failed), reported back by the new
+	// (proc|retained|watcher|env_vars) and result (ok|failed), reported back by the new
 	// envd on /init. failed/(ok+failed) is the handover error rate — the
 	// fleet-visible signal (otherwise only logged in-guest) that the new envd
 	// dropped or degraded something it re-adopted across the swap.
@@ -487,6 +490,10 @@ const (
 	// ClientProxyResumeParkingRejectedCounterName counts callers shed with a
 	// 503 because the parking lot was full when their flight first retried.
 	ClientProxyResumeParkingRejectedCounterName CounterType = "client_proxy.resume.parking.rejected"
+	// ClientProxyProbeCounterName counts the sandbox probe requests the
+	// client proxy answered, by answer
+	// (found|claimed|not_found|unknown|canceled).
+	ClientProxyProbeCounterName CounterType = "client_proxy.probe.count"
 )
 
 const (
@@ -504,6 +511,7 @@ const (
 	OrchestratorSandboxNetworkModeCountMeterName ObservableUpDownCounterType = "orchestrator.sandbox.running.by_network_mode"
 
 	OrchestratorBlockCachePunchInflight ObservableUpDownCounterType = "orchestrator.block.cache.punch.inflight"
+	OrchestratorBlockReadAheadInflight  ObservableUpDownCounterType = "orchestrator.block.readahead.inflight"
 
 	ClientProxyServerConnectionsMeterCounterName ObservableUpDownCounterType = "client_proxy.proxy.server.connections.open"
 	ClientProxyPoolConnectionsMeterCounterName   ObservableUpDownCounterType = "client_proxy.proxy.pool.connections.open"
@@ -962,6 +970,8 @@ var counterDesc = map[CounterType]string{
 	OrchestratorDeadStructureOutcomeCounterName:  "Passes through a per-pause structure's drop site, by structure and outcome",
 	OrchestratorDeadStructureBytesCounterName:    "Bytes of per-pause structures dropped or kept at their drop site, by structure and outcome",
 	OrchestratorBlockCachePunchBytes:             "Bytes requested by block cache hole punches, by source (zero_run|zeroes_request|fold|export|grow) and result (removed: MADV_REMOVE; zeroed: refused, so the range was zero-filled instead); not space freed, since a punched range may be a hole already (always for fold, export and grow, and for a discard of never-written blocks)",
+	OrchestratorBlockReadAheadBytes:              "Bytes of rootfs chunks fetched ahead of a sequential cold reader, by outcome. issued: the fetch started. Each issued chunk then ends as exactly one of used (read, counted once its fetch succeeded), failed (the fetch failed) or unused (fetched, or cancelled, without a read before the file's cache closed). capped: a chunk not fetched because the node cap was full; file_capped: not fetched because the file already had a window of fetches in flight for every stream slot; a reader's chunk counts once, under the cap that held it first, and may be fetched later. issued - used - failed - unused is what is in flight or fetched and not read yet.",
+	OrchestratorBlockReadAheadStreams:            "Cold rootfs reads seen by read-ahead's reader tracking, by event. sequential: the read continued a followed reader in order, so read-ahead can run for it. new: the read started following a reader in a free slot. replaced: the read took the slot of another reader that had not come back, which happens when more readers share a file than the streams field of the rootfs-read-ahead flag allows; a high replaced share means the setting is too low.",
 	SandboxPauseFsQuiescedCounterName:            "Filesystem-only pauses by whether the rootfs was frozen (quiesced) vs sync fallback",
 	SandboxLifecycleUnstoppedCounterName:         "Sandbox lifecycles whose live-map entry the teardown chain reclaimed because no operation marked them stopping, by sandbox type",
 	SandboxResumeWPModeCounterName:               "Sandbox resumes by write-protect tracking mode (sync|async)",
@@ -981,7 +991,7 @@ var counterDesc = map[CounterType]string{
 	OrchestratorEnvdBinaryCacheReads:             "Host envd binary cache lookups on the resume path, by what the lookup found (hit|miss), upgrade path, and on a miss its cause (not_warmed|stalled|cancelled|unreadable|no_cache)",
 	OrchestratorEnvdBinaryCacheDeliveries:        "Host envd binary reads at delivery time, by outcome (copy|stale) and upgrade path",
 	OrchestratorEnvdBinaryCacheWarms:             "Host envd binary cache warms, by result (ok|superseded|suppressed|pinned|already_warming|bad_target|failed)",
-	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher) and result (ok|failed)",
+	OrchestratorEnvdUpgradeHandover:              "Live-upgrade handover items by item (proc|retained|watcher|env_vars) and result (ok|failed)",
 	PauseResumePrefetchHarvestThaw:               "Harvest throwaways whose envd /init took the held request and was served a 204, by skipped: true when envd answered X-Envd-Thaw: skip and left the workload frozen, false when it thawed inline and the workload ran into the trace (an envd version the gate admitted that does not skip); envd_running_version is the version the gate read, kept when the orchestrator holds it, else other",
 	PauseResumePrefetchHarvestAttempts:           "Resume prefetch harvest attempts after a pause or an in-place checkpoint, by result (success | resume_failed | collect_failed | skipped = seal did not settle | slot_timeout = no start slot | guest_unresponsive = snapshot taken over a hung guest agent, not harvested | persist_deadline) and path (pause | checkpoint)",
 	TCPFirewallConnectionsTotal:                  "Total number of TCP firewall connections processed",
@@ -1021,6 +1031,7 @@ var counterDesc = map[CounterType]string{
 
 	ClientProxyResumeFlightCounterName:          "Callers of the per-sandbox resume flight at the client proxy (role=leader|joiner|none, result=served|error|canceled)",
 	ClientProxyResumeParkingRejectedCounterName: "Requests shed with a 503 because the client proxy parking lot was full at their flight's first retry",
+	ClientProxyProbeCounterName:                 "Sandbox probe requests the client proxy answered (answer=found|claimed|not_found|unknown|canceled)",
 
 	ApiOrchestratorPlacementsWithoutHugepageCeiling: "Hugepage sandboxes placed under a hugepage limit on a node the limit could not bound, by node and reason (no_capacity | no_page_size).",
 }
@@ -1070,6 +1081,8 @@ var counterUnits = map[CounterType]string{
 	OrchestratorDeadStructureOutcomeCounterName:  "{pass}",
 	OrchestratorDeadStructureBytesCounterName:    "By",
 	OrchestratorBlockCachePunchBytes:             "By",
+	OrchestratorBlockReadAheadBytes:              "By",
+	OrchestratorBlockReadAheadStreams:            "{read}",
 	SandboxPauseFsQuiescedCounterName:            "{snapshot}",
 	SandboxLifecycleUnstoppedCounterName:         "{sandbox}",
 	SandboxResumeWPModeCounterName:               "{resume}",
@@ -1096,6 +1109,7 @@ var counterUnits = map[CounterType]string{
 	TCPFirewallErrorsTotal:                       "{error}",
 	ClientProxyResumeFlightCounterName:           "{request}",
 	ClientProxyResumeParkingRejectedCounterName:  "{request}",
+	ClientProxyProbeCounterName:                  "{request}",
 	TCPFirewallDecisionsTotal:                    "{decision}",
 
 	OrchestratorTemplateCacheAncestorResolutionsCounterName: "{ancestor}",
@@ -1154,6 +1168,7 @@ var observableUpDownCounterDesc = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "Counter of running sandboxes on the orchestrator.",
 	OrchestratorSandboxNetworkModeCountMeterName:       "Running sandboxes by project and assigned network mode.",
 	OrchestratorBlockCachePunchInflight:                "Block cache hole punches in progress, a refused punch's zero-filling included; one that stays above zero is a punch that has not returned.",
+	OrchestratorBlockReadAheadInflight:                 "Rootfs read-ahead fetches in progress on the orchestrator, against the node cap (nodeMaxInflight in the rootfs-read-ahead flag).",
 	ClientProxyServerConnectionsMeterCounterName:       "Open connections to the client proxy from load balancer.",
 	ClientProxyPoolConnectionsMeterCounterName:         "Open connections from the client proxy to the orchestrator proxy.",
 	ClientProxyPoolSizeMeterCounterName:                "Size of the client proxy pool.",
@@ -1173,6 +1188,7 @@ var observableUpDownCounterUnits = map[ObservableUpDownCounterType]string{
 	OrchestratorSandboxCountMeterName:                  "{sandbox}",
 	OrchestratorSandboxNetworkModeCountMeterName:       "{sandbox}",
 	OrchestratorBlockCachePunchInflight:                "{punch}",
+	OrchestratorBlockReadAheadInflight:                 "{fetch}",
 	ClientProxyServerConnectionsMeterCounterName:       "{connection}",
 	ClientProxyPoolConnectionsMeterCounterName:         "{connection}",
 	ClientProxyPoolSizeMeterCounterName:                "{transport}",

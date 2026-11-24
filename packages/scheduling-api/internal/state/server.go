@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -24,28 +24,28 @@ const (
 	maxMessageRecordLen = 1 << 20
 )
 
-var states = map[scheduling.SandboxState]sandboxtypes.State{
-	scheduling.SandboxState_SANDBOX_STATE_RUNNING:      sandboxtypes.StateRunning,
-	scheduling.SandboxState_SANDBOX_STATE_PAUSING:      sandboxtypes.StatePausing,
-	scheduling.SandboxState_SANDBOX_STATE_KILLING:      sandboxtypes.StateKilling,
-	scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING: sandboxtypes.StateSnapshotting,
+var states = map[statepb.SandboxState]sandboxtypes.State{
+	statepb.SandboxState_SANDBOX_STATE_RUNNING:      sandboxtypes.StateRunning,
+	statepb.SandboxState_SANDBOX_STATE_PAUSING:      sandboxtypes.StatePausing,
+	statepb.SandboxState_SANDBOX_STATE_KILLING:      sandboxtypes.StateKilling,
+	statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING: sandboxtypes.StateSnapshotting,
 }
 
 type Server struct {
-	scheduling.UnimplementedStateServiceServer
+	statepb.UnimplementedStateServiceServer
 
 	storage sandboxtypes.Storage
 	maxWait time.Duration
 }
 
-var _ scheduling.StateServiceServer = (*Server)(nil)
+var _ statepb.StateServiceServer = (*Server)(nil)
 
 // NewServer's maxWait bounds one WaitForTransition call.
 func NewServer(storage sandboxtypes.Storage, maxWait time.Duration) *Server {
 	return &Server{storage: storage, maxWait: maxWait}
 }
 
-func (s *Server) Add(ctx context.Context, req *scheduling.AddRequest) (*scheduling.AddResponse, error) {
+func (s *Server) Add(ctx context.Context, req *statepb.AddRequest) (*statepb.AddResponse, error) {
 	var sbx sandboxtypes.Sandbox
 	if err := json.Unmarshal(req.GetRecord(), &sbx); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "record: must be the JSON of a sandbox record")
@@ -60,10 +60,10 @@ func (s *Server) Add(ctx context.Context, req *scheduling.AddRequest) (*scheduli
 		return nil, storeError(ctx, err, logger.WithTeamID(sbx.TeamID.String()), logger.WithSandboxID(sbx.SandboxID))
 	}
 
-	return scheduling.AddResponse_builder{Outcome: outcome}.Build(), nil
+	return statepb.AddResponse_builder{Outcome: outcome}.Build(), nil
 }
 
-func (s *Server) Get(ctx context.Context, req *scheduling.GetRequest) (*scheduling.GetResponse, error) {
+func (s *Server) Get(ctx context.Context, req *statepb.GetRequest) (*statepb.GetResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -74,8 +74,8 @@ func (s *Server) Get(ctx context.Context, req *scheduling.GetRequest) (*scheduli
 	if !ok {
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
-	if outcome != scheduling.StateOutcome_STATE_OUTCOME_OK {
-		return scheduling.GetResponse_builder{Outcome: outcome}.Build(), nil
+	if outcome != statepb.StateOutcome_STATE_OUTCOME_OK {
+		return statepb.GetResponse_builder{Outcome: outcome}.Build(), nil
 	}
 
 	record, err := json.Marshal(sbx)
@@ -83,10 +83,10 @@ func (s *Server) Get(ctx context.Context, req *scheduling.GetRequest) (*scheduli
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.GetResponse_builder{Outcome: outcome, Record: record}.Build(), nil
+	return statepb.GetResponse_builder{Outcome: outcome, Record: record}.Build(), nil
 }
 
-func (s *Server) Remove(ctx context.Context, req *scheduling.RemoveRequest) (*scheduling.RemoveResponse, error) {
+func (s *Server) Remove(ctx context.Context, req *statepb.RemoveRequest) (*statepb.RemoveResponse, error) {
 	teamID, err := parseIDs(req.GetTeamId(), req.GetSandboxId())
 	if err != nil {
 		return nil, err
@@ -98,10 +98,10 @@ func (s *Server) Remove(ctx context.Context, req *scheduling.RemoveRequest) (*sc
 		return nil, storeError(ctx, err, logger.WithTeamID(req.GetTeamId()), logger.WithSandboxID(req.GetSandboxId()))
 	}
 
-	return scheduling.RemoveResponse_builder{Outcome: outcome}.Build(), nil
+	return statepb.RemoveResponse_builder{Outcome: outcome}.Build(), nil
 }
 
-func (s *Server) TeamItems(req *scheduling.TeamItemsRequest, stream grpc.ServerStreamingServer[scheduling.TeamItemsResponse]) error {
+func (s *Server) TeamItems(req *statepb.TeamItemsRequest, stream grpc.ServerStreamingServer[statepb.TeamItemsResponse]) error {
 	ctx := stream.Context()
 	teamID, err := uuid.Parse(req.GetTeamId())
 	if err != nil {
@@ -127,11 +127,11 @@ func (s *Server) TeamItems(req *scheduling.TeamItemsRequest, stream grpc.ServerS
 	}
 
 	return sendRecords(records, func(chunk [][]byte) error {
-		return stream.Send(scheduling.TeamItemsResponse_builder{Records: chunk}.Build())
+		return stream.Send(statepb.TeamItemsResponse_builder{Records: chunk}.Build())
 	})
 }
 
-func (s *Server) ExpiredItems(_ *scheduling.ExpiredItemsRequest, stream grpc.ServerStreamingServer[scheduling.ExpiredItemsResponse]) error {
+func (s *Server) ExpiredItems(_ *statepb.ExpiredItemsRequest, stream grpc.ServerStreamingServer[statepb.ExpiredItemsResponse]) error {
 	ctx := stream.Context()
 	items, err := s.storage.ExpiredItems(ctx)
 	if err != nil {
@@ -144,11 +144,11 @@ func (s *Server) ExpiredItems(_ *scheduling.ExpiredItemsRequest, stream grpc.Ser
 	}
 
 	return sendRecords(records, func(chunk [][]byte) error {
-		return stream.Send(scheduling.ExpiredItemsResponse_builder{Records: chunk}.Build())
+		return stream.Send(statepb.ExpiredItemsResponse_builder{Records: chunk}.Build())
 	})
 }
 
-func (s *Server) TeamsWithSandboxCount(ctx context.Context, _ *scheduling.TeamsWithSandboxCountRequest) (*scheduling.TeamsWithSandboxCountResponse, error) {
+func (s *Server) TeamsWithSandboxCount(ctx context.Context, _ *statepb.TeamsWithSandboxCountRequest) (*statepb.TeamsWithSandboxCountResponse, error) {
 	teams, err := s.storage.TeamsWithSandboxCount(ctx)
 	if err != nil {
 		return nil, storeError(ctx, err)
@@ -159,10 +159,10 @@ func (s *Server) TeamsWithSandboxCount(ctx context.Context, _ *scheduling.TeamsW
 		counts[teamID.String()] = count
 	}
 
-	return scheduling.TeamsWithSandboxCountResponse_builder{Counts: counts}.Build(), nil
+	return statepb.TeamsWithSandboxCountResponse_builder{Counts: counts}.Build(), nil
 }
 
-func (s *Server) Reconcile(ctx context.Context, req *scheduling.ReconcileRequest) (*scheduling.ReconcileResponse, error) {
+func (s *Server) Reconcile(ctx context.Context, req *statepb.ReconcileRequest) (*statepb.ReconcileResponse, error) {
 	sandboxes := make([]sandboxtypes.NodeSandbox, 0, len(req.GetSandboxes()))
 	for _, sbx := range req.GetSandboxes() {
 		teamID, err := uuid.Parse(sbx.GetTeamId())
@@ -196,45 +196,45 @@ func (s *Server) Reconcile(ctx context.Context, req *scheduling.ReconcileRequest
 
 	orphans := s.storage.Reconcile(ctx, sandboxes, req.GetNodeId())
 
-	refs := make([]*scheduling.SandboxReference, 0, len(orphans))
+	refs := make([]*statepb.SandboxReference, 0, len(orphans))
 	for _, orphan := range orphans {
-		refs = append(refs, scheduling.SandboxReference_builder{
+		refs = append(refs, statepb.SandboxReference_builder{
 			TeamId:    orphan.TeamID.String(),
 			SandboxId: orphan.SandboxID,
 		}.Build())
 	}
 
-	return scheduling.ReconcileResponse_builder{Orphans: refs}.Build(), nil
+	return statepb.ReconcileResponse_builder{Orphans: refs}.Build(), nil
 }
 
-func outcomeOf(err error) (scheduling.StateOutcome, bool) {
+func outcomeOf(err error) (statepb.StateOutcome, bool) {
 	switch {
 	case err == nil:
-		return scheduling.StateOutcome_STATE_OUTCOME_OK, true
+		return statepb.StateOutcome_STATE_OUTCOME_OK, true
 	case errors.Is(err, sandboxtypes.ErrNotFound):
-		return scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND, true
+		return statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND, true
 	case errors.Is(err, sandboxtypes.ErrLifecycleHeld):
-		return scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, true
+		return statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD, true
 	case errors.Is(err, sandboxtypes.ErrExecutionMismatch):
-		return scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, true
+		return statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH, true
 	case errors.Is(err, sandboxtypes.ErrLockLost):
-		return scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST, true
+		return statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST, true
 	case errors.Is(err, sandboxtypes.ErrHoldConflict):
-		return scheduling.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT, true
+		return statepb.StateOutcome_STATE_OUTCOME_HOLD_CONFLICT, true
 	case errors.Is(err, sandboxtypes.ErrNotHeld):
-		return scheduling.StateOutcome_STATE_OUTCOME_NOT_HELD, true
+		return statepb.StateOutcome_STATE_OUTCOME_NOT_HELD, true
 	case errors.Is(err, sandboxtypes.ErrEvictionInProgress):
-		return scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS, true
+		return statepb.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS, true
 	case errors.Is(err, sandboxtypes.ErrEvictionNotNeeded):
-		return scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED, true
+		return statepb.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED, true
 	case errors.Is(err, sandboxtypes.ErrRestoreConflict):
-		return scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT, true
+		return statepb.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT, true
 	}
 	if _, ok := errors.AsType[*sandboxtypes.InvalidStateTransitionError](err); ok {
-		return scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION, true
+		return statepb.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION, true
 	}
 
-	return scheduling.StateOutcome_STATE_OUTCOME_UNSPECIFIED, false
+	return statepb.StateOutcome_STATE_OUTCOME_UNSPECIFIED, false
 }
 
 // Records are never logged: they carry access tokens.

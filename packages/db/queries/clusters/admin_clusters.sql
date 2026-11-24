@@ -1,5 +1,5 @@
 -- The cluster records themselves come from the cluster service; this counts
--- each cluster's live teams for the admin cluster list.
+-- each cluster's live teams.
 -- name: CountLiveTeamsByCluster :many
 SELECT cluster_id::uuid AS cluster_id, COUNT(*)::bigint AS team_count
 FROM public.teams
@@ -23,11 +23,5 @@ LIMIT sqlc.arg(page_size)::bigint OFFSET sqlc.arg(offset_count)::bigint;
 -- name: CountAdminClusterTeams :one
 SELECT COUNT(*)::bigint AS total
 FROM public.teams
-WHERE cluster_id = sqlc.arg(cluster_id)::uuid
-  AND deleted_at IS NULL;
-
--- name: CountAdminClusterTemplates :one
-SELECT COUNT(*)::bigint AS total
-FROM public.envs
 WHERE cluster_id = sqlc.arg(cluster_id)::uuid
   AND deleted_at IS NULL;

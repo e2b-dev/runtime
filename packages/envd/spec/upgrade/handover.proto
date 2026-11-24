@@ -59,12 +59,14 @@ message HandoverState {
   repeated int32 helper_pids = 10;
 }
 
-// HandoverDefaults is the outgoing envd's execcontext.Defaults, minus the env vars
-// (which /init replaces wholesale anyway).
+// HandoverDefaults is the outgoing envd's execcontext.Defaults.
 message HandoverDefaults {
   string user = 1;
   string workdir = 2;    // empty when unset
   bool has_workdir = 3;  // distinguishes an empty workdir from no workdir
+  // env_vars are the user environment variables, since a memory resume's /init sends
+  // none. Not a schema bump: an older reader just drops them, as before the field.
+  map<string, string> env_vars = 4;
 }
 
 // MountEntry is one NFS volume mount the outgoing envd had set up, keyed by the

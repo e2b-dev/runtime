@@ -124,6 +124,7 @@ type Cache struct {
 	blockMetrics  blockmetrics.Metrics
 	rootCachePath string
 	peers         peerclient.Resolver
+	cacheIndex    storage.CacheIndexRecorder
 	extendMu      sync.Mutex
 
 	// pinned holds templates a live sandbox depends on. It is the authoritative
@@ -333,8 +334,8 @@ func (c *Cache) onEvicted(ctx context.Context, item *ttlcache.Item[string, Templ
 	c.extendMu.Unlock()
 
 	// Closed outside the lock on purpose. closeTemplate waits on the template's
-	// memfile, rootfs and snapfile futures, each a bare SetOnce.Wait with no
-	// context and no deadline, and extendMu is the lock every sandbox create and
+	// memfile, rootfs and snapfile futures under a context it cannot cancel, so
+	// with no deadline, and extendMu is the lock every sandbox create and
 	// resume takes. Holding it across that wait would turn an eviction that lands
 	// while a fetch or a dedup swap is still in flight into a node-wide
 	// create/resume stall, clearable only by restarting the process.
@@ -496,8 +497,9 @@ func (c *Cache) release(ctx context.Context, e *pinnedEntry, tok uint64) {
 	noteGoneLocked(e.tmpl)
 	c.extendMu.Unlock()
 
-	// Off this goroutine: closeTemplate waits on the template's futures with no
-	// deadline, and the last release usually runs on a sandbox's lifecycle path.
+	// Off this goroutine: closeTemplate joins the template's fetches under a
+	// context it cannot cancel, so with no deadline, and the last release
+	// usually runs on a sandbox's lifecycle path.
 	//
 	// An eviction callback for this instance may be queued behind us — Invalidate
 	// deletes the cache entry before retiring the pin — and will find nothing
@@ -838,7 +840,7 @@ func (c *Cache) getTemplateForBuild(
 	// it will start working only for new orchestrators or new builds.
 	if path, enabled := c.useNFSCache(ctx, isBuilding, isSnapshot); enabled {
 		logger.L().Info(ctx, "using local template cache", zap.String("path", c.rootCachePath))
-		persistence = storage.WrapInNFSCache(ctx, path, persistence, c.flags)
+		persistence = storage.WrapInNFSCache(ctx, path, persistence, c.flags, c.NFSCacheOptions()...)
 		span.SetAttributes(attribute.Bool("use_cache", true))
 	} else {
 		span.SetAttributes(attribute.Bool("use_cache", false))
@@ -1196,6 +1198,21 @@ func (c *Cache) UpdateMetadata(ctx context.Context, buildID string, meta metadat
 	}
 
 	return t.UpdateMetadata(meta)
+}
+
+// SetCacheIndex reports every build used through the NFS cache to r. Call it
+// before the cache serves templates.
+func (c *Cache) SetCacheIndex(r storage.CacheIndexRecorder) {
+	c.cacheIndex = r
+}
+
+// NFSCacheOptions are the options for wrapping storage in the NFS cache.
+func (c *Cache) NFSCacheOptions() []storage.CacheOption {
+	if c == nil || c.cacheIndex == nil {
+		return nil
+	}
+
+	return []storage.CacheOption{storage.WithCacheIndex(c.cacheIndex)}
 }
 
 func (c *Cache) useNFSCache(ctx context.Context, isBuilding bool, isSnapshot bool) (string, bool) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -24,6 +26,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
+	"github.com/e2b-dev/infra/packages/shared/pkg/fcversion"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
@@ -37,6 +40,9 @@ var (
 
 	// maxVcpuCounter counts max CPU resolutions by source and outcome, one per registration.
 	maxVcpuCounter = mustCounter("api.template.build.max_vcpu", "Number of template build max CPU resolutions by source and outcome")
+
+	// maxMemoryCounter counts requested memory maximums by outcome, one per registration that names one.
+	maxMemoryCounter = mustCounter("api.template.build.max_memory", "Number of template builds requesting a memory maximum, by outcome")
 )
 
 func mustCounter(name, description string) metric.Int64Counter {
@@ -62,6 +68,7 @@ type RegisterBuildData struct {
 	ReadyCmd           *string
 	CpuCount           *int32
 	MaxCpuCount        *int32
+	MaxMemoryMB        *int32
 	MemoryMB           *int32
 	Version            string
 
@@ -219,6 +226,10 @@ func registerBuild(
 		telemetry.SetAttributes(ctx, attribute.Int("env.max_cpu", int(*data.MaxCpuCount)))
 	}
 
+	if data.MaxMemoryMB != nil {
+		telemetry.SetAttributes(ctx, attribute.Int("env.max_memory_mb", int(*data.MaxMemoryMB)))
+	}
+
 	cpuCount, ramMB, apiError := team.LimitResources(data.Team.Limits, data.CpuCount, data.MemoryMB)
 	if apiError != nil {
 		apiError.Retryable = apierrors.NoRetry
@@ -239,6 +250,20 @@ func registerBuild(
 		zap.Int64("team_max_vcpu", data.Team.Limits.MaxVcpu),
 	)
 	if apiError != nil {
+		return nil, apiError
+	}
+
+	maxRAMMB, apiError := resolveMaxMemory(ctx, featureFlags, data.Team, data.TemplateID, ramMB, data.MaxMemoryMB)
+	if apiError != nil {
+		logger.L().Info(ctx, "template build max memory rejected",
+			logger.WithTeamID(data.Team.ID.String()),
+			logger.WithTemplateID(data.TemplateID),
+			logger.WithBuildID(buildID.String()),
+			zap.Int64("memory_mb", ramMB),
+			zap.Int32p("max_memory_mb", data.MaxMemoryMB),
+			zap.Error(apiError.Err),
+		)
+
 		return nil, apiError
 	}
 
@@ -340,6 +365,8 @@ func registerBuild(
 		RamMb:              ramMB,
 		Vcpu:               cpuCount,
 		MaxVcpu:            maxVcpu.value,
+		MaxRamMb:           maxRAMMB,
+		StartMemoryMb:      templateStartMemoryMB(ramMB, maxRAMMB),
 		KernelVersion:      data.KernelVersion,
 		FirecrackerVersion: data.FirecrackerVersion,
 		FreeDiskSizeMb:     freeDiskSizeMB,
@@ -622,4 +649,135 @@ func resolveMaxVcpu(
 	}
 
 	return maxVcpuResolution{value: &effective, source: "team_default", outcome: outcome, flagValue: n}, nil
+}
+
+// resolveMaxMemory validates a requested memory maximum. It requires
+// ResizableTemplatesFlag and refuses here what the template-manager would fail
+// the build for: a size that is not whole slots above boot RAM, a hotplug
+// region above template-memory-hotplug-max-ratio times boot RAM (evaluated with
+// the template and team contexts; a rule on a context only the template-manager
+// carries can still fail the build), or a kernel or Firecracker too old for
+// memory hotplug, as the build flags resolve them for the API. A maximum equal
+// to boot RAM is no hotplug region and is stored as none.
+func resolveMaxMemory(
+	ctx context.Context,
+	featureFlags *featureflags.Client,
+	t *types.Team,
+	templateID string,
+	ramMB int64,
+	requested *int32,
+) (value *int64, apiErr *api.APIError) {
+	if requested == nil {
+		return nil, nil
+	}
+
+	outcome := "accepted"
+	defer func() {
+		if maxMemoryCounter != nil {
+			maxMemoryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+		}
+	}()
+
+	teamContext := featureflags.TeamContext(t.ID.String())
+	if !featureFlags.BoolFlag(ctx, featureflags.ResizableTemplatesFlag, teamContext) {
+		outcome = "rejected_flag_off"
+
+		return nil, &api.APIError{
+			Err:       errors.New("max memory requested while resizable templates are off for the team"),
+			ClientMsg: "Resizable templates are not enabled for your team",
+			Code:      http.StatusBadRequest,
+			Retryable: apierrors.NoRetry,
+		}
+	}
+
+	maxMB, apiErr := team.LimitMaxMemory(t.Limits, ramMB, *requested)
+	if apiErr != nil {
+		outcome = "rejected_validation"
+		apiErr.Retryable = apierrors.NoRetry
+
+		return nil, apiErr
+	}
+
+	if maxMB == ramMB {
+		outcome = "equal"
+
+		return nil, nil
+	}
+
+	ratio := int64(featureFlags.IntFlag(ctx, featureflags.TemplateMemoryHotplugMaxRatioFlag, featureflags.TemplateContext(templateID), teamContext))
+	if ratio > 0 && maxMB-ramMB > ratio*ramMB {
+		outcome = "rejected_ratio"
+		largest := ramMB + ratio*ramMB/constants.MemoryHotplugSlotMiB*constants.MemoryHotplugSlotMiB
+
+		return nil, &api.APIError{
+			Err:       fmt.Errorf("hotplug region of %d MiB is above %d times the memory of %d MiB", maxMB-ramMB, ratio, ramMB),
+			ClientMsg: fmt.Sprintf("Max memory can be at most %d MiB for a memory of %d MiB", largest, ramMB),
+			Code:      http.StatusBadRequest,
+			Retryable: apierrors.NoRetry,
+		}
+	}
+
+	// The versions the template-manager will build with: read, like the ratio, with
+	// the template's context, so a per-template rule applies here too.
+	templateContext := featureflags.TemplateContext(templateID)
+	kernelVersion := featureFlags.StringFlag(ctx, featureflags.BuildKernelVersion, templateContext, teamContext)
+	firecrackerVersion := featureFlags.StringFlag(ctx, featureflags.BuildFirecrackerVersion, templateContext, teamContext)
+	if kernelTooOldForMemoryHotplug(kernelVersion) {
+		outcome = "rejected_kernel"
+
+		return nil, &api.APIError{
+			Err:       fmt.Errorf("build kernel %s predates memory hotplug", kernelVersion),
+			ClientMsg: "Max memory is not available: the template's kernel does not support memory hotplug",
+			Code:      http.StatusBadRequest,
+			Retryable: apierrors.NoRetry,
+		}
+	}
+	if info, err := fcversion.New(firecrackerVersion); err == nil && !info.HasMemoryHotplug() {
+		outcome = "rejected_firecracker"
+
+		return nil, &api.APIError{
+			Err:       fmt.Errorf("build Firecracker %s predates memory hotplug", firecrackerVersion),
+			ClientMsg: "Max memory is not available: the template's Firecracker version does not support memory hotplug",
+			Code:      http.StatusBadRequest,
+			Retryable: apierrors.NoRetry,
+		}
+	}
+
+	return &maxMB, nil
+}
+
+// The oldest guest kernel whose virtio-mem driver works with Firecracker's
+// hotplug region on x86, as the template-manager checks it (arm64 needs 5.18;
+// the API does not know the build's architecture, so the template-manager
+// still refuses 5.16 and 5.17 there).
+var (
+	minMemoryHotplugKernel = [2]int{5, 16}
+	kernelVersionRe        = regexp.MustCompile(`^vmlinux-(\d+)\.(\d+)`)
+)
+
+// kernelTooOldForMemoryHotplug reports whether a kernel slot name
+// (vmlinux-6.1.158, optionally with a suffix) is older than the minimum. A name
+// it cannot read is not refused.
+func kernelTooOldForMemoryHotplug(kernelVersion string) bool {
+	m := kernelVersionRe.FindStringSubmatch(kernelVersion)
+	if m == nil {
+		return false
+	}
+	major, errMajor := strconv.Atoi(m[1])
+	minor, errMinor := strconv.Atoi(m[2])
+	if errMajor != nil || errMinor != nil {
+		return false
+	}
+
+	return major < minMemoryHotplugKernel[0] || (major == minMemoryHotplugKernel[0] && minor < minMemoryHotplugKernel[1])
+}
+
+// templateStartMemoryMB is the size a template build records for its starts:
+// boot RAM, set only on a build with a memory maximum (BuildStartMemoryMB).
+func templateStartMemoryMB(ramMB int64, maxRAMMB *int64) *int64 {
+	if maxRAMMB == nil {
+		return nil
+	}
+
+	return &ramMB
 }

@@ -25,6 +25,7 @@ type Config struct {
 	APIInternalGRPCAddress string `env:"API_INTERNAL_GRPC_ADDRESS"`
 	APIEdgeGRPCAddress     string `env:"API_EDGE_GRPC_ADDRESS"`
 
+	APIEdgeGRPCTokenFile         string `env:"API_EDGE_GRPC_TOKEN_FILE"`
 	APIEdgeGRPCOAuthClientID     string `env:"API_EDGE_GRPC_OAUTH_CLIENT_ID"`
 	APIEdgeGRPCOAuthClientSecret string `env:"API_EDGE_GRPC_OAUTH_CLIENT_SECRET"`
 	APIEdgeGRPCOAuthTokenURL     string `env:"API_EDGE_GRPC_OAUTH_TOKEN_URL"`

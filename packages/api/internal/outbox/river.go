@@ -83,11 +83,31 @@ func New(deps Dependencies) (*River, error) {
 		clusters: deps.Clusters,
 		steps:    steps.Job(outbox.SyncTeamClusterAssignment{}.Kind()),
 	})
+	sweep := &teamClusterSweepWorker{
+		db:       deps.DB,
+		clusters: deps.Clusters,
+		pageSize: teamClusterSweepPage,
+		steps:    steps.Job(outbox.SweepTeamClusterAssignments{}.Kind()),
+	}
+	river.AddWorker(workers, sweep)
+
+	// Without a cluster service no team is on a remote cluster to sweep for.
+	var periodicJobs []*river.PeriodicJob
+	if deps.Clusters != nil {
+		periodicJobs = append(periodicJobs, river.NewPeriodicJob(
+			river.PeriodicInterval(teamClusterSweepInterval),
+			func() (river.JobArgs, *river.InsertOpts) { return outbox.SweepTeamClusterAssignments{}, nil },
+			// A new leader starts the interval over, so a plane that deploys
+			// more often than the interval would otherwise never sweep.
+			&river.PeriodicJobOpts{RunOnStart: true},
+		))
+	}
 
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
 		Queues:               map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: deps.Config.MaxWorkers}},
 		Workers:              workers,
+		PeriodicJobs:         periodicJobs,
 		Plugins:              []rivertype.Plugin{sharedriver.NewOTelMiddleware(deps.Telemetry)},
 		Middleware:           []rivertype.Middleware{sharedriver.NewOutboxJobTelemetry(deps.Telemetry, deps.Logger)},
 		Logger:               sharedriver.NewLogger(deps.Logger),
@@ -101,10 +121,12 @@ func New(deps Dependencies) (*River, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create river client: %w", err)
 	}
+	// The client is built from its workers, so the sweep gets it afterwards.
+	sweep.jobs = client
 
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind()},
+		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.ContainBannedTeam{}.Kind(), outbox.SyncTeamClusterAssignment{}.Kind(), outbox.SweepTeamClusterAssignments{}.Kind()},
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {

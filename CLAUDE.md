@@ -197,12 +197,13 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 ## Important Development Notes
 
 ### Working with Proto/gRPC
-- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`, scheduling protos at `packages/scheduling-api/e2b/` (`make -C packages/scheduling-api generate`)
+- Proto files: `packages/envd/spec/process/`, `packages/envd/spec/filesystem/`, orchestrator protos at `packages/orchestrator/*.proto`
 - Shared protos: `packages/shared/pkg/grpc/`
 - After editing proto files, run `make generate/orchestrator` and `make generate/shared`
 
 ### Database Migrations
 - Migrations: `packages/db/migrations/`
+- Schema: `packages/db/schema/schema.sql` declares what the migrations build; change it in the same commit as the migration. Migrations generated from it carry a `Code generated` header.
 - Create: `cd packages/db && make create-migration NAME=your-migration-name` — this generates the file with a correct `YYYYMMDDHHMMSS` timestamp. Do NOT hand-create migration files; placeholder timestamps like `120000`/`000000` cause same-day version collisions and are rejected by the out-of-order-migrations CI check.
 - Apply: `make migrate` (requires POSTGRES_CONNECTION_STRING)
 - Code generation: `make generate/db` (regenerates sqlc code)

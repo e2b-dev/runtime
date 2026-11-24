@@ -23,6 +23,7 @@ import (
 	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/db/pkg/pool"
 	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management/clienttests"
 )
@@ -49,6 +50,19 @@ func newSingleClusterService(t *testing.T, clusterID uuid.UUID, state clusterSta
 	t.Helper()
 
 	s := &singleClusterService{MockClusterServiceClient: clienttests.NewMockClusterServiceClient(t), state: state}
+	s.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, _ *clustersgrpc.CheckProjectCreationRequest, _ ...grpc.CallOption) (*clustersgrpc.CheckProjectCreationResponse, error) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			switch s.state {
+			case clusterAbsent:
+				return nil, status.Error(codes.NotFound, "cluster not found")
+			case clusterDeleting:
+				return nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED)
+			default:
+				return clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil
+			}
+		}).Maybe()
 	s.EXPECT().GetCluster(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, _ *clustersgrpc.GetClusterRequest, _ ...grpc.CallOption) (*clustersgrpc.GetClusterResponse, error) {
 			s.mu.Lock()
@@ -86,47 +100,13 @@ func (s *singleClusterService) set(state clusterState) {
 	s.state = state
 }
 
-// withClusterService points both the assignment route and the project upsert
-// at clusterService.
+// withClusterService points both the cluster routes and the project upsert at
+// clusterService.
 func withClusterService(t *testing.T, db *testutils.Database, store *APIStore, clusterService clustersgrpc.ClusterServiceClient) {
 	t.Helper()
 
 	store.clusterService = clusterService
 	store.managementService = management.NewService(db.AuthDB, db.SqlcClient, store.authService, clusterService, noop.NewMeterProvider())
-}
-
-func TestANewAssignmentChecksTheClusterService(t *testing.T) {
-	t.Parallel()
-
-	for name, tc := range map[string]struct {
-		state   clusterState
-		current bool
-		want    int
-		code    string
-	}{
-		"a cluster the service does not know":                             {state: clusterAbsent, want: http.StatusNotFound, code: clusterAssignmentClusterNotFoundCode},
-		"a cluster being deleted":                                         {state: clusterDeleting, want: http.StatusConflict, code: clusterAssignmentClusterDeletingCode},
-		"the team's current cluster, being deleted, is no new assignment": {state: clusterDeleting, current: true, want: http.StatusNoContent},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			db := testutils.SetupDatabase(t)
-			store, _ := newManagementStore(t, db)
-			clusterID, team := uuid.New(), testutils.CreateTestTeam(t, db)
-			if tc.current {
-				require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE public.teams SET cluster_id = $1 WHERE id = $2`, clusterID, team))
-			}
-			withClusterService(t, db, store, newSingleClusterService(t, clusterID, tc.state))
-
-			response := callManagementAssignProjectCluster(t, store, team, clusterID)
-			require.Equal(t, tc.want, response.Code, response.Body.String())
-			if tc.code != "" {
-				requireClusterErrorCode(t, response, tc.code)
-				require.Nil(t, teamCluster(t, db, team))
-			}
-		})
-	}
 }
 
 func TestUpsertProjectChecksANewClusterWithTheClusterService(t *testing.T) {
@@ -175,6 +155,59 @@ func TestUpsertProjectChecksANewClusterWithTheClusterService(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		require.Equal(t, &clusterID, teamCluster(t, db, project.id))
 	})
+
+	t.Run("the project has a conflicting placement", func(t *testing.T) {
+		t.Parallel()
+
+		db := testutils.SetupDatabase(t)
+		store, _ := newManagementStore(t, db)
+		cluster, project := uuid.New(), newProjectFixture()
+		service := clienttests.NewMockClusterServiceClient(t)
+		service.EXPECT().CheckProjectCreation(mock.Anything, mock.MatchedBy(func(req *clustersgrpc.CheckProjectCreationRequest) bool {
+			return req.GetProjectId() == project.id.String() && req.GetClusterId() == cluster.String()
+		})).Return(nil, clusterRefusal(clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT)).Once()
+		withClusterService(t, db, store, service)
+		req := project.request()
+		req.ClusterId = &cluster
+		response := callUpsertProject(t, store, project.id, req)
+		require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	})
+}
+
+func TestRemoteProjectCreationRetriesUnavailableAdmission(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		code       codes.Code
+		wantStatus int
+		wantRetry  string
+	}{
+		{codes.Unavailable, http.StatusServiceUnavailable, "true"},
+		{codes.Unimplemented, http.StatusInternalServerError, ""},
+	} {
+		t.Run(tc.code.String(), func(t *testing.T) {
+			t.Parallel()
+
+			db := testutils.SetupDatabase(t)
+			store, _ := newManagementStore(t, db)
+			service := clienttests.NewMockClusterServiceClient(t)
+			withClusterService(t, db, store, service)
+			project, cluster := newProjectFixture(), uuid.New()
+			req := project.request()
+			req.ClusterId = &cluster
+			service.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).Return(nil, status.Error(tc.code, "check failed")).Once()
+
+			response := callUpsertProject(t, store, project.id, req)
+			require.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			require.Equal(t, tc.wantRetry, response.Header().Get(apierrors.ShouldRetryHeader))
+			if tc.wantRetry != "" {
+				service.EXPECT().CheckProjectCreation(mock.Anything, mock.Anything).Return(clustersgrpc.CheckProjectCreationResponse_builder{}.Build(), nil).Once()
+				retry := callUpsertProject(t, store, project.id, req)
+				require.Equal(t, http.StatusCreated, retry.Code, retry.Body.String())
+				require.Equal(t, &cluster, teamCluster(t, db, project.id))
+			}
+		})
+	}
 }
 
 // An assignment holding the lock may have read the cluster before its
@@ -215,7 +248,9 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 
 	db := testutils.SetupDatabase(t)
 	store, _ := newManagementStore(t, db)
-	clusterID, team := uuid.New(), testutils.CreateTestTeam(t, db)
+	clusterID, project := uuid.New(), newProjectFixture()
+	onCluster := project.request()
+	onCluster.ClusterId = &clusterID
 	clusterService := newSingleClusterService(t, clusterID, clusterPresent)
 	entered, release := make(chan struct{}), make(chan struct{})
 	clusterService.EXPECT().DeleteCluster(mock.Anything, mock.Anything).RunAndReturn(
@@ -232,7 +267,10 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 	go func() { deleted <- callManagementDeleteCluster(t, store, clusterID).Code }()
 	<-entered
 	assigned := make(chan int, 1)
-	go func() { assigned <- callManagementAssignProjectCluster(t, store, team, clusterID).Code }()
+	body := mustJSON(t, onCluster)
+	go func() {
+		assigned <- callManagement(t, store, http.MethodPut, "/unstable/management/projects/"+project.id.String(), body).Code
+	}()
 	require.Eventually(t, func() bool {
 		var waiting bool
 		err := db.SqlcClient.TestsRawSQLQuery(t.Context(), `
@@ -254,7 +292,9 @@ func TestAnAssignmentWaitsForAClusterDeleteInFlight(t *testing.T) {
 
 	require.Equal(t, http.StatusNoContent, <-deleted)
 	require.Equal(t, http.StatusNotFound, <-assigned)
-	require.Nil(t, teamCluster(t, db, team))
+	var exists bool
+	queryRow(t, db, `SELECT EXISTS (SELECT FROM public.teams WHERE id = $1)`, []any{project.id}, &exists)
+	require.False(t, exists)
 }
 
 // An assignment that read the cluster before the delete took the lock
@@ -400,6 +440,6 @@ func TestAClusterDeleteFinishesWhenTheCallerLeaves(t *testing.T) {
 		}).Once()
 	withClusterService(t, db, store, clusterService)
 
-	require.NoError(t, store.deleteCluster(request, clusterID))
+	require.NoError(t, store.deleteCluster(request, clusterID, false))
 	require.True(t, templateDeleted(t, db, templateID))
 }

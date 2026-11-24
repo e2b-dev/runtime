@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"maps"
 	"net"
@@ -78,6 +79,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	sandboxcatalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
+	"github.com/e2b-dev/infra/packages/shared/pkg/storage/cacheindex"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -287,6 +289,16 @@ type EgressSetup struct {
 // It receives fully initialized shared deps and a context.
 type EgressFactory func(ctx context.Context, deps *Deps) (*EgressSetup, error)
 
+// DataPlaneFactory builds an edition's data plane once at startup. It
+// receives the fully initialized shared deps and the NBD device pool the
+// in-process disk uses, so a plane that falls back to NBD can share it. A
+// plane with node-wide state implements io.Closer: it is closed at shutdown
+// before the device pool, and after the sandboxes only on a complete
+// graceful drain. On a forced stop, or when the drain runs out of time,
+// sandboxes are still live when it closes, and their per-sandbox Close
+// calls come later: the node-wide Close must leave them able to run.
+type DataPlaneFactory func(ctx context.Context, deps *Deps, pool *nbd.DevicePool) (sandbox.DataPlane, error)
+
 // Options configures the orchestrator with edition-specific behavior.
 type Options struct {
 	Version       string
@@ -295,6 +307,13 @@ type Options struct {
 	// GuestProfiles are the guest profiles beside the default one; a build
 	// whose guest OS none of them claims is refused.
 	GuestProfiles []guest.Profile
+	// DataPlane builds the data plane that serves every sandbox's root disk
+	// and, on resume, its memory (a fresh start serves memory from the
+	// memfile without a handler). It runs once at startup, after the shared
+	// deps and the NBD device pool exist, so an edition's plane can hold
+	// either; an error fails the start. nil keeps the in-process
+	// userfaultfd handler and NBD.
+	DataPlane DataPlaneFactory
 	// Runtime receives the sandbox runtime once it exists and before the
 	// orchestrator serves (optional), and returns what shutdown closes
 	// after the orchestrator's gRPC listeners stopped taking requests and
@@ -828,6 +847,20 @@ func run(config cfg.Config, opts Options) (success bool) {
 		return nil
 	}})
 
+	// Last-use index of the NFS chunk cache, read by the cache cleaner. Needs
+	// Redis; without it the cleaner falls back to sampling the cache.
+	if cacheRoot := config.BuilderConfig.SharedChunkCacheDir; redisClient != nil && cacheRoot != "" {
+		cacheIndex := cacheindex.NewWriter(redisClient, cacheindex.WriterConfig{
+			Root: cacheRoot,
+			Enabled: func(ctx context.Context) bool {
+				return featureFlags.BoolFlag(ctx, featureflags.NFSCacheIndexWritesFlag)
+			},
+		})
+		cacheIndex.Start(ctx)
+		templateCache.SetCacheIndex(cacheIndex)
+		closers = append(closers, closer{"nfs cache index", cacheIndex.Close})
+	}
+
 	// clickhouse delivery endpoints
 	clickhouseEndpoints, clickhouseClosers := openClickhouseEndpoints(ctx, config)
 	closers = append(closers, clickhouseClosers...)
@@ -1097,7 +1130,19 @@ func run(config cfg.Config, opts Options) (success bool) {
 	if networkAssignHook == nil {
 		networkAssignHook = sandbox.NoopNetworkAssignHook{}
 	}
-	sandboxFactory := sandbox.NewFactory(ctx, config.BuilderConfig, networkPool, devicePool, featureFlags, hostStatsDelivery, cgroupManager, egressSetup.Proxy, networkAssignHook, sandboxes)
+	var dataPlane sandbox.DataPlane
+	if opts.DataPlane != nil {
+		dataPlane, err = opts.DataPlane(ctx, deps, devicePool)
+		if err != nil {
+			logger.L().Fatal(ctx, "failed to build the data plane", zap.Error(err))
+		}
+		// Closers run in reverse: appended after the device pool's entry, the
+		// plane closes before the pool it may share.
+		if c, ok := dataPlane.(io.Closer); ok {
+			closers = append(closers, closer{"data plane", func(context.Context) error { return c.Close() }})
+		}
+	}
+	sandboxFactory := sandbox.NewFactory(ctx, config.BuilderConfig, networkPool, devicePool, featureFlags, hostStatsDelivery, cgroupManager, egressSetup.Proxy, networkAssignHook, sandboxes).WithDataPlane(dataPlane)
 
 	// confined volume filesystems (for the volume service and nfs proxy)
 	if err := chrooted.CheckSupport(); err != nil {

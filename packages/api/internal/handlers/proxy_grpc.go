@@ -346,6 +346,9 @@ func (s *SandboxService) orgOwnsCluster(claims oauth.Claims, clusterID *uuid.UUI
 	if clusterID == nil {
 		return false
 	}
+	if claims.ClusterID != "" {
+		return claims.ClusterID == clusterID.String()
+	}
 	cluster, found := s.api.clusters.GetClusterById(*clusterID)
 
 	return found && oauth.RequireOrgClaims(claims, cluster.AuthOrgID) == nil

@@ -49,7 +49,6 @@ func TestGetOrphanCandidates_ReadsScalarFields(t *testing.T) {
 	teamID := uuid.New()
 	node := newTestNodeWithList(t, &orchestrator.RunningSandbox{
 		StartTime:   timestamppb.New(now),
-		EndTime:     timestamppb.New(now.Add(time.Hour)),
 		SandboxId:   "sbx-1",
 		TeamId:      teamID.String(),
 		ExecutionId: "exec-1",
@@ -81,7 +80,6 @@ func TestGetOrphanCandidates_FallsBackToDeprecatedConfig(t *testing.T) {
 	teamID := uuid.New()
 	node := newTestNodeWithList(t, &orchestrator.RunningSandbox{
 		StartTime: timestamppb.New(now),
-		EndTime:   timestamppb.New(now.Add(time.Hour)),
 		Config: &orchestrator.SandboxConfig{
 			SandboxId:   "sbx-legacy",
 			TeamId:      teamID.String(),

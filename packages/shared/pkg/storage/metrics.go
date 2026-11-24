@@ -23,6 +23,10 @@ const (
 	AttrOutcome  = "outcome"
 	AttrFileType = "file_type"
 	AttrTrigger  = "trigger"
+	// AttrReadAhead marks a measurement of a chunk fetched ahead of a reader.
+	// Only read-ahead fetches carry it, so existing series are unchanged and
+	// read_ahead!="true" selects every demand fetch.
+	AttrReadAhead = "read_ahead"
 )
 
 // Writeback triggers: a read-miss cache fill vs a build/store write-through.
@@ -153,6 +157,21 @@ func ErrAttrs(o SeekableObjectType, s Source, c CompressionType, err error) metr
 		attribute.String(AttrSource, s.String()),
 		attribute.String(AttrCodec, c.String()),
 		attribute.String(AttrOutcome, Outcome(err)),
+	)
+}
+
+// ReadAheadAttrs is OKAttrs (err nil) or ErrAttrs plus read_ahead=true, for a
+// chunk fetched ahead of a reader. Built per call: read-ahead fetches are few
+// next to cache hits.
+func ReadAheadAttrs(o SeekableObjectType, s Source, c CompressionType, err error) metric.MeasurementOption {
+	o, s, c = safeAttrIdx(o, s, c)
+
+	return metric.WithAttributes(
+		attribute.String(AttrFileType, o.String()),
+		attribute.String(AttrSource, s.String()),
+		attribute.String(AttrCodec, c.String()),
+		attribute.String(AttrOutcome, Outcome(err)),
+		attribute.Bool(AttrReadAhead, true),
 	)
 }
 

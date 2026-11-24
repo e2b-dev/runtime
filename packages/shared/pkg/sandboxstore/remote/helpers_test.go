@@ -17,7 +17,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -27,8 +28,8 @@ const hangTimeout = 30 * time.Second
 type handler func(ctx context.Context, method string, req proto.Message, send func(proto.Message) error) (proto.Message, error)
 
 var streamRequests = map[string]func() proto.Message{
-	scheduling.StateService_TeamItems_FullMethodName:    func() proto.Message { return &scheduling.TeamItemsRequest{} },
-	scheduling.StateService_ExpiredItems_FullMethodName: func() proto.Message { return &scheduling.ExpiredItemsRequest{} },
+	statepb.StateService_TeamItems_FullMethodName:    func() proto.Message { return &statepb.TeamItemsRequest{} },
+	statepb.StateService_ExpiredItems_FullMethodName: func() proto.Message { return &statepb.ExpiredItemsRequest{} },
 }
 
 func dial(t *testing.T, h handler, options ...grpc.DialOption) *grpc.ClientConn {
@@ -49,8 +50,8 @@ func dial(t *testing.T, h handler, options ...grpc.DialOption) *grpc.ClientConn 
 			return err
 		}),
 	)
-	scheduling.RegisterStateServiceServer(server, scheduling.UnimplementedStateServiceServer{})
-	scheduling.RegisterReservationServiceServer(server, scheduling.UnimplementedReservationServiceServer{})
+	statepb.RegisterStateServiceServer(server, statepb.UnimplementedStateServiceServer{})
+	reservationpb.RegisterReservationServiceServer(server, reservationpb.UnimplementedReservationServiceServer{})
 	go func() {
 		assert.NoError(t, server.Serve(listener))
 	}()

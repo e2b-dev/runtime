@@ -53,7 +53,6 @@ const (
 type ProvisionScriptParams struct {
 	BusyBox    string
 	ResultPath string
-	Provider   string
 	// DistroSelector is the generated POSIX-sh block that selects the base
 	// image's distro profile by its /etc/os-release ID.
 	DistroSelector string

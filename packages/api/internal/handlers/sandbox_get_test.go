@@ -103,6 +103,7 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 					SandboxID: sandboxID, TeamID: teamID, BaseEnvID: "template", Config: tt.config, EnvSecure: tt.secure,
 				},
 				EnvBuild: queries.EnvBuild{TotalDiskSizeMb: &diskSize, EnvdVersion: &envdVersion},
+				Format:   snapshotcache.SnapshotInfoFormat,
 			})
 			require.NoError(t, err)
 			// The snapshot cache's Redis key. A miss falls through to the nil DB and panics.

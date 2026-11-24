@@ -33,6 +33,7 @@ var (
 
 	mItemsDropped      = utils.Must(meter.Int64Counter("batcher.items.dropped", metric.WithDescription("Number of items dropped because the batcher queue was full"), metric.WithUnit("{item}")))
 	mFlushes           = utils.Must(meter.Int64Counter("batcher.flushes", metric.WithDescription("Completed flush attempts by result")))
+	mItemsFailed       = utils.Must(meter.Int64Counter("batcher.items.failed", metric.WithDescription("Number of items in batches whose flush returned an error; the batcher does not retry them"), metric.WithUnit("{item}")))
 	mMaxBatchSize      = utils.Must(meter.Int64Gauge("batcher.config.max_batch_size", metric.WithUnit("{item}")))
 	mMaxDelay          = utils.Must(meter.Int64Gauge("batcher.config.max_delay", metric.WithUnit("ms")))
 	mQueueSize         = utils.Must(meter.Int64Gauge("batcher.config.queue_size", metric.WithUnit("{item}")))
@@ -244,6 +245,7 @@ func (b *Batcher[T]) processBatches(ctx context.Context) {
 		result := "success"
 		if err := b.Func(ctx, batch); err != nil {
 			result = "error"
+			mItemsFailed.Add(ctx, int64(len(batch)), b.attrs)
 			b.ErrorHandler(err)
 		}
 

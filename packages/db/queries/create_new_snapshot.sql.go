@@ -93,6 +93,8 @@ new_build as (
         cpu_model_name,
         cpu_flags,
         max_vcpu,
+        max_ram_mb,
+        start_memory_mb,
         filesystem_only
     )
     VALUES (
@@ -114,9 +116,22 @@ new_build as (
         (SELECT eb.cpu_model_name FROM "public"."env_builds" eb WHERE eb.id = $21),
         (SELECT eb.cpu_flags FROM "public"."env_builds" eb WHERE eb.id = $21),
         (SELECT eb.max_vcpu FROM "public"."env_builds" eb WHERE eb.id = $21),
-        $22
+        -- A build an older writer made without the maximum falls back to the
+        -- snapshot's newest build that has one, so the next pause heals it.
+        COALESCE(
+            (SELECT eb.max_ram_mb FROM "public"."env_builds" eb WHERE eb.id = $21),
+            (SELECT eb.max_ram_mb
+               FROM "public"."env_builds" eb
+               JOIN "public"."env_build_assignments" eba ON eba.build_id = eb.id
+              WHERE eba.env_id = (SELECT template_id FROM snapshot)
+                AND eb.max_ram_mb IS NOT NULL
+              ORDER BY eb.created_at DESC
+              LIMIT 1)
+        ),
+        $22,
+        $23
     )
-    RETURNING id as build_id
+    RETURNING id as build_id, max_ram_mb
 ),
 
 build_assignment as (
@@ -129,7 +144,8 @@ build_assignment as (
     RETURNING build_id, env_id as template_id
 )
 
-SELECT build_id, template_id FROM build_assignment
+SELECT build_assignment.build_id, build_assignment.template_id, new_build.max_ram_mb
+FROM build_assignment, new_build
 `
 
 type UpsertSnapshotParams struct {
@@ -154,12 +170,14 @@ type UpsertSnapshotParams struct {
 	StatusGroup         types.BuildStatusGroup
 	TotalDiskSizeMb     *int64
 	SourceBuildID       uuid.UUID
+	StartMemoryMb       *int64
 	BuildFilesystemOnly bool
 }
 
 type UpsertSnapshotRow struct {
 	BuildID    uuid.UUID
 	TemplateID string
+	MaxRamMb   *int64
 }
 
 // Create a new snapshot or update an existing one
@@ -172,6 +190,8 @@ type UpsertSnapshotRow struct {
 // config, whose kind describes the row's previous ready build until this one
 // finishes.
 // Create the build assignment edge (explicit, not relying on trigger)
+// max_ram_mb tells the caller whether the build has a memory maximum, so a
+// pause that records no start_memory_mb for one can be reported.
 func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) (UpsertSnapshotRow, error) {
 	row := q.db.QueryRow(ctx, upsertSnapshot,
 		arg.TemplateID,
@@ -195,9 +215,10 @@ func (q *Queries) UpsertSnapshot(ctx context.Context, arg UpsertSnapshotParams) 
 		arg.StatusGroup,
 		arg.TotalDiskSizeMb,
 		arg.SourceBuildID,
+		arg.StartMemoryMb,
 		arg.BuildFilesystemOnly,
 	)
 	var i UpsertSnapshotRow
-	err := row.Scan(&i.BuildID, &i.TemplateID)
+	err := row.Scan(&i.BuildID, &i.TemplateID, &i.MaxRamMb)
 	return i, err
 }

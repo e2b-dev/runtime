@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
@@ -29,6 +30,7 @@ type cachedBlob struct {
 	inner     Blob
 	flags     featureFlagsClient
 	tracer    trace.Tracer
+	index     *indexToucher
 
 	wg sync.WaitGroup
 }
@@ -108,6 +110,10 @@ func (b *cachedBlob) Put(ctx context.Context, data []byte, opts ...PutOption) (e
 		span.End()
 	}()
 
+	if ApplyPutOptions(opts).Overwrite {
+		return b.overwrite(ctx, data, opts...)
+	}
+
 	if b.flags.BoolFlag(ctx, featureflags.EnableWriteThroughCacheFlag) {
 		b.goCtxWithoutCancel(ctx, func(ctx context.Context) {
 			ctx, span := b.tracer.Start(ctx, "write data to cache")
@@ -121,6 +127,32 @@ func (b *cachedBlob) Put(ctx context.Context, data []byte, opts ...PutOption) (e
 	}
 
 	return b.inner.Put(ctx, data, opts...)
+}
+
+// overwrite puts data to the backend first, so the cache never gets ahead of
+// it, then replaces the cached copy, which writeFileToCache would keep. The
+// replace is not detached: a read that follows the put must not find the old copy.
+func (b *cachedBlob) overwrite(ctx context.Context, data []byte, opts ...PutOption) error {
+	if err := b.inner.Put(ctx, data, opts...); err != nil {
+		return err
+	}
+
+	if !b.flags.BoolFlag(ctx, featureflags.EnableWriteThroughCacheFlag) {
+		// Any other stat error is taken as a cached copy, so a stale one is not kept.
+		if _, err := os.Stat(b.fullFilename()); os.IsNotExist(err) {
+			return nil
+		}
+	}
+
+	ctx, span := b.tracer.Start(ctx, "replace data in cache")
+	defer span.End()
+
+	if err := b.replaceFileInCache(ctx, data); err != nil {
+		recordError(span, err)
+		logger.L().Warn(ctx, "failed to replace object in cache", zap.Error(err))
+	}
+
+	return nil
 }
 
 func (b *cachedBlob) goCtxWithoutCancel(ctx context.Context, fn func(context.Context)) {
@@ -154,6 +186,7 @@ func (b *cachedBlob) copyFullFileFromCache(ctx context.Context, dst io.Writer) (
 	if ignoreEOF(err) != nil {
 		return count, fmt.Errorf("failed to copy cached file %s: %w", path, err)
 	}
+	b.index.touch()
 
 	return count, nil
 }
@@ -175,6 +208,27 @@ func (b *cachedBlob) writeFileToCache(ctx context.Context, input io.Reader) (int
 	if err := output.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("failed to commit cache file %s: %w", path, err)
 	}
+	b.index.touch()
 
 	return count, nil
+}
+
+// replaceFileInCache replaces the cached copy atomically. It takes no lock: a
+// concurrent writeFileToCache either lands first and is replaced, or finds this
+// copy and drops its own.
+func (b *cachedBlob) replaceFileInCache(ctx context.Context, data []byte) error {
+	path := b.fullFilename()
+	tempPath := fmt.Sprintf("%s.temp.%s", path, uuid.NewString())
+
+	err := os.WriteFile(tempPath, data, cacheFilePermissions)
+	if err == nil {
+		err = os.Rename(tempPath, path)
+	}
+	if err != nil {
+		safelyRemoveFile(ctx, tempPath)
+
+		return fmt.Errorf("failed to replace cache file %s: %w", path, err)
+	}
+
+	return nil
 }

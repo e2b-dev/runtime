@@ -247,6 +247,20 @@ func TestPoolTransactionMarksOnlyUnknownCommitOutcomes(t *testing.T) {
 	require.Equal(t, 1, attempts)
 	require.False(t, committed(1))
 
+	attempts = 0
+	_, err = InTxReturn1(t.Context(), client.Pool(), func(ctx context.Context, tx pgx.Tx) (int, error) {
+		attempts++
+		if _, err := tx.Exec(ctx, "INSERT INTO parents VALUES (2)"); err != nil {
+			return 0, err
+		}
+
+		return 0, tx.Conn().Close(ctx)
+	})
+	require.ErrorIs(t, err, pgconn.ErrConnClosed)
+	require.NotErrorIs(t, err, ErrCommitOutcomeUnknown)
+	require.Equal(t, 1, attempts)
+	require.False(t, committed(2))
+
 	// PostgreSQL commits each of these, then the client loses the reply or
 	// receives a FATAL or connection-exception error instead.
 	for i, reply := range []*pgproto3.ErrorResponse{
@@ -282,9 +296,8 @@ func TestPoolTransactionMarksOnlyUnknownCommitOutcomes(t *testing.T) {
 		})
 		require.ErrorIs(t, err, ErrCommitOutcomeUnknown, reply)
 		if reply == nil {
-			// pgx reports the dead connection as safe to retry after sending.
 			require.ErrorIs(t, err, pgconn.ErrConnClosed)
-			require.True(t, pgconn.SafeToRetry(err))
+			require.False(t, pgconn.SafeToRetry(err))
 		} else {
 			require.ErrorAs(t, err, &pgErr)
 			require.Equal(t, reply.Code, pgErr.Code)

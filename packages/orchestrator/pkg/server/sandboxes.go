@@ -924,7 +924,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 		entry := &orchestrator.RunningSandbox{
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(startedAt),
-			EndTime:     timestamppb.New(sbx.GetEndAt()),
 			SandboxId:   sbx.Runtime.SandboxID,
 			TeamId:      sbx.Runtime.TeamID,
 			ExecutionId: sbx.Runtime.ExecutionID,
@@ -944,7 +943,6 @@ func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 		sandboxes = append(sandboxes, &orchestrator.RunningSandbox{
 			ClientId:    s.info.ClientId,
 			StartTime:   timestamppb.New(e.StartedAt),
-			EndTime:     timestamppb.New(e.EndAt),
 			SandboxId:   e.SandboxID,
 			TeamId:      e.TeamID,
 			ExecutionId: e.ExecutionID,
@@ -3752,12 +3750,31 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 		return false, nil
 	}
 
+	// The new envd starts without the sandbox's environment variables, and a memory
+	// resume's config has none to send it: the guest held them in memory. Read them from
+	// the running envd so the post-upgrade /init restores them. When they cannot be read,
+	// or differ from the ones the start was configured with, decline: the current envd
+	// keeps serving them, while a replaced one would drop them with a 200 on every RPC.
+	envVarCount, err := sbx.CaptureEnvdEnvVars(ctx, envdEnvVarsTimeout)
+	if err != nil {
+		reason := envdUpgradeGateEnvVarsUnavailable
+		if errors.Is(err, sandbox.ErrEnvdEnvVarsConflict) {
+			reason = envdUpgradeGateEnvVarsConflict
+		}
+		s.envdUpgradeGated.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+		sbxlogger.I(sbx).Warn(ctx, "envd auto-upgrade: sandbox environment variables not restorable; deferring",
+			zap.Error(err), zap.String("reason", reason), zap.String("from", from), zap.String("to", toVersion))
+
+		return false, nil
+	}
+
 	attempted = true
 	start = time.Now()
 
 	upCtx, span := tracer.Start(ctx, "envd-upgrade", trace.WithAttributes(
 		attribute.String("envd.from_version", from),
 		attribute.String("envd.to_version", toVersion),
+		attribute.Int("envd.upgrade.env_vars_captured", envVarCount),
 	))
 	defer span.End()
 
@@ -3889,7 +3906,7 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 	span.SetAttributes(attribute.Bool("envd.upgraded", true))
 
 	// Record the handover outcome the new envd reported on /init (fleet
-	// visibility into what it re-adopted). Per item (proc|retained|watcher) as
+	// visibility into what it re-adopted). Per item (proc|retained|watcher|env_vars) as
 	// ok/failed so failed/(ok+failed) is the handover error rate — a non-zero
 	// failed means the swap dropped or degraded something (a lost watch, an
 	// unrecoverable exit code, a bad process config), which envd otherwise only
@@ -3904,6 +3921,9 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 		recordItem("proc", h.Procs-h.ProcsFailed, h.ProcsFailed)
 		recordItem("retained", h.Retained-h.RetainedFailed, h.RetainedFailed)
 		recordItem("watcher", h.Watchers-h.WatchersFailed, h.WatchersFailed)
+		// Zero from an envd whose blob predates the field, and from a sandbox with no
+		// variables; the post-upgrade /init is the other way they are restored.
+		recordItem("env_vars", h.EnvVars, 0)
 
 		span.SetAttributes(
 			attribute.Int("envd.handover.procs", h.Procs),
@@ -3912,14 +3932,18 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 			attribute.Int("envd.handover.retained_failed", h.RetainedFailed),
 			attribute.Int("envd.handover.watchers", h.Watchers),
 			attribute.Int("envd.handover.watchers_failed", h.WatchersFailed),
+			attribute.Int("envd.handover.env_vars", h.EnvVars),
 		)
 		sbxlogger.I(sbx).Info(upCtx, "envd auto-upgrade: complete",
 			zap.String("to", toVersion),
+			zap.Int("env_vars_captured", envVarCount),
 			zap.Int("procs", h.Procs), zap.Int("procs_failed", h.ProcsFailed),
 			zap.Int("retained", h.Retained), zap.Int("retained_failed", h.RetainedFailed),
-			zap.Int("watchers", h.Watchers), zap.Int("watchers_failed", h.WatchersFailed))
+			zap.Int("watchers", h.Watchers), zap.Int("watchers_failed", h.WatchersFailed),
+			zap.Int("env_vars", h.EnvVars))
 	} else {
-		sbxlogger.I(sbx).Info(upCtx, "envd auto-upgrade: complete", zap.String("to", toVersion))
+		sbxlogger.I(sbx).Info(upCtx, "envd auto-upgrade: complete",
+			zap.String("to", toVersion), zap.Int("env_vars_captured", envVarCount))
 	}
 
 	return true, nil
@@ -3931,7 +3955,17 @@ func (s *Server) maybeUpgradeEnvd(ctx context.Context, sbx *sandbox.Sandbox) (up
 const (
 	envdUpgradeGateNoDefaultUser     = "no_default_user"
 	envdUpgradeGateUnprovableWorkdir = "unprovable_workdir"
+	// envdUpgradeGateEnvVarsUnavailable: the running envd's environment variables could not
+	// be read, so the post-upgrade /init could not restore them.
+	envdUpgradeGateEnvVarsUnavailable = "env_vars_unavailable"
+	// envdUpgradeGateEnvVarsConflict: the start's configured environment variables differ
+	// from the running envd's, and which set an upgrade keeps is not decided.
+	envdUpgradeGateEnvVarsConflict = "env_vars_conflict"
 )
+
+// envdEnvVarsTimeout bounds the read of the running envd's environment variables before a
+// live upgrade. It is a local GET answered from memory.
+const envdEnvVarsTimeout = 5 * time.Second
 
 // envdPreservesExecContext reports whether the running envd will carry its exec context
 // across its own replacement without the host re-sending anything.

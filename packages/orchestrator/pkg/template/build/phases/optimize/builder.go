@@ -260,7 +260,7 @@ func (pb *OptimizeBuilder) runSandboxAndCollectPrefetch(
 
 // updateMetadata updates the template metadata in storages.
 func (pb *OptimizeBuilder) updateMetadata(ctx context.Context, t metadata.Template) error {
-	err := metadata.UploadMetadata(ctx, pb.templateStorage, t, pb.BuildContext.Config.ObjectMetadata(storage.ObjectOriginTemplateBuild))
+	err := pb.uploadMetadata(ctx, t)
 	if err != nil {
 		return err
 	}
@@ -269,4 +269,16 @@ func (pb *OptimizeBuilder) updateMetadata(ctx context.Context, t metadata.Templa
 	pb.templateCache.Invalidate(t.Template.BuildID)
 
 	return nil
+}
+
+// uploadMetadata writes t to storage once the build's layer uploads have
+// finished: the final layer's upload writes the same object.
+func (pb *OptimizeBuilder) uploadMetadata(ctx context.Context, t metadata.Template) error {
+	// Waiting early is safe: the group has no context to cancel and phases run
+	// one at a time. The build reports a failed upload at its own wait.
+	if err := pb.UploadErrGroup.Wait(); err != nil {
+		return fmt.Errorf("layer upload failed: %w", err)
+	}
+
+	return metadata.UploadMetadata(ctx, pb.templateStorage, t, pb.BuildContext.Config.ObjectMetadata(storage.ObjectOriginTemplateBuild))
 }

@@ -9,6 +9,7 @@ SELECT
     eb.id as build_id,
     eb.vcpu,
     eb.max_vcpu,
+    eb.max_ram_mb,
     eb.ram_mb,
     eb.total_disk_size_mb,
     eb.envd_version,

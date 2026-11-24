@@ -115,7 +115,7 @@ func (s *Sandbox) pausePoweredOff(ctx context.Context, m metadata.Template) (st 
 	m = m.MarkFilesystemOnly(true)
 	m = m.MarkFsQuiesced(false)
 
-	originalRootfs, err := s.Template.Rootfs()
+	originalRootfs, err := s.Template.Rootfs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get original rootfs: %w", err)
 	}

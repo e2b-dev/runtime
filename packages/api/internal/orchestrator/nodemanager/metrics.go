@@ -27,13 +27,14 @@ type Metrics struct {
 	OutstandingWork      uint64
 
 	// Hugepage pool metrics (page counts)
-	HugePagesTotal    uint64
-	HugePagesUsed     uint64
-	HugePagesReserved uint64
-	HugePageSizeBytes uint64
-	HugePagesCapacity uint64 // pool ceiling, base pool plus overcommit allowance; 0 when not reported
-	HugePagesBase     uint64 // base pool, the pages allocated at boot
-	HugePagesBaseSet  bool   // the orchestrator reported HugePagesBase; 0 then is a pool that is all overcommit
+	RecentHugePageRefusal bool
+	HugePagesTotal        uint64
+	HugePagesUsed         uint64
+	HugePagesReserved     uint64
+	HugePageSizeBytes     uint64
+	HugePagesCapacity     uint64 // pool ceiling, base pool plus overcommit allowance; 0 when not reported
+	HugePagesBase         uint64 // base pool, the pages allocated at boot
+	HugePagesBaseSet      bool   // the orchestrator reported HugePagesBase; 0 then is a pool that is all overcommit
 
 	// Detailed disk metrics
 	HostDisks []DiskMetrics
@@ -46,6 +47,13 @@ func (n *Node) UpdateMetricsFromServiceInfoResponse(info *orchestratorinfo.Servi
 	n.updateMetrics(info)
 }
 
+// RecordHugePageRefusal tells placement to penalize the node until a fresh scrape.
+func (n *Node) RecordHugePageRefusal() {
+	n.metricsMu.Lock()
+	defer n.metricsMu.Unlock()
+	n.lastHugePageRefusal = time.Now()
+}
+
 // UpdateMetricsFromSync applies a sample requested at requestedAt. A
 // placement recorded after that may be missing from the sample, so the view
 // keeps its allocated CPU and memory, and the counts that placement added
@@ -55,6 +63,10 @@ func (n *Node) UpdateMetricsFromServiceInfoResponse(info *orchestratorinfo.Servi
 func (n *Node) UpdateMetricsFromSync(info *orchestratorinfo.ServiceInfoResponse, requestedAt time.Time) {
 	n.metricsMu.Lock()
 	defer n.metricsMu.Unlock()
+
+	if requestedAt.After(n.lastHugePageRefusal) {
+		n.lastHugePageRefusal = time.Time{}
+	}
 
 	used, reserved := n.metrics.HugePagesUsed, n.metrics.HugePagesReserved
 	allocated, memoryUsed := n.metrics.MemoryAllocatedBytes, n.metrics.MemoryUsedBytes
@@ -121,15 +133,16 @@ func (n *Node) Metrics() Metrics {
 	defer n.metricsMu.RUnlock()
 
 	result := Metrics{
-		CpuAllocated:         n.metrics.CpuAllocated,
-		CpuPercent:           n.metrics.CpuPercent,
-		CpuCount:             n.metrics.CpuCount,
-		MemoryAllocatedBytes: n.metrics.MemoryAllocatedBytes,
-		MemoryUsedBytes:      n.metrics.MemoryUsedBytes,
-		MemoryTotalBytes:     n.metrics.MemoryTotalBytes,
-		SandboxCount:         n.metrics.SandboxCount,
-		MaxSandboxes:         n.metrics.MaxSandboxes,
-		OutstandingWork:      n.metrics.OutstandingWork,
+		RecentHugePageRefusal: !n.lastHugePageRefusal.IsZero(),
+		CpuAllocated:          n.metrics.CpuAllocated,
+		CpuPercent:            n.metrics.CpuPercent,
+		CpuCount:              n.metrics.CpuCount,
+		MemoryAllocatedBytes:  n.metrics.MemoryAllocatedBytes,
+		MemoryUsedBytes:       n.metrics.MemoryUsedBytes,
+		MemoryTotalBytes:      n.metrics.MemoryTotalBytes,
+		SandboxCount:          n.metrics.SandboxCount,
+		MaxSandboxes:          n.metrics.MaxSandboxes,
+		OutstandingWork:       n.metrics.OutstandingWork,
 
 		HugePagesTotal:    n.metrics.HugePagesTotal,
 		HugePagesUsed:     n.metrics.HugePagesUsed,

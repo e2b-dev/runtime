@@ -114,6 +114,7 @@ func TestValidateEgressProxy_RejectsInternalEndpoint(t *testing.T) {
 		{"literal_private_172", "172.16.5.5:1080", nil},
 		{"literal_private_192_168", "192.168.1.1:1080", nil},
 		{"literal_link_local", "169.254.169.254:1080", nil},
+		{"literal_azure_host_endpoint", "168.63.129.16:1080", nil},
 		{"literal_ipv6_link_local", "[fe80::1]:1080", nil},
 		{"resolves_to_private", "evil.example.com:1080", []net.IP{net.ParseIP("10.0.0.5")}},
 		{
@@ -399,6 +400,7 @@ func TestIsIPInDeniedSandboxCIDRs_Exported(t *testing.T) {
 		{"192.168.5.5", true},
 		{"127.0.0.1", true},
 		{"169.254.169.254", true},
+		{"168.63.129.16", true},
 		{"::1", true},
 		{"fe80::1", true},
 		{"fc00::1", true},
@@ -406,6 +408,8 @@ func TestIsIPInDeniedSandboxCIDRs_Exported(t *testing.T) {
 		{"8.8.8.8", false},
 		{"100.63.255.255", false},
 		{"100.128.0.0", false},
+		{"168.63.129.15", false},
+		{"168.63.129.17", false},
 		{"203.0.113.5", false},
 		{"2001:db8::1", false},
 		// The unspecified and "this network" block address are denied as BYOP endpoints.

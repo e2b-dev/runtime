@@ -179,7 +179,7 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 			SandboxID:           sbx.SandboxID,
 			StartedAt:           sbx.StartTime,
 			CpuCount:            api.CPUCount(sbx.VCpu),
-			MemoryMB:            api.MemoryMB(sbx.RamMB),
+			MemoryMB:            api.MemoryMB(sbx.TotalMemoryMB()),
 			DiskSizeMB:          api.DiskSizeMB(sbx.TotalDiskSizeMB),
 			EndAt:               sbx.EndTime,
 			State:               state,
@@ -226,7 +226,7 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		return
 	}
 
-	memoryMB := int32(lastSnapshot.EnvBuild.RamMb)
+	memoryMB := pausedSandboxMemoryMB(lastSnapshot.EnvBuild.RamMb, lastSnapshot.EnvBuild.MaxRamMb, lastSnapshot.EnvBuild.StartMemoryMb)
 	cpuCount := int32(lastSnapshot.EnvBuild.Vcpu)
 
 	diskSize := int32(0)

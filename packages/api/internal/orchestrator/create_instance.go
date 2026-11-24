@@ -272,10 +272,15 @@ type CreateOption func(*createOptions)
 type createOptions struct {
 	completeStartedCreate bool
 	cpuCount              *int32
+	memoryMB              *int32
 }
 
 func WithCPUCount(cpuCount *int32) CreateOption {
 	return func(o *createOptions) { o.cpuCount = cpuCount }
+}
+
+func WithMemoryMB(memoryMB *int32) CreateOption {
+	return func(o *createOptions) { o.memoryMB = memoryMB }
 }
 
 // CompleteStartedCreate lets a resume create under way, and the bookkeeping
@@ -312,6 +317,14 @@ func (o *Orchestrator) CreateSandbox(
 
 	if opts.cpuCount != nil {
 		if apiErr := cpuCountDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			return sandbox.Sandbox{}, apiErr
+		}
+	}
+
+	if opts.memoryMB != nil {
+		if apiErr := memoryDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
+
 			return sandbox.Sandbox{}, apiErr
 		}
 	}
@@ -354,6 +367,11 @@ func (o *Orchestrator) CreateSandbox(
 	}
 
 	if waitForStart != nil {
+		if opts.memoryMB != nil {
+			// Every branch below refuses a request that named memoryMB.
+			recordMemoryOverride(ctx, memoryOverrideRejected, ErrCodeStartInFlight, memorySourceNamed)
+		}
+
 		// A joined request rides whatever start is already in flight — which may
 		// be a memory restore (e.g. a traffic-triggered auto-resume) that an
 		// explicit memory:false must never be silently answered with.
@@ -372,6 +390,16 @@ func (o *Orchestrator) CreateSandbox(
 				ErrorCode: ErrCodeStartInFlight,
 				ClientMsg: "Sandbox is already starting; cpuCount cannot be applied to a start already in flight",
 				Err:       fmt.Errorf("CPU override for sandbox %q cannot join an in-flight start", sandboxID),
+				Retryable: apierrors.NoRetry,
+			}
+		}
+
+		if opts.memoryMB != nil {
+			return sandbox.Sandbox{}, &api.APIError{
+				Code:      http.StatusConflict,
+				ErrorCode: ErrCodeStartInFlight,
+				ClientMsg: "Sandbox is already starting; memoryMB cannot be applied to a start already in flight",
+				Err:       fmt.Errorf("memory override for sandbox %q cannot join an in-flight start", sandboxID),
 				Retryable: apierrors.NoRetry,
 			}
 		}
@@ -436,6 +464,11 @@ func (o *Orchestrator) CreateSandbox(
 	vcpu, cpuErr := resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
 	if cpuErr != nil {
 		return sandbox.Sandbox{}, cpuErr
+	}
+
+	memoryMB, memoryKnown, memoryErr := resolveSandboxMemory(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.memoryMB, !isResume)
+	if memoryErr != nil {
+		return sandbox.Sandbox{}, memoryErr
 	}
 
 	if _, err := fcversion.New(sbxData.Build.FirecrackerVersion); err != nil {
@@ -531,6 +564,21 @@ func (o *Orchestrator) CreateSandbox(
 		// byte-identical to before the field existed.
 		sbxRequest.FilesystemBoot = new(true)
 	}
+	if sbxData.Build.MaxRamMb != nil && memoryKnown {
+		// Every start from a build with a memory maximum sends the size the API
+		// accounts and bills, so the orchestrator enforces that number and the
+		// placement gate covers the start. A build that does not record its size
+		// sends none: the orchestrator keeps its snapshot's, which the API does
+		// not know. A build that cannot grow runs at boot RAM, which needs no field.
+		sbxRequest.Sandbox.MemoryMb = memoryMB
+	}
+	if sbxData.Build.MaxRamMb != nil && !memoryKnown {
+		reportMemorySizeUnknown(ctx, "start", sbxData.Build.RamMb, *sbxData.Build.MaxRamMb,
+			logger.WithSandboxID(sandboxID),
+			logger.WithTemplateID(sbxData.TemplateID),
+			logger.WithBuildID(sbxData.Build.ID.String()),
+		)
+	}
 
 	cpuRequirement := o.resolveCPURequirement(ctx, sandboxID, team, sbxData)
 	// Recorded before placement runs: a placement the pin starved is the case
@@ -580,8 +628,9 @@ func (o *Orchestrator) CreateSandbox(
 	allLabels, labelFilteringEnabled := o.generateRequiredNodeLabels(ctx, sandboxID, team, sbxData)
 
 	requirements := placement.Requirements{
-		CPU:    cpuRequirement,
-		Memory: placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
+		CPU:       cpuRequirement,
+		Memory:    placement.MemoryRequirementFor(ctx, o.featureFlagsClient, team.ID, sandboxID),
+		MemoryMiB: placementMemoryMiB(sbxData.Build, memoryMB, memoryKnown),
 	}
 
 	placed, err := placement.PlaceSandboxCompletingStartedCreate(ctx, o.placementAlgorithm, clusterNodes, node, sbxRequest, requirements, labelFilteringEnabled, allLabels, completeStartedCreateUntil)
@@ -611,10 +660,30 @@ func (o *Orchestrator) CreateSandbox(
 			)
 		}
 
-		return sandbox.Sandbox{}, placementAPIError(err)
+		// A refused size is the caller's only when it is below the size the API
+		// records; at or above it the node and the API's record disagree.
+		recordedMB, recordedKnown := BuildStartMemoryMB(sbxData.Build.RamMb, sbxData.Build.MaxRamMb, sbxData.Build.StartMemoryMb)
+		callersSize := opts.memoryMB != nil && (!recordedKnown || int64(*opts.memoryMB) < recordedMB)
+		refusalCode := memoryRefusalCodeOf(err)
+		apiErr := placementAPIError(err, callersSize)
+		if opts.memoryMB != nil {
+			outcome, code := placementMemoryOutcome(err, apiErr)
+			if !callersSize && refusalCode != "" {
+				outcome, code = memoryOverrideFailed, apiErr.ErrorCode
+			}
+			recordMemoryOverride(ctx, outcome, code, memorySourceNamed)
+		}
+		if !callersSize && refusalCode != "" {
+			reportMemoryRecordMismatch(ctx, err, sandboxID, sbxData, refusalCode, sbxRequest.GetSandbox().GetMemoryMb())
+		}
+
+		return sandbox.Sandbox{}, apiErr
 	}
 
 	node = placed.Node
+	if opts.memoryMB != nil {
+		recordMemoryOverride(ctx, memoryOverrideAccepted, "", memorySourceNamed)
+	}
 
 	if !bookkeepingUntil.IsZero() {
 		// The create completed; its bookkeeping must too, for the joiners of
@@ -696,6 +765,17 @@ func (o *Orchestrator) CreateSandbox(
 	sbx.NetworkPlacement = placed.Response.GetNetworkPlacement()
 	sbx.PausedTTL = sbxData.PausedTTL
 	sbx.PausedTTLStored = sbxData.PausedTTLStored
+	if sbxData.Build.MaxRamMb != nil && memoryKnown {
+		// Set whenever the size is known, boot RAM included, so a record that
+		// lost the field reads as unknown and its pause records no size.
+		sbx.MemoryMB = memoryMB
+	}
+	if charged := requirements.MemoryMiB; charged > sbx.TotalMemoryMB() {
+		sbx.PlacedMemoryMB = charged
+	}
+	if names := placement.RequestFeatureNames(sbxRequest); len(names) > 0 {
+		sbx.RequiredFeatures = names
+	}
 
 	// An orchestrator that predates the filesystem_boot field ignores it and
 	// memory-restores; only the echo proves the demand was honored. Kill the

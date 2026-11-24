@@ -569,6 +569,11 @@ type Sandbox struct {
 	// deliveredEnvdVersion is the envd version a confirmed live upgrade delivered in this
 	// life (MarkEnvdDelivered), nil until one does.
 	deliveredEnvdVersion atomic.Pointer[string]
+	// capturedEnvVars is the user environment CaptureEnvdEnvVars read from the running envd
+	// before a live upgrade, nil until one is read. Only CaptureEnvdEnvVars writes it, after
+	// checking it against Config.Envd.Vars; every later /init sends it in place of an empty
+	// Config.Envd.Vars.
+	capturedEnvVars atomic.Pointer[map[string]string]
 	// envdReinit is the most recent post-checkpoint re-init's handle (startEnvdReinit),
 	// which a following Pause stops before freezing. envdReinitHolds, under envdReinitMu,
 	// counts the Pauses between their cut and their freeze (cutEnvdReinit,
@@ -647,6 +652,9 @@ type Sandbox struct {
 	// reboot in place calls the same one, so a failed subscriber is retried.
 	networkRelease network.ReleaseNotify
 	rootfsRelease  *handover
+	// planeRelease closes the sandbox's data plane from the cleanup chain,
+	// after the rootfs it serves; a reboot in place takes it with the rootfs.
+	planeRelease *handover
 
 	// executionSpan is this lifecycle's "execute sandbox" span, for linking.
 	executionSpan trace.SpanContext
@@ -984,6 +992,10 @@ type Factory struct {
 	// with every sandbox it creates for the running-version label.
 	envdTargets *envdTargetVersions
 
+	// dataPlane chooses what serves each sandbox's memory and disk: the
+	// in-process handler and NBD unless an edition set another.
+	dataPlane DataPlane
+
 	// swapEnvdBinary is the offline envd upgrade's one call into the host. Nil
 	// means rootfs.SwapEnvdBinary; a test substitutes it to drive the decision
 	// flow around the call -- which refusal defers, which failure still boots the
@@ -1008,6 +1020,17 @@ func (f *Factory) offlineSwap() func(ctx context.Context, rootfsPath, srcPath st
 	return func(ctx context.Context, rootfsPath, srcPath string) (rootfs.SwapResult, error) {
 		return rootfs.SwapEnvdBinary(ctx, rootfsPath, srcPath, f.config.OrchestratorBaseDir)
 	}
+}
+
+// WithDataPlane makes the factory serve new sandboxes through dp instead of
+// the in-process handler and NBD; nil keeps the current one. Sandboxes
+// already running keep theirs.
+func (f *Factory) WithDataPlane(dp DataPlane) *Factory {
+	if dp != nil {
+		f.dataPlane = dp
+	}
+
+	return f
 }
 
 // NewFactory builds the sandbox factory. It takes a context because it does
@@ -1051,6 +1074,7 @@ func NewFactory(
 		// warm counter exists to make distinguishable from a working node.
 		envdBinCache: newEnvdBinCache(config.OrchestratorBaseDir),
 		envdTargets:  &envdTargetVersions{},
+		dataPlane:    NewInProcessDataPlane(),
 	}
 
 	// Warm the promoted binary now rather than leaving it to the first resume that
@@ -1265,6 +1289,9 @@ type handedOver struct {
 	rootfs        rootfs.Provider
 	releaseSlot   func(ctx context.Context) error
 	releaseRootfs func(ctx context.Context) error
+	// releasePlane closes the data plane that serves the overlay; nil when
+	// the previous lifecycle had nothing to hand over.
+	releasePlane func(ctx context.Context) error
 	// envdVersion is the envd an offline upgrade installed on the overlay, "" when
 	// the template's own is on it; the next lifecycle's network admission reads it.
 	envdVersion string
@@ -1390,7 +1417,7 @@ func (f *Factory) CreateSandbox(
 	// A handed-over slot and overlay belong to this lifecycle from here on:
 	// their releases join the cleanup chain before anything that can fail, so
 	// a boot that fails on its cgroup still returns them.
-	var slotRelease, rootfsRelease *handover
+	var slotRelease, rootfsRelease, planeRelease *handover
 	var networkRelease network.ReleaseNotify
 	if h := createOpts.handedOver; h != nil {
 		// The slot's release carries this lifecycle's identity: the network
@@ -1399,6 +1426,10 @@ func (f *Factory) CreateSandbox(
 		networkRelease = f.Sandboxes.NetworkRelease(runtime.SandboxID, lifecycleID)
 		slotRelease = newHandover(returnNetworkSlot(f.networkPool, h.slot, networkRelease))
 		cleanup.Add(ctx, slotRelease.run)
+		// The data plane serving the overlay moves with it and keeps its
+		// place in the chain: after the overlay's close, as before.
+		planeRelease = newHandover(h.releasePlane)
+		cleanup.Add(ctx, planeRelease.run)
 		rootfsRelease = newHandover(h.releaseRootfs)
 		cleanup.Add(ctx, rootfsRelease.run)
 	}
@@ -1430,7 +1461,7 @@ func (f *Factory) CreateSandbox(
 		// release joined the cleanup chain above.
 		rootfsProvider = h.rootfs
 	} else {
-		rootfsProvider, rootfsRelease, err = f.startRootfs(ctx, execCtx, template, rootfsCachePath, sandboxFiles, cleanup, sbxLogger)
+		rootfsProvider, rootfsRelease, planeRelease, err = f.startRootfs(ctx, execCtx, template, rootfsCachePath, sandboxFiles, cleanup, runtime.SandboxID, sbxLogger)
 		if err != nil {
 			return nil, err
 		}
@@ -1560,6 +1591,7 @@ func (f *Factory) CreateSandbox(
 		slotRelease:    slotRelease,
 		networkRelease: networkRelease,
 		rootfsRelease:  rootfsRelease,
+		planeRelease:   planeRelease,
 		executionSpan:  trace.SpanContextFromContext(execCtx),
 
 		// A cold boot starts with nothing plugged; the request is sent once the guest is up.
@@ -1664,19 +1696,55 @@ func (f *Factory) CreateSandbox(
 	return sbx, nil
 }
 
-// startRootfs creates the sandbox's rootfs overlay, registers its Close in
-// cleanup and starts serving it under execCtx.
+// startRootfs builds and starts the root disk of a fresh start: the data
+// plane's provider when it serves the disk, else NBD, or the Direct provider
+// over a prepared rootfs file. The plane's Close joins the cleanup as soon as
+// ForSandbox returns, so it runs on every failure after that point; the two
+// handovers returned are the provider's close and the plane's close, in the
+// order a reboot in place takes them.
 func (f *Factory) startRootfs(
 	ctx, execCtx context.Context,
 	template template.Template,
 	rootfsCachePath string,
 	sandboxFiles *storage.SandboxFiles,
 	cleanup *Cleanup,
+	sandboxID string,
 	sbxLogger logger.Logger,
-) (rootfs.Provider, *handover, error) {
-	rootFS, err := template.Rootfs()
+) (rootfs.Provider, *handover, *handover, error) {
+	sandboxPlane, err := f.dataPlane.ForSandbox(ctx, SandboxDataPlaneRequest{
+		SandboxID:          sandboxID,
+		UffdSocketPath:     sandboxFiles.SandboxUffdSocketPath(),
+		RootfsCachePath:    sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
+		PreparedRootfsPath: rootfsCachePath,
+		CacheDir:           f.config.DefaultCacheDir,
+		Logger:             sbxLogger,
+		Files:              sandboxFiles,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get rootfs: %w", err)
+		return nil, nil, nil, fmt.Errorf("data plane for sandbox: %w", err)
+	}
+	// Registered before the disk is asked for, so it runs after the
+	// provider's own close; a reboot in place takes it with the provider.
+	planeRelease := newHandover(sandboxPlane.Close)
+	cleanup.Add(ctx, planeRelease.run)
+
+	rootFS, err := template.Rootfs(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get rootfs: %w", err)
+	}
+
+	if provider, ok, err := sandboxPlane.Rootfs(ctx, rootFS); err != nil {
+		return nil, nil, nil, fmt.Errorf("data plane rootfs provider: %w", err)
+	} else if ok {
+		if provider == nil {
+			return nil, nil, nil, errors.New("data plane returned no rootfs provider")
+		}
+
+		telemetry.ReportEvent(ctx, "root disk served by the data plane")
+		rootfsRelease := newHandover(nil)
+		startRootfsProviderVia(ctx, execCtx, cleanup, provider, rootfsRelease, sbxLogger)
+
+		return provider, rootfsRelease, planeRelease, nil
 	}
 
 	var rootfsProvider rootfs.Provider
@@ -1700,12 +1768,12 @@ func (f *Factory) startRootfs(
 		)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create rootfs overlay: %w", err)
 	}
 	rootfsRelease := newHandover(nil)
 	startRootfsProviderVia(ctx, execCtx, cleanup, rootfsProvider, rootfsRelease, sbxLogger)
 
-	return rootfsProvider, rootfsRelease, nil
+	return rootfsProvider, rootfsRelease, planeRelease, nil
 }
 
 // Usage: defer handleSpanError(span, &err)
@@ -1999,15 +2067,64 @@ func (f *Factory) ResumeSandbox(
 
 	// Uffd initialization
 	fcUffdPath := sandboxFiles.SandboxUffdSocketPath()
-	uffdPromise := utils.NewPromise(func() (*uffd.Uffd, error) {
-		memfile, err := t.Memfile(ctx)
+	// The data plane decides what serves this sandbox's memory and disk: the
+	// in-process handler and NBD unless the edition supplies its own. The
+	// template rootfs is handed over as a getter so a data plane that does
+	// not serve the disk never waits for it here, ahead of the memory and
+	// network work below.
+	sandboxPlane, err := f.dataPlane.ForSandbox(ctx, SandboxDataPlaneRequest{
+		SandboxID:       runtime.SandboxID,
+		UffdSocketPath:  fcUffdPath,
+		RootfsCachePath: sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
+		CacheDir:        f.config.DefaultCacheDir,
+		Logger:          sbxLogger,
+		Files:           sandboxFiles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("data plane for sandbox: %w", err)
+	}
+	// Registered before either device is asked for, so it runs after the
+	// handler's and the provider's own teardown, on every path from here; a
+	// reboot in place takes it with the disk. Once the device constructors
+	// exist below, the entry waits for them first, unless the plane is the
+	// in-process one, whose Close releases nothing.
+	planeRelease := newHandover(sandboxPlane.Close)
+	cleanup.Add(ctx, planeRelease.run)
+	// The device constructors run under a context a failed resume cancels
+	// before its cleanup runs, so they unwind instead of holding the failed
+	// request until a cold fetch or a device acquisition completes. It is
+	// cancelled on the way out of a success too, once every constructor has
+	// returned, like the request context it derives from.
+	constructCtx, cancelConstruct := context.WithCancelCause(ctx)
+	defer func() {
+		if e != nil {
+			cancelConstruct(fmt.Errorf("the resume failed before its devices were built: %w", e))
+
+			return
+		}
+		cancelConstruct(nil)
+	}()
+	uffdPromise := utils.NewPromise(func() (uffd.Handler, error) {
+		memfile, err := t.Memfile(constructCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get memfile: %w", err)
 		}
 
 		telemetry.ReportEvent(ctx, "got template memfile")
 
-		u := uffd.New(memfile, fcUffdPath, sbxLogger)
+		// A resume that failed meanwhile has cancelled construction: do not
+		// ask the plane for a handler that would only be started and stopped.
+		if err := constructCtx.Err(); err != nil {
+			return nil, fmt.Errorf("memory handler not built: %w", context.Cause(constructCtx))
+		}
+
+		u, err := sandboxPlane.Memory(constructCtx, memfile)
+		if err != nil {
+			return nil, fmt.Errorf("data plane memory handler: %w", err)
+		}
+		if u == nil {
+			return nil, errors.New("data plane returned no memory handler")
+		}
 		u.SetMemfdUnusedTail(memoryHotplugUnusedBytes(meta.MemoryHotplugMB, 0, memoryRequestMB))
 
 		return u, nil
@@ -2143,15 +2260,40 @@ func (f *Factory) ResumeSandbox(
 	// Rootfs initialization
 	rootfsRelease := newHandover(nil)
 	overlayPromise := utils.NewPromise(func() (rootfs.Provider, error) {
-		readonlyRootfs, err := t.Rootfs()
+		readonlyRootfs, err := t.Rootfs(constructCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get rootfs: %w", err)
 		}
 
 		telemetry.ReportEvent(ctx, "got template rootfs")
 
+		// A resume that failed meanwhile has cancelled construction: do not
+		// ask the plane for a disk, and do not build the NBD overlay, since
+		// starting either only to close it would hold the failed resume on
+		// a device attach.
+		if err := constructCtx.Err(); err != nil {
+			return nil, fmt.Errorf("rootfs not built: %w", context.Cause(constructCtx))
+		}
+
+		if provider, ok, err := sandboxPlane.Rootfs(constructCtx, readonlyRootfs); err != nil {
+			return nil, fmt.Errorf("data plane rootfs provider: %w", err)
+		} else if ok {
+			if provider == nil {
+				return nil, errors.New("data plane returned no rootfs provider")
+			}
+
+			telemetry.ReportEvent(ctx, "root disk served by the data plane")
+			startRootfsProviderVia(ctx, execCtx, cleanup, provider, rootfsRelease, sbxLogger)
+
+			return provider, nil
+		}
+
+		if err := constructCtx.Err(); err != nil {
+			return nil, fmt.Errorf("rootfs overlay not built: %w", context.Cause(constructCtx))
+		}
+
 		overlay, err := rootfs.NewNBDProvider(
-			ctx,
+			constructCtx,
 			readonlyRootfs,
 			sandboxFiles.SandboxCacheRootfsPath(f.config.StorageConfig),
 			f.devicePool,
@@ -2190,6 +2332,15 @@ func (f *Factory) ResumeSandbox(
 		return struct{}{}, nil
 	})
 
+	// A resume that fails here returns while a device constructor may still
+	// be running: the plane closes once all of them have finished, so neither
+	// device is asked for after Close and their late teardown comes first.
+	// The in-process plane has nothing to close, so a failed resume on the
+	// default path does not wait for its constructors to unwind.
+	if _, inProcess := sandboxPlane.(inProcessPlane); !inProcess {
+		planeRelease.set(closeDataPlaneAfter(sandboxPlane, uffdPromise.Done(), overlayPromise.Done(), memoryPromise.Done()))
+	}
+
 	// Wait for all resources to be initialized
 	ips, err := ipsPromise.Wait(ctx)
 	if err != nil {
@@ -2219,9 +2370,17 @@ func (f *Factory) ResumeSandbox(
 	if err != nil {
 		return nil, err
 	}
+
+	// Both devices exist and the VM has not resumed: a plane whose disk
+	// writes guest memory outside the handler binds the two here, and the
+	// backend it returns is what pause, export and metrics see from now on.
+	boundMemory, err := bindDataPlaneMemory(ctx, sandboxPlane, uffdPromise, overlay)
+	if err != nil {
+		return nil, err
+	}
 	// ==== END of resources initialization ====
 
-	rootfs, err := t.Rootfs()
+	rootfs, err := t.Rootfs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rootfs overlay: %w", err)
 	}
@@ -2317,7 +2476,7 @@ func (f *Factory) ResumeSandbox(
 	resources := &Resources{
 		Slot:   ips,
 		rootfs: overlay,
-		memory: fcUffd,
+		memory: boundMemory,
 	}
 
 	metadata := &Metadata{
@@ -2360,6 +2519,7 @@ func (f *Factory) ResumeSandbox(
 		slotRelease:    slotRelease,
 		networkRelease: networkRelease,
 		rootfsRelease:  rootfsRelease,
+		planeRelease:   planeRelease,
 		executionSpan:  trace.SpanContextFromContext(execCtx),
 
 		// A throwaway resume keeps its warm, customer-indistinguishable start out
@@ -3342,7 +3502,7 @@ func (s *Sandbox) Pause(
 	}
 
 	// Gather data for postprocessing
-	originalRootfs, err := s.Template.Rootfs()
+	originalRootfs, err := s.Template.Rootfs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get original rootfs: %w", err)
 	}
@@ -5279,7 +5439,7 @@ func returnNetworkSlot(networkPool network.PoolInterface, slot *network.Slot, ne
 func serveMemory(
 	ctx context.Context,
 	cleanup *Cleanup,
-	fcUffd *uffd.Uffd,
+	fcUffd uffd.Handler,
 ) error {
 	ctx, span := tracer.Start(ctx, "serve-memory")
 	defer span.End()

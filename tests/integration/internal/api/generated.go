@@ -541,45 +541,6 @@ func (e GetTemplatesTemplateIDTagsGroupsParamsSort) Valid() bool {
 	}
 }
 
-// Defines values for AdminListClustersParamsSortBy.
-const (
-	AdminListClustersParamsSortByEndpoint  AdminListClustersParamsSortBy = "endpoint"
-	AdminListClustersParamsSortByName      AdminListClustersParamsSortBy = "name"
-	AdminListClustersParamsSortByTeamCount AdminListClustersParamsSortBy = "teamCount"
-)
-
-// Valid indicates whether the value is a known member of the AdminListClustersParamsSortBy enum.
-func (e AdminListClustersParamsSortBy) Valid() bool {
-	switch e {
-	case AdminListClustersParamsSortByEndpoint:
-		return true
-	case AdminListClustersParamsSortByName:
-		return true
-	case AdminListClustersParamsSortByTeamCount:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for AdminListClustersParamsSortOrder.
-const (
-	AdminListClustersSortOrderAsc  AdminListClustersParamsSortOrder = "asc"
-	AdminListClustersSortOrderDesc AdminListClustersParamsSortOrder = "desc"
-)
-
-// Valid indicates whether the value is a known member of the AdminListClustersParamsSortOrder enum.
-func (e AdminListClustersParamsSortOrder) Valid() bool {
-	switch e {
-	case AdminListClustersSortOrderAsc:
-		return true
-	case AdminListClustersSortOrderDesc:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AdminListClusterTeamsParamsSortBy.
 const (
 	AdminListClusterTeamsParamsSortByCreatedAt AdminListClusterTeamsParamsSortBy = "createdAt"
@@ -665,20 +626,6 @@ type AdminBuildCancelResult struct {
 
 	// FailedCount Number of builds that failed to cancel
 	FailedCount int `json:"failedCount"`
-}
-
-// AdminClusterCreateRequest defines model for AdminClusterCreateRequest.
-type AdminClusterCreateRequest struct {
-	AuthOrgId *string `json:"auth_org_id,omitempty"`
-
-	// ClusterId Optional stable identifier for idempotent creation. Reuse succeeds only when the immutable configuration is identical.
-	ClusterId          *openapi_types.UUID `json:"cluster_id,omitempty"`
-	Endpoint           string              `json:"endpoint"`
-	EndpointTls        bool                `json:"endpoint_tls"`
-	Name               string              `json:"name"`
-	SandboxProxyDomain *string             `json:"sandbox_proxy_domain,omitempty"`
-	TelemetryClientId  *string             `json:"telemetry_client_id,omitempty"`
-	Token              string              `json:"token"`
 }
 
 // AdminDefaultTemplate defines model for AdminDefaultTemplate.
@@ -1224,51 +1171,6 @@ type BuildsStatusesResponse struct {
 // CPUCount CPU cores for the sandbox
 type CPUCount = int32
 
-// ClusterDetail A cluster's configuration. The cluster's token is never returned.
-type ClusterDetail struct {
-	AuthOrgId *string `json:"authOrgId,omitempty"`
-
-	// DeletionProtection While true, deleting the cluster is refused.
-	DeletionProtection bool               `json:"deletionProtection"`
-	Endpoint           string             `json:"endpoint"`
-	EndpointTls        bool               `json:"endpointTls"`
-	Id                 openapi_types.UUID `json:"id"`
-	Name               string             `json:"name"`
-	SandboxProxyDomain *string            `json:"sandboxProxyDomain,omitempty"`
-}
-
-// ClusterDetailWithTeams defines model for ClusterDetailWithTeams.
-type ClusterDetailWithTeams struct {
-	// Cluster A cluster's configuration. The cluster's token is never returned.
-	Cluster ClusterDetail `json:"cluster"`
-
-	// TeamCount Teams assigned to the cluster. Must be 0 before the cluster can be deleted.
-	TeamCount int64                   `json:"teamCount"`
-	Teams     ClusterTeamListResponse `json:"teams"`
-
-	// TemplateCount Live templates on the cluster. Deleting the cluster deletes them.
-	TemplateCount int64 `json:"templateCount"`
-}
-
-// ClusterListItem defines model for ClusterListItem.
-type ClusterListItem struct {
-	Endpoint           string             `json:"endpoint"`
-	Id                 openapi_types.UUID `json:"id"`
-	Name               string             `json:"name"`
-	SandboxProxyDomain *string            `json:"sandboxProxyDomain,omitempty"`
-
-	// TeamCount Number of teams assigned to the cluster.
-	TeamCount int64 `json:"teamCount"`
-}
-
-// ClusterListResponse defines model for ClusterListResponse.
-type ClusterListResponse struct {
-	Items []ClusterListItem `json:"items"`
-
-	// Total Number of clusters matching the search, ignoring limit and offset
-	Total int64 `json:"total"`
-}
-
 // ClusterTeamCount defines model for ClusterTeamCount.
 type ClusterTeamCount struct {
 	ClusterId openapi_types.UUID `json:"clusterId"`
@@ -1298,22 +1200,6 @@ type ClusterTeamListResponse struct {
 
 	// Total Number of teams assigned to the cluster, ignoring limit and offset
 	Total int64 `json:"total"`
-}
-
-// ClusterTokenRotateRequest defines model for ClusterTokenRotateRequest.
-type ClusterTokenRotateRequest struct {
-	// Token New cluster access token. Write-only.
-	Token string `json:"token"`
-}
-
-// ClusterUpdateRequest Partial update; only the properties present are written. An explicit null or an empty string clears `sandboxProxyDomain` or `authOrgId`.
-type ClusterUpdateRequest struct {
-	AuthOrgId          *string `json:"authOrgId,omitempty"`
-	DeletionProtection *bool   `json:"deletionProtection,omitempty"`
-	Endpoint           *string `json:"endpoint,omitempty"`
-	EndpointTls        *bool   `json:"endpointTls,omitempty"`
-	Name               *string `json:"name,omitempty"`
-	SandboxProxyDomain *string `json:"sandboxProxyDomain,omitempty"`
 }
 
 // ConnectSandbox defines model for ConnectSandbox.
@@ -1398,7 +1284,7 @@ type Error struct {
 	// Code Error code
 	Code int32 `json:"code"`
 
-	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, cluster_registration_invalid, cluster_registration_conflict, cluster_assignment_invalid, cluster_assignment_project_not_found, cluster_assignment_cluster_not_found, cluster_assignment_already_assigned, cluster_assignment_cluster_deleting, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
+	// ErrorCode Machine-readable semantic error code. Not a closed set; initial values: sandbox_capacity_unavailable, sandbox_placement_timeout, sandbox_no_compatible_node, sandbox_create_failed (a node could not create the sandbox this time; retry), sandbox_create_refused (a node refused the sandbox for a reason no retry changes, such as a vcpu count out of bounds in the stored build; a server error, since no request field reaches that check), internal_server_error, secret_limit_reached, idempotency_request_mismatch, idempotency_in_progress, idempotency_outcome_unknown, sandbox_snapshot_guest_agent_unresponsive (a plain resume of a snapshot taken while the sandbox guest agent was not responding; resume it with memory: false).
 	ErrorCode *string `json:"error_code,omitempty"`
 
 	// Message Error
@@ -1559,23 +1445,12 @@ type ManagementClusterProjects struct {
 	ProjectIds []openapi_types.UUID `json:"project_ids"`
 }
 
-// ManagementClusterRegistrationRequest defines model for ManagementClusterRegistrationRequest.
-type ManagementClusterRegistrationRequest struct {
-	AuthOrgId          *string `json:"auth_org_id,omitempty"`
-	Endpoint           string  `json:"endpoint"`
-	EndpointTls        bool    `json:"endpoint_tls"`
-	Name               string  `json:"name"`
-	SandboxProxyDomain *string `json:"sandbox_proxy_domain,omitempty"`
-	TelemetryClientId  *string `json:"telemetry_client_id,omitempty"`
-	Token              string  `json:"token"`
-}
-
 // ManagementDecidedAt When the caller decided this revision, in RFC 3339. Stored with the revision and used to measure how long the decision took to apply here. Omit it when the caller does not know; the delivery is then counted as origin unknown rather than as zero lag.
 type ManagementDecidedAt = time.Time
 
 // ManagementProject defines model for ManagementProject.
 type ManagementProject struct {
-	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	// ClusterId Remote cluster fixed at creation. Omit to create a local project or to preserve an existing project's cluster. A different cluster returns 409. The response reports the stored cluster; local projects omit it.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
 
 	// Email Contact address recorded on the project.
@@ -1692,11 +1567,11 @@ type ManagementProjectSettingsRequest struct {
 	Settings ProjectSettings `json:"settings"`
 }
 
-// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every push. The optional cluster assignment is preserved when omitted.
+// ManagementProjectUpsertRequest The properties of a project this side stores. Name, slug and email are synchronized on every accepted push. The cluster is fixed at creation.
 //
 // A project's tier is not among them, and this side assigns none. Limits arrive separately and in full through managementUpsertProjectLimits.
 type ManagementProjectUpsertRequest struct {
-	// ClusterId Cluster assignment to synchronize. Omission preserves the existing assignment.
+	// ClusterId Remote cluster fixed at creation. Omit to create a local project or to preserve an existing project's cluster. A different cluster returns 409. The response reports the stored cluster; local projects omit it.
 	ClusterId *openapi_types.UUID `json:"cluster_id,omitempty"`
 
 	// Email Contact address recorded on the project.
@@ -1751,7 +1626,10 @@ type NewSandbox struct {
 	Iam *SandboxIam `json:"iam,omitempty"`
 
 	// Mcp MCP configuration for the sandbox
-	Mcp      *Mcp                  `json:"mcp,omitempty"`
+	Mcp *Mcp `json:"mcp,omitempty"`
+
+	// MemoryMB Memory for the sandbox in MiB. Defaults to the template's memoryMB; at most its maxMemoryMB, in steps of 128 MiB above memoryMB (templates without a maxMemoryMB accept only their memoryMB).
+	MemoryMB *MemoryMB             `json:"memoryMB,omitempty"`
 	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
 	Network  *SandboxNetworkConfig `json:"network,omitempty"`
 
@@ -1789,7 +1667,10 @@ type NewSandboxV2 struct {
 	Iam *SandboxIam `json:"iam,omitempty"`
 
 	// Mcp MCP configuration for the sandbox
-	Mcp      *Mcp                  `json:"mcp,omitempty"`
+	Mcp *Mcp `json:"mcp,omitempty"`
+
+	// MemoryMB Memory for the sandbox in MiB. Defaults to the template's memoryMB; at most its maxMemoryMB, in steps of 128 MiB above memoryMB (templates without a maxMemoryMB accept only their memoryMB).
+	MemoryMB *MemoryMB             `json:"memoryMB,omitempty"`
 	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
 	Network  *SandboxNetworkConfig `json:"network,omitempty"`
 
@@ -2039,6 +1920,9 @@ type ResumedSandbox struct {
 
 	// Memory Defaults to true. When false, resume from disk state only: the sandbox cold-boots fresh and any memory in the snapshot is ignored, never modified or deleted. Disk state has crash-recovery semantics — writes not flushed before the pause may be lost. A no-op for snapshots that contain no memory. Rejected with an error in environments where this capability is not enabled, never silently downgraded to a memory restore. A snapshot taken while the sandbox guest agent was not responding (envdUnresponsiveAtPause) can only be resumed this way, and needs no enablement.
 	Memory *bool `json:"memory,omitempty"`
+
+	// MemoryMB Memory for the resumed sandbox in MiB. Defaults to the memory the sandbox had when it was paused; at least that, and at most the template's maxMemoryMB, in steps of 128 MiB above its memoryMB.
+	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
 
 	// Timeout Time to live for the sandbox in seconds.
 	Timeout *int32 `json:"timeout,omitempty"`
@@ -2740,7 +2624,10 @@ type Template struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this template starts with: the build's memory, or for a snapshot template of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Names Names of the template (namespace/alias format when namespaced)
@@ -2791,7 +2678,10 @@ type TemplateBuild struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this build starts with: the build's memory, or for a snapshot of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Status Status of the template build
@@ -2850,6 +2740,9 @@ type TemplateBuildRequestV3 struct {
 
 	// MaxCpuCount Maximum CPU count the template's sandboxes can be resized to; makes the template resizable. Must be at least cpuCount.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
+
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB. memoryMB is what they boot with; the rest is added when a sandbox asks for it. Must be at least memoryMB, and the difference a multiple of 128 MiB.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
 
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB *MemoryMB `json:"memoryMB,omitempty"`
@@ -2916,7 +2809,10 @@ type TemplateBuildWithTags struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this build starts with: the build's memory, or for a snapshot of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Status Status of the template build
@@ -3140,7 +3036,10 @@ type TemplateWithBuilds struct {
 	// MaxCpuCount Maximum CPU count for resizable templates; absent for fixed-size templates.
 	MaxCpuCount *CPUCount `json:"maxCpuCount,omitempty"`
 
-	// MemoryMB Memory for the sandbox in MiB
+	// MaxMemoryMB Memory the template's sandboxes can grow to, in MiB; absent for templates whose memory cannot grow.
+	MaxMemoryMB *MemoryMB `json:"maxMemoryMB,omitempty"`
+
+	// MemoryMB Memory in MiB a sandbox created from this template starts with: the build's memory, or for a snapshot template of a grown sandbox the size it was taken at. A create that names no memoryMB starts at this size.
 	MemoryMB MemoryMB `json:"memoryMB"`
 
 	// Names Names of the template (namespace/alias format when namespaced)
@@ -3634,6 +3533,26 @@ type GetSecretsParams struct {
 	Limit *PaginationLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// PostSecretsParams defines parameters for PostSecrets.
+type PostSecretsParams struct {
+	// IdempotencyKey Optional team-scoped key for retrying the request. Use 1 to 255 lowercase ASCII letters,
+	// digits, or hyphens (a-z, 0-9, -), such as a lowercase UUID. The HTTP method, path, query,
+	// and request content identify the request. When idempotency is enabled, a matching retry of
+	// a completed request replays its status and body, including the IDs of any resources it
+	// created, without repeating the operation. A failure explicitly classified as safe to retry
+	// (Should-Retry: true) permits a fresh attempt with the same key and request. Only one
+	// attempt can run at a time. A different request returns 409 with error_code
+	// idempotency_request_mismatch. A matching request whose original has no recorded response
+	// yet and is within its expected response window returns 409 with error_code
+	// idempotency_in_progress. A matching request whose original has no recorded response and
+	// whose expected response deadline has passed or is unknown returns 422 with error_code
+	// idempotency_outcome_unknown. These conflicts and unknown outcomes do not execute the
+	// request again. If the key's record is unavailable or idempotency is misconfigured, the
+	// request returns 503; Should-Retry tells whether to retry with the same key. After the
+	// retention period expires, the key can start a new operation.
+	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
+}
+
 // GetSnapshotsParams defines parameters for GetSnapshots.
 type GetSnapshotsParams struct {
 	SandboxID *string `form:"sandboxID,omitempty" json:"sandboxID,omitempty"`
@@ -3777,37 +3696,6 @@ type GetTemplatesTemplateIDTagsTagAssignmentsParams struct {
 	Limit *TagAssignmentsLimit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// AdminListClustersParams defines parameters for AdminListClusters.
-type AdminListClustersParams struct {
-	// Limit Maximum number of clusters to return
-	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Offset Number of matching clusters to skip
-	Offset *int32 `form:"offset,omitempty" json:"offset,omitempty"`
-
-	// Search Case-insensitive substring match on the cluster name or endpoint
-	Search *string `form:"search,omitempty" json:"search,omitempty"`
-
-	// SortBy Column to order by
-	SortBy    *AdminListClustersParamsSortBy    `form:"sortBy,omitempty" json:"sortBy,omitempty"`
-	SortOrder *AdminListClustersParamsSortOrder `form:"sortOrder,omitempty" json:"sortOrder,omitempty"`
-}
-
-// AdminListClustersParamsSortBy defines parameters for AdminListClusters.
-type AdminListClustersParamsSortBy string
-
-// AdminListClustersParamsSortOrder defines parameters for AdminListClusters.
-type AdminListClustersParamsSortOrder string
-
-// AdminGetClusterParams defines parameters for AdminGetCluster.
-type AdminGetClusterParams struct {
-	// TeamsLimit Page size for the embedded teams page
-	TeamsLimit *int32 `form:"teamsLimit,omitempty" json:"teamsLimit,omitempty"`
-
-	// TeamsOffset Offset for the embedded teams page
-	TeamsOffset *int32 `form:"teamsOffset,omitempty" json:"teamsOffset,omitempty"`
-}
-
 // AdminListClusterTeamsParams defines parameters for AdminListClusterTeams.
 type AdminListClusterTeamsParams struct {
 	// Limit Maximum number of teams to return
@@ -3882,11 +3770,6 @@ type GetUnstableBuildsParams struct {
 type GetUnstableBuildsStatusesParams struct {
 	// BuildIds Comma-separated list of build IDs to get statuses for.
 	BuildIds BuildIDs `form:"build_ids" json:"build_ids"`
-}
-
-// ManagementUpdateClusterTelemetryJSONBody defines parameters for ManagementUpdateClusterTelemetry.
-type ManagementUpdateClusterTelemetryJSONBody struct {
-	TelemetryClientId string `json:"telemetry_client_id"`
 }
 
 // GetUnstableTemplatesSearchParams defines parameters for GetUnstableTemplatesSearch.
@@ -4090,15 +3973,6 @@ type PostTemplatesTagsJSONRequestBody = AssignTemplateTagsRequest
 // Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 type PatchTemplatesTemplateIDJSONRequestBody = TemplateUpdateRequest
 
-// AdminCreateClusterJSONRequestBody defines body for AdminCreateCluster for application/json ContentType.
-type AdminCreateClusterJSONRequestBody = AdminClusterCreateRequest
-
-// AdminUpdateClusterJSONRequestBody defines body for AdminUpdateCluster for application/json ContentType.
-type AdminUpdateClusterJSONRequestBody = ClusterUpdateRequest
-
-// AdminRotateClusterTokenJSONRequestBody defines body for AdminRotateClusterToken for application/json ContentType.
-type AdminRotateClusterTokenJSONRequestBody = ClusterTokenRotateRequest
-
 // PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody defines body for PostUnstableAdminSandboxesSandboxIDBuildsRestore for application/json ContentType.
 type PostUnstableAdminSandboxesSandboxIDBuildsRestoreJSONRequestBody = AdminSandboxBuildRestoreRequest
 
@@ -4119,12 +3993,6 @@ type PostUnstableAdminTemplatesDefaultsJSONRequestBody = AdminDefaultTemplateCre
 
 // PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody defines body for PatchUnstableAdminTemplatesDefaultsTemplateID for application/json ContentType.
 type PatchUnstableAdminTemplatesDefaultsTemplateIDJSONRequestBody = AdminDefaultTemplateUpdateRequest
-
-// ManagementRegisterClusterJSONRequestBody defines body for ManagementRegisterCluster for application/json ContentType.
-type ManagementRegisterClusterJSONRequestBody = ManagementClusterRegistrationRequest
-
-// ManagementUpdateClusterTelemetryJSONRequestBody defines body for ManagementUpdateClusterTelemetry for application/json ContentType.
-type ManagementUpdateClusterTelemetryJSONRequestBody ManagementUpdateClusterTelemetryJSONBody
 
 // ManagementUpsertProjectJSONRequestBody defines body for ManagementUpsertProject for application/json ContentType.
 type ManagementUpsertProjectJSONRequestBody = ManagementProjectUpsertRequest
@@ -5140,21 +5008,21 @@ type ClientInterface interface {
 
 	// PostSecretsWithBody Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSecretsWithBody(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSecrets Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecrets(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSecrets(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSecretsSecretID Delete a secret
 	//
@@ -5356,31 +5224,6 @@ type ClientInterface interface {
 	// Corresponds with GET /templates/{templateID}/tags/{tag}/assignments (the `GetTemplatesTemplateIDTagsTagAssignments` operationId).
 	GetTemplatesTemplateIDTagsTagAssignments(ctx context.Context, templateID TemplateID, tag Tag, params *GetTemplatesTemplateIDTagsTagAssignmentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminListClusters List clusters as admin
-	//
-	// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
-	//
-	// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
-	AdminListClusters(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminCreateClusterWithBody Create a cluster as admin
-	//
-	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-	AdminCreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminCreateCluster Create a cluster as admin
-	//
-	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-	AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// AdminListClusterTeamCounts Count each cluster's teams as admin
 	//
 	// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
@@ -5388,69 +5231,12 @@ type ClientInterface interface {
 	// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
 	AdminListClusterTeamCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminDeleteCluster Delete a cluster and its environments as admin
-	//
-	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction, which no team assignment can interleave with, it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history; the cluster service records the deletion and then deletes the cluster. An assignment requested meanwhile waits and is then refused. If the cluster service does not delete the cluster, nothing is soft-deleted and the cluster stays recorded as being deleted. Deleting an absent cluster still releases its templates, and is refused while a live team is assigned to it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
-	//
-	// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
-	AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminGetCluster Cluster as admin
-	//
-	// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
-	//
-	// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
-	AdminGetCluster(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminUpdateClusterWithBody Update a cluster as admin
-	//
-	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-	AdminUpdateClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminUpdateCluster Update a cluster as admin
-	//
-	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-	AdminUpdateCluster(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminGetClusterMetadata Cluster metadata as admin
-	//
-	// Returns cluster metadata without reading assigned teams or counting teams and templates. Never returns the cluster's token.
-	//
-	// Corresponds with GET /unstable/admin/clusters/{clusterID}/metadata (the `AdminGetClusterMetadata` operationId).
-	AdminGetClusterMetadata(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// AdminListClusterTeams List a cluster's teams as admin
 	//
 	// Lists the teams assigned to the cluster.
 	//
 	// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
 	AdminListClusterTeams(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminRotateClusterTokenWithBody Rotate a cluster's token as admin
-	//
-	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-	AdminRotateClusterTokenWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdminRotateClusterToken Rotate a cluster's token as admin
-	//
-	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-	AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetUnstableAdminSandboxesSandboxIDBuilds List the builds of a sandbox's snapshot template
 	//
@@ -5718,27 +5504,9 @@ type ClientInterface interface {
 	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 	ManagementDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ManagementRegisterClusterWithBody Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementRegisterCluster Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ManagementRequestClusterDeletion Record that a cluster is being deleted.
 	//
-	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 	//
 	// Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
 	ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5757,23 +5525,10 @@ type ClientInterface interface {
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjects(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+	// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
 	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementDeleteProject Soft-delete a project.
 	//
@@ -5831,20 +5586,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 	ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementDetachProjectCluster Detach a cluster assignment from a project.
-	//
-	// Answers 404 when the project is missing or deleted.
-	//
-	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-	ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ManagementAssignProjectCluster Assign a cluster to a project.
-	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
-	//
-	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-	ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManagementUpsertProjectLimitsWithBody Reconcile effective limits for a project.
 	//
@@ -7209,13 +6950,13 @@ func (c *Client) GetSecrets(ctx context.Context, params *GetSecretsParams, reqEd
 
 // PostSecretsWithBody Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *Client) PostSecretsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSecretsRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostSecretsWithBody(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSecretsRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7228,13 +6969,13 @@ func (c *Client) PostSecretsWithBody(ctx context.Context, contentType string, bo
 
 // PostSecrets Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *Client) PostSecrets(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSecretsRequest(c.Server, body)
+func (c *Client) PostSecrets(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSecretsRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7702,61 +7443,6 @@ func (c *Client) GetTemplatesTemplateIDTagsTagAssignments(ctx context.Context, t
 	return c.Client.Do(req)
 }
 
-// AdminListClusters List clusters as admin
-//
-// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
-//
-// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
-func (c *Client) AdminListClusters(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminListClustersRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminCreateClusterWithBody Create a cluster as admin
-//
-// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-func (c *Client) AdminCreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminCreateClusterRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminCreateCluster Create a cluster as admin
-//
-// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-func (c *Client) AdminCreateCluster(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminCreateClusterRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // AdminListClusterTeamCounts Count each cluster's teams as admin
 //
 // Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
@@ -7774,95 +7460,6 @@ func (c *Client) AdminListClusterTeamCounts(ctx context.Context, reqEditors ...R
 	return c.Client.Do(req)
 }
 
-// AdminDeleteCluster Delete a cluster and its environments as admin
-//
-// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction, which no team assignment can interleave with, it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history; the cluster service records the deletion and then deletes the cluster. An assignment requested meanwhile waits and is then refused. If the cluster service does not delete the cluster, nothing is soft-deleted and the cluster stays recorded as being deleted. Deleting an absent cluster still releases its templates, and is refused while a live team is assigned to it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
-//
-// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
-func (c *Client) AdminDeleteCluster(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminDeleteClusterRequest(c.Server, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminGetCluster Cluster as admin
-//
-// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
-//
-// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
-func (c *Client) AdminGetCluster(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminGetClusterRequest(c.Server, clusterID, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminUpdateClusterWithBody Update a cluster as admin
-//
-// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-func (c *Client) AdminUpdateClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminUpdateClusterRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminUpdateCluster Update a cluster as admin
-//
-// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-func (c *Client) AdminUpdateCluster(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminUpdateClusterRequest(c.Server, clusterID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminGetClusterMetadata Cluster metadata as admin
-//
-// Returns cluster metadata without reading assigned teams or counting teams and templates. Never returns the cluster's token.
-//
-// Corresponds with GET /unstable/admin/clusters/{clusterID}/metadata (the `AdminGetClusterMetadata` operationId).
-func (c *Client) AdminGetClusterMetadata(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminGetClusterMetadataRequest(c.Server, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // AdminListClusterTeams List a cluster's teams as admin
 //
 // Lists the teams assigned to the cluster.
@@ -7870,44 +7467,6 @@ func (c *Client) AdminGetClusterMetadata(ctx context.Context, clusterID ClusterI
 // Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
 func (c *Client) AdminListClusterTeams(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminListClusterTeamsRequest(c.Server, clusterID, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminRotateClusterTokenWithBody Rotate a cluster's token as admin
-//
-// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-func (c *Client) AdminRotateClusterTokenWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminRotateClusterTokenRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdminRotateClusterToken Rotate a cluster's token as admin
-//
-// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-func (c *Client) AdminRotateClusterToken(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdminRotateClusterTokenRequest(c.Server, clusterID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8454,47 +8013,9 @@ func (c *Client) ManagementDeleteCluster(ctx context.Context, clusterID ClusterI
 	return c.Client.Do(req)
 }
 
-// ManagementRegisterClusterWithBody Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *Client) ManagementRegisterClusterWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementRegisterClusterRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementRegisterCluster Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *Client) ManagementRegisterCluster(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementRegisterClusterRequest(c.Server, clusterID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ManagementRequestClusterDeletion Record that a cluster is being deleted.
 //
-// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 //
 // Corresponds with PUT /unstable/management/clusters/{clusterID}/deletion (the `ManagementRequestClusterDeletion` operationId).
 func (c *Client) ManagementRequestClusterDeletion(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8543,34 +8064,11 @@ func (c *Client) ManagementListClusterProjects(ctx context.Context, clusterID Cl
 	return c.Client.Do(req)
 }
 
-// ManagementUpdateClusterTelemetryWithBody Update the telemetry identity of an existing cluster.
+// ManagementRemoveClusterRegistration Remove a cluster and leave surviving projects without a runtime.
 //
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *Client) ManagementUpdateClusterTelemetryWithBody(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementUpdateClusterTelemetryRequestWithBody(c.Server, clusterID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementUpdateClusterTelemetry Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *Client) ManagementUpdateClusterTelemetry(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementUpdateClusterTelemetryRequest(c.Server, clusterID, body)
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *Client) ManagementRemoveClusterRegistration(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewManagementRemoveClusterRegistrationRequest(c.Server, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -8698,40 +8196,6 @@ func (c *Client) ManagementApplyProjectBlockWithBody(ctx context.Context, projec
 // Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 func (c *Client) ManagementApplyProjectBlock(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewManagementApplyProjectBlockRequest(c.Server, projectID, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementDetachProjectCluster Detach a cluster assignment from a project.
-//
-// Answers 404 when the project is missing or deleted.
-//
-// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-func (c *Client) ManagementDetachProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementDetachProjectClusterRequest(c.Server, projectID, clusterID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ManagementAssignProjectCluster Assign a cluster to a project.
-//
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
-//
-// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-func (c *Client) ManagementAssignProjectCluster(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewManagementAssignProjectClusterRequest(c.Server, projectID, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -11616,18 +11080,18 @@ func NewGetSecretsRequest(server string, params *GetSecretsParams) (*http.Reques
 }
 
 // NewPostSecretsRequest calls the generic PostSecrets builder with application/json body
-func NewPostSecretsRequest(server string, body PostSecretsJSONRequestBody) (*http.Request, error) {
+func NewPostSecretsRequest(server string, params *PostSecretsParams, body PostSecretsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPostSecretsRequestWithBody(server, "application/json", bodyReader)
+	return NewPostSecretsRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewPostSecretsRequestWithBody constructs an http.Request for the PostSecrets method, with any body, and a specified content type
-func NewPostSecretsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewPostSecretsRequestWithBody(server string, params *PostSecretsParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -11651,6 +11115,21 @@ func NewPostSecretsRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
 
 	return req, nil
 }
@@ -13011,148 +12490,6 @@ func NewGetTemplatesTemplateIDTagsTagAssignmentsRequest(server string, templateI
 	return req, nil
 }
 
-// NewAdminListClustersRequest constructs an http.Request for the AdminListClusters method
-func NewAdminListClustersRequest(server string, params *AdminListClustersParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Offset != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Search != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "search", *params.Search, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.SortBy != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortBy", *params.SortBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.SortOrder != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "sortOrder", *params.SortOrder, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAdminCreateClusterRequest calls the generic AdminCreateCluster builder with application/json body
-func NewAdminCreateClusterRequest(server string, body AdminCreateClusterJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAdminCreateClusterRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAdminCreateClusterRequestWithBody constructs an http.Request for the AdminCreateCluster method, with any body, and a specified content type
-func NewAdminCreateClusterRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewAdminListClusterTeamCountsRequest constructs an http.Request for the AdminListClusterTeamCounts method
 func NewAdminListClusterTeamCountsRequest(server string) (*http.Request, error) {
 	var err error
@@ -13163,194 +12500,6 @@ func NewAdminListClusterTeamCountsRequest(server string) (*http.Request, error) 
 	}
 
 	operationPath := fmt.Sprintf("/unstable/admin/clusters/team-counts")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAdminDeleteClusterRequest constructs an http.Request for the AdminDeleteCluster method
-func NewAdminDeleteClusterRequest(server string, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAdminGetClusterRequest constructs an http.Request for the AdminGetCluster method
-func NewAdminGetClusterRequest(server string, clusterID ClusterID, params *AdminGetClusterParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.TeamsLimit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "teamsLimit", *params.TeamsLimit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.TeamsOffset != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "teamsOffset", *params.TeamsOffset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAdminUpdateClusterRequest calls the generic AdminUpdateCluster builder with application/json body
-func NewAdminUpdateClusterRequest(server string, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAdminUpdateClusterRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewAdminUpdateClusterRequestWithBody constructs an http.Request for the AdminUpdateCluster method, with any body, and a specified content type
-func NewAdminUpdateClusterRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAdminGetClusterMetadataRequest constructs an http.Request for the AdminGetClusterMetadata method
-func NewAdminGetClusterMetadataRequest(server string, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s/metadata", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13461,53 +12610,6 @@ func NewAdminListClusterTeamsRequest(server string, clusterID ClusterID, params 
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewAdminRotateClusterTokenRequest calls the generic AdminRotateClusterToken builder with application/json body
-func NewAdminRotateClusterTokenRequest(server string, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAdminRotateClusterTokenRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewAdminRotateClusterTokenRequestWithBody constructs an http.Request for the AdminRotateClusterToken method, with any body, and a specified content type
-func NewAdminRotateClusterTokenRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/admin/clusters/%s/token", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14462,53 +13564,6 @@ func NewManagementDeleteClusterRequest(server string, clusterID ClusterID) (*htt
 	return req, nil
 }
 
-// NewManagementRegisterClusterRequest calls the generic ManagementRegisterCluster builder with application/json body
-func NewManagementRegisterClusterRequest(server string, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewManagementRegisterClusterRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewManagementRegisterClusterRequestWithBody constructs an http.Request for the ManagementRegisterCluster method, with any body, and a specified content type
-func NewManagementRegisterClusterRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/clusters/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewManagementRequestClusterDeletionRequest constructs an http.Request for the ManagementRequestClusterDeletion method
 func NewManagementRequestClusterDeletionRequest(server string, clusterID ClusterID) (*http.Request, error) {
 	var err error
@@ -14611,19 +13666,8 @@ func NewManagementListClusterProjectsRequest(server string, clusterID ClusterID)
 	return req, nil
 }
 
-// NewManagementUpdateClusterTelemetryRequest calls the generic ManagementUpdateClusterTelemetry builder with application/json body
-func NewManagementUpdateClusterTelemetryRequest(server string, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewManagementUpdateClusterTelemetryRequestWithBody(server, clusterID, "application/json", bodyReader)
-}
-
-// NewManagementUpdateClusterTelemetryRequestWithBody constructs an http.Request for the ManagementUpdateClusterTelemetry method, with any body, and a specified content type
-func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID ClusterID, contentType string, body io.Reader) (*http.Request, error) {
+// NewManagementRemoveClusterRegistrationRequest constructs an http.Request for the ManagementRemoveClusterRegistration method
+func NewManagementRemoveClusterRegistrationRequest(server string, clusterID ClusterID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14638,7 +13682,7 @@ func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/telemetry", pathParam0)
+	operationPath := fmt.Sprintf("/unstable/management/clusters/%s/registration", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14648,12 +13692,10 @@ func NewManagementUpdateClusterTelemetryRequestWithBody(server string, clusterID
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14829,88 +13871,6 @@ func NewManagementApplyProjectBlockRequestWithBody(server string, projectID open
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewManagementDetachProjectClusterRequest constructs an http.Request for the ManagementDetachProjectCluster method
-func NewManagementDetachProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewManagementAssignProjectClusterRequest constructs an http.Request for the ManagementAssignProjectCluster method
-func NewManagementAssignProjectClusterRequest(server string, projectID openapi_types.UUID, clusterID ClusterID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "projectID", projectID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "clusterID", clusterID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/unstable/management/projects/%s/cluster/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -16657,21 +15617,21 @@ type ClientWithResponsesInterface interface {
 
 	// PostSecretsWithBodyWithResponse Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
+	PostSecretsWithBodyWithResponse(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
 
 	// PostSecretsWithResponse Create a secret
 	//
-	// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+	// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /secrets (the `PostSecrets` operationId).
-	PostSecretsWithResponse(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
+	PostSecretsWithResponse(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error)
 
 	// DeleteSecretsSecretIDWithResponse Delete a secret
 	//
@@ -16909,33 +15869,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /templates/{templateID}/tags/{tag}/assignments (the `GetTemplatesTemplateIDTagsTagAssignments` operationId).
 	GetTemplatesTemplateIDTagsTagAssignmentsWithResponse(ctx context.Context, templateID TemplateID, tag Tag, params *GetTemplatesTemplateIDTagsTagAssignmentsParams, reqEditors ...RequestEditorFn) (*GetTemplatesTemplateIDTagsTagAssignmentsResponse, error)
 
-	// AdminListClustersWithResponse List clusters as admin
-	//
-	// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
-	AdminListClustersWithResponse(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*AdminListClustersResponse, error)
-
-	// AdminCreateClusterWithBodyWithResponse Create a cluster as admin
-	//
-	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-	AdminCreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error)
-
-	// AdminCreateClusterWithResponse Create a cluster as admin
-	//
-	// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-	AdminCreateClusterWithResponse(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error)
-
 	// AdminListClusterTeamCountsWithResponse Count each cluster's teams as admin
 	//
 	// Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
@@ -16945,51 +15878,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /unstable/admin/clusters/team-counts (the `AdminListClusterTeamCounts` operationId).
 	AdminListClusterTeamCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminListClusterTeamCountsResponse, error)
 
-	// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
-	//
-	// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction, which no team assignment can interleave with, it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history; the cluster service records the deletion and then deletes the cluster. An assignment requested meanwhile waits and is then refused. If the cluster service does not delete the cluster, nothing is soft-deleted and the cluster stays recorded as being deleted. Deleting an absent cluster still releases its templates, and is refused while a live team is assigned to it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
-	AdminDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminDeleteClusterResponse, error)
-
-	// AdminGetClusterWithResponse Cluster as admin
-	//
-	// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
-	AdminGetClusterWithResponse(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*AdminGetClusterResponse, error)
-
-	// AdminUpdateClusterWithBodyWithResponse Update a cluster as admin
-	//
-	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-	AdminUpdateClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error)
-
-	// AdminUpdateClusterWithResponse Update a cluster as admin
-	//
-	// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-	AdminUpdateClusterWithResponse(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error)
-
-	// AdminGetClusterMetadataWithResponse Cluster metadata as admin
-	//
-	// Returns cluster metadata without reading assigned teams or counting teams and templates. Never returns the cluster's token.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /unstable/admin/clusters/{clusterID}/metadata (the `AdminGetClusterMetadata` operationId).
-	AdminGetClusterMetadataWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminGetClusterMetadataResponse, error)
-
 	// AdminListClusterTeamsWithResponse List a cluster's teams as admin
 	//
 	// Lists the teams assigned to the cluster.
@@ -16998,24 +15886,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /unstable/admin/clusters/{clusterID}/teams (the `AdminListClusterTeams` operationId).
 	AdminListClusterTeamsWithResponse(ctx context.Context, clusterID ClusterID, params *AdminListClusterTeamsParams, reqEditors ...RequestEditorFn) (*AdminListClusterTeamsResponse, error)
-
-	// AdminRotateClusterTokenWithBodyWithResponse Rotate a cluster's token as admin
-	//
-	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-	AdminRotateClusterTokenWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
-
-	// AdminRotateClusterTokenWithResponse Rotate a cluster's token as admin
-	//
-	// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-	AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error)
 
 	// GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
 	//
@@ -17309,27 +16179,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /unstable/management/clusters/{clusterID} (the `ManagementDeleteCluster` operationId).
 	ManagementDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDeleteClusterResponse, error)
 
-	// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
-
-	// ManagementRegisterClusterWithResponse Register a cluster.
-	//
-	// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-	ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error)
-
 	// ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 	//
-	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+	// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -17354,23 +16206,12 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /unstable/management/clusters/{clusterID}/projects (the `ManagementListClusterProjects` operationId).
 	ManagementListClusterProjectsWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementListClusterProjectsResponse, error)
 
-	// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+	// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
 	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+	// Returns a wrapper object for the known response body format(s).
 	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
-
-	// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
-	//
-	// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-	ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error)
+	// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+	ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error)
 
 	// ManagementDeleteProjectWithResponse Soft-delete a project.
 	//
@@ -17430,24 +16271,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /unstable/management/projects/{projectID}/block (the `ManagementApplyProjectBlock` operationId).
 	ManagementApplyProjectBlockWithResponse(ctx context.Context, projectID openapi_types.UUID, body ManagementApplyProjectBlockJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementApplyProjectBlockResponse, error)
-
-	// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
-	//
-	// Answers 404 when the project is missing or deleted.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-	ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error)
-
-	// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
-	//
-	// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-	ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error)
 
 	// ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
 	//
@@ -19247,8 +18070,12 @@ type PostEventsWebhooksResponse struct {
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -19271,9 +18098,19 @@ func (r PostEventsWebhooksResponse) GetJSON404() *N404 {
 	return r.JSON404
 }
 
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PostEventsWebhooksResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PostEventsWebhooksResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostEventsWebhooksResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -19312,8 +18149,12 @@ type DeleteEventsWebhooksWebhookIDResponse struct {
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -19326,9 +18167,19 @@ func (r DeleteEventsWebhooksWebhookIDResponse) GetJSON404() *N404 {
 	return r.JSON404
 }
 
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteEventsWebhooksWebhookIDResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r DeleteEventsWebhooksWebhookIDResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteEventsWebhooksWebhookIDResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -19433,8 +18284,12 @@ type PatchEventsWebhooksWebhookIDResponse struct {
 	JSON401 *N401
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *N503
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19457,9 +18312,19 @@ func (r PatchEventsWebhooksWebhookIDResponse) GetJSON404() *N404 {
 	return r.JSON404
 }
 
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PatchEventsWebhooksWebhookIDResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PatchEventsWebhooksWebhookIDResponse) GetJSON500() *N500 {
 	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PatchEventsWebhooksWebhookIDResponse) GetJSON503() *N503 {
+	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
@@ -21400,9 +20265,49 @@ func (r GetSecretsResponse) ContentType() string {
 	return ""
 }
 
+// PostSecretsResponse400Headers the declared response headers of an HTTP 400 response for PostSecrets
+type PostSecretsResponse400Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse403Headers the declared response headers of an HTTP 403 response for PostSecrets
+type PostSecretsResponse403Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse409Headers the declared response headers of an HTTP 409 response for PostSecrets
+type PostSecretsResponse409Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse422Headers the declared response headers of an HTTP 422 response for PostSecrets
+type PostSecretsResponse422Headers struct {
+	ShouldRetry *bool
+}
+
 // PostSecretsResponse429Headers the declared response headers of an HTTP 429 response for PostSecrets
 type PostSecretsResponse429Headers struct {
 	RetryAfter *int
+}
+
+// PostSecretsResponse500Headers the declared response headers of an HTTP 500 response for PostSecrets
+type PostSecretsResponse500Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse502Headers the declared response headers of an HTTP 502 response for PostSecrets
+type PostSecretsResponse502Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse503Headers the declared response headers of an HTTP 503 response for PostSecrets
+type PostSecretsResponse503Headers struct {
+	ShouldRetry *bool
+}
+
+// PostSecretsResponse504Headers the declared response headers of an HTTP 504 response for PostSecrets
+type PostSecretsResponse504Headers struct {
+	ShouldRetry *bool
 }
 
 type PostSecretsResponse struct {
@@ -21411,25 +20316,47 @@ type PostSecretsResponse struct {
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *Secret
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
+	JSON400 *Error
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *N401
 	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *N403
+	JSON403 *Error
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
+	JSON404 *Error
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *Error
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *Error
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *Error
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *N429
 	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
+	JSON500 *Error
 	// JSON502 the response for an HTTP 502 `application/json` response
-	JSON502 *N502
+	JSON502 *Error
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
 	// JSON504 the response for an HTTP 504 `application/json` response
-	JSON504 *N504
+	JSON504 *Error
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *PostSecretsResponse400Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *PostSecretsResponse403Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *PostSecretsResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *PostSecretsResponse422Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PostSecretsResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *PostSecretsResponse500Headers
+	// Headers502 the parsed response headers for an HTTP 502 response
+	Headers502 *PostSecretsResponse502Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *PostSecretsResponse503Headers
+	// Headers504 the parsed response headers for an HTTP 504 response
+	Headers504 *PostSecretsResponse504Headers
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -21438,7 +20365,7 @@ func (r PostSecretsResponse) GetJSON201() *Secret {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r PostSecretsResponse) GetJSON400() *N400 {
+func (r PostSecretsResponse) GetJSON400() *Error {
 	return r.JSON400
 }
 
@@ -21448,12 +20375,12 @@ func (r PostSecretsResponse) GetJSON401() *N401 {
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r PostSecretsResponse) GetJSON403() *N403 {
+func (r PostSecretsResponse) GetJSON403() *Error {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r PostSecretsResponse) GetJSON404() *N404 {
+func (r PostSecretsResponse) GetJSON404() *Error {
 	return r.JSON404
 }
 
@@ -21462,23 +20389,38 @@ func (r PostSecretsResponse) GetJSON409() *Error {
 	return r.JSON409
 }
 
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r PostSecretsResponse) GetJSON413() *Error {
+	return r.JSON413
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PostSecretsResponse) GetJSON422() *Error {
+	return r.JSON422
+}
+
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PostSecretsResponse) GetJSON429() *N429 {
 	return r.JSON429
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PostSecretsResponse) GetJSON500() *N500 {
+func (r PostSecretsResponse) GetJSON500() *Error {
 	return r.JSON500
 }
 
 // GetJSON502 returns the response for an HTTP 502 `application/json` response
-func (r PostSecretsResponse) GetJSON502() *N502 {
+func (r PostSecretsResponse) GetJSON502() *Error {
 	return r.JSON502
 }
 
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PostSecretsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
 // GetJSON504 returns the response for an HTTP 504 `application/json` response
-func (r PostSecretsResponse) GetJSON504() *N504 {
+func (r PostSecretsResponse) GetJSON504() *Error {
 	return r.JSON504
 }
 
@@ -23478,151 +22420,6 @@ func (r GetTemplatesTemplateIDTagsTagAssignmentsResponse) ContentType() string {
 	return ""
 }
 
-type AdminListClustersResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClusterListResponse
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AdminListClustersResponse) GetJSON200() *ClusterListResponse {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminListClustersResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminListClustersResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminListClustersResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminListClustersResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminListClustersResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminListClustersResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminListClustersResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminListClustersResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminCreateClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ClusterDetail
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON201() *ClusterDetail {
-	return r.JSON201
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminCreateClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminCreateClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminCreateClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminCreateClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminCreateClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type AdminListClusterTeamCountsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -23672,310 +22469,6 @@ func (r AdminListClusterTeamCountsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AdminListClusterTeamCountsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminDeleteClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminDeleteClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminDeleteClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r AdminDeleteClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminDeleteClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminDeleteClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminDeleteClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminDeleteClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminDeleteClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminDeleteClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminGetClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClusterDetailWithTeams
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AdminGetClusterResponse) GetJSON200() *ClusterDetailWithTeams {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminGetClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminGetClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AdminGetClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminGetClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminGetClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminGetClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminGetClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminGetClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminGetClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminUpdateClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClusterDetail
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON200() *ClusterDetail {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminUpdateClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminUpdateClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminUpdateClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminUpdateClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminUpdateClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminGetClusterMetadataResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ClusterDetail
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON200() *ClusterDetail {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminGetClusterMetadataResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminGetClusterMetadataResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminGetClusterMetadataResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminGetClusterMetadataResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminGetClusterMetadataResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24052,75 +22545,6 @@ func (r AdminListClusterTeamsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AdminListClusterTeamsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdminRotateClusterTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AdminRotateClusterTokenResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AdminRotateClusterTokenResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AdminRotateClusterTokenResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AdminRotateClusterTokenResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AdminRotateClusterTokenResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AdminRotateClusterTokenResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdminRotateClusterTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdminRotateClusterTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdminRotateClusterTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25661,75 +24085,6 @@ func (r ManagementDeleteClusterResponse) ContentType() string {
 	return ""
 }
 
-type ManagementRegisterClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementRegisterClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementRegisterClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementRegisterClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementRegisterClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementRegisterClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ManagementRequestClusterDeletionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25930,60 +24285,32 @@ func (r ManagementListClusterProjectsResponse) ContentType() string {
 	return ""
 }
 
-type ManagementUpdateClusterTelemetryResponse struct {
+type ManagementRemoveClusterRegistrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
 	// JSON409 the response for an HTTP 409 `application/json` response
 	JSON409 *N409
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON404() *N404 {
-	return r.JSON404
 }
 
 // GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON409() *N409 {
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON409() *N409 {
 	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON500() *N500 {
+func (r ManagementRemoveClusterRegistrationResponse) GetJSON500() *N500 {
 	return r.JSON500
 }
 
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementUpdateClusterTelemetryResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
 // GetBody returns the raw response body bytes
-func (r ManagementUpdateClusterTelemetryResponse) GetBody() []byte {
+func (r ManagementRemoveClusterRegistrationResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ManagementUpdateClusterTelemetryResponse) Status() string {
+func (r ManagementRemoveClusterRegistrationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -25991,7 +24318,7 @@ func (r ManagementUpdateClusterTelemetryResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ManagementUpdateClusterTelemetryResponse) StatusCode() int {
+func (r ManagementRemoveClusterRegistrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -25999,7 +24326,7 @@ func (r ManagementUpdateClusterTelemetryResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementUpdateClusterTelemetryResponse) ContentType() string {
+func (r ManagementRemoveClusterRegistrationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26068,6 +24395,11 @@ func (r ManagementDeleteProjectResponse) ContentType() string {
 	return ""
 }
 
+// ManagementUpsertProjectResponse503Headers the declared response headers of an HTTP 503 response for ManagementUpsertProject
+type ManagementUpsertProjectResponse503Headers struct {
+	ShouldRetry *bool
+}
+
 type ManagementUpsertProjectResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26086,7 +24418,9 @@ type ManagementUpsertProjectResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *N500
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
+	JSON503 *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *ManagementUpsertProjectResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -26125,7 +24459,7 @@ func (r ManagementUpsertProjectResponse) GetJSON500() *N500 {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementUpsertProjectResponse) GetJSON503() *N503 {
+func (r ManagementUpsertProjectResponse) GetJSON503() *Error {
 	return r.JSON503
 }
 
@@ -26276,144 +24610,6 @@ func (r ManagementApplyProjectBlockResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ManagementApplyProjectBlockResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ManagementDetachProjectClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementDetachProjectClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementDetachProjectClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementDetachProjectClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementDetachProjectClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementDetachProjectClusterResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ManagementAssignProjectClusterResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *N400
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *N401
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *N404
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *N409
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *N500
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *N503
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON400() *N400 {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON401() *N401 {
-	return r.JSON401
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON404() *N404 {
-	return r.JSON404
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON409() *N409 {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON500() *N500 {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ManagementAssignProjectClusterResponse) GetJSON503() *N503 {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ManagementAssignProjectClusterResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ManagementAssignProjectClusterResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ManagementAssignProjectClusterResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ManagementAssignProjectClusterResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -29259,13 +27455,13 @@ func (c *ClientWithResponses) GetSecretsWithResponse(ctx context.Context, params
 
 // PostSecretsWithBodyWithResponse Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
-	rsp, err := c.PostSecretsWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Context, params *PostSecretsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
+	rsp, err := c.PostSecretsWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29274,13 +27470,13 @@ func (c *ClientWithResponses) PostSecretsWithBodyWithResponse(ctx context.Contex
 
 // PostSecretsWithResponse Create a secret
 //
-// Create a secret by storing a runtime marker as its first version. The response carries metadata only.
+// Create a secret by storing a runtime marker as its first version. The response carries metadata only. The value is not part of the Idempotency-Key comparison: reusing a key with a different value replays the first result.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /secrets (the `PostSecrets` operationId).
-func (c *ClientWithResponses) PostSecretsWithResponse(ctx context.Context, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
-	rsp, err := c.PostSecrets(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostSecretsWithResponse(ctx context.Context, params *PostSecretsParams, body PostSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSecretsResponse, error) {
+	rsp, err := c.PostSecrets(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -29678,51 +27874,6 @@ func (c *ClientWithResponses) GetTemplatesTemplateIDTagsTagAssignmentsWithRespon
 	return ParseGetTemplatesTemplateIDTagsTagAssignmentsResponse(rsp)
 }
 
-// AdminListClustersWithResponse List clusters as admin
-//
-// Lists the registered clusters with the number of teams assigned to each. Never returns a cluster's token. The local cluster is not a registered cluster and is not listed.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /unstable/admin/clusters (the `AdminListClusters` operationId).
-func (c *ClientWithResponses) AdminListClustersWithResponse(ctx context.Context, params *AdminListClustersParams, reqEditors ...RequestEditorFn) (*AdminListClustersResponse, error) {
-	rsp, err := c.AdminListClusters(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminListClustersResponse(rsp)
-}
-
-// AdminCreateClusterWithBodyWithResponse Create a cluster as admin
-//
-// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-func (c *ClientWithResponses) AdminCreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error) {
-	rsp, err := c.AdminCreateClusterWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminCreateClusterResponse(rsp)
-}
-
-// AdminCreateClusterWithResponse Create a cluster as admin
-//
-// Creates a cluster whose configuration cannot be modified through this route. A new cluster starts with deletion protection turned on. Creating a cluster again with the same `cluster_id` and an identical configuration answers 201 with the stored cluster, whose deletionProtection is whatever is stored; a different configuration, or an auth organization another cluster uses, returns 409 with error_code cluster_registration_conflict. An invalid request returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /unstable/admin/clusters (the `AdminCreateCluster` operationId).
-func (c *ClientWithResponses) AdminCreateClusterWithResponse(ctx context.Context, body AdminCreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminCreateClusterResponse, error) {
-	rsp, err := c.AdminCreateCluster(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminCreateClusterResponse(rsp)
-}
-
 // AdminListClusterTeamCountsWithResponse Count each cluster's teams as admin
 //
 // Returns the number of live teams assigned to each remote cluster. A cluster no live team is assigned to is absent. It reads only the teams, so it answers without a cluster service.
@@ -29738,81 +27889,6 @@ func (c *ClientWithResponses) AdminListClusterTeamCountsWithResponse(ctx context
 	return ParseAdminListClusterTeamCountsResponse(rsp)
 }
 
-// AdminDeleteClusterWithResponse Delete a cluster and its environments as admin
-//
-// Deletes a cluster after all team assignments are detached. Deletion protection on the cluster rejects the deletion, and so does a live team assignment, before anything changes. In one transaction, which no team assignment can interleave with, it then soft-deletes every live template, snapshot template and paused sandbox snapshot on the cluster, releases their aliases, and releases all environment references while preserving environment and build history; the cluster service records the deletion and then deletes the cluster. An assignment requested meanwhile waits and is then refused. If the cluster service does not delete the cluster, nothing is soft-deleted and the cluster stays recorded as being deleted. Deleting an absent cluster still releases its templates, and is refused while a live team is assigned to it. The local cluster's nil ID is rejected. Repeating a completed deletion succeeds.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /unstable/admin/clusters/{clusterID} (the `AdminDeleteCluster` operationId).
-func (c *ClientWithResponses) AdminDeleteClusterWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminDeleteClusterResponse, error) {
-	rsp, err := c.AdminDeleteCluster(ctx, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminDeleteClusterResponse(rsp)
-}
-
-// AdminGetClusterWithResponse Cluster as admin
-//
-// Returns a cluster with the first page of its assigned teams, the number of teams assigned to it and the number of live templates on it. Never returns the cluster's token.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /unstable/admin/clusters/{clusterID} (the `AdminGetCluster` operationId).
-func (c *ClientWithResponses) AdminGetClusterWithResponse(ctx context.Context, clusterID ClusterID, params *AdminGetClusterParams, reqEditors ...RequestEditorFn) (*AdminGetClusterResponse, error) {
-	rsp, err := c.AdminGetCluster(ctx, clusterID, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminGetClusterResponse(rsp)
-}
-
-// AdminUpdateClusterWithBodyWithResponse Update a cluster as admin
-//
-// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-func (c *ClientWithResponses) AdminUpdateClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error) {
-	rsp, err := c.AdminUpdateClusterWithBody(ctx, clusterID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminUpdateClusterResponse(rsp)
-}
-
-// AdminUpdateClusterWithResponse Update a cluster as admin
-//
-// Writes only the properties present in the body. `endpoint` and `endpointTls` change where orchestration traffic for every team on the cluster goes, `sandboxProxyDomain` changes the public URL of every sandbox on it, and `authOrgId` changes how the cluster authenticates. A body with no property returns 400. Another cluster using the auth organization returns 409, and so does turning deletion protection on after the cluster's deletion is recorded. The token is rotated through `PUT /unstable/admin/clusters/{clusterID}/token`.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PATCH /unstable/admin/clusters/{clusterID} (the `AdminUpdateCluster` operationId).
-func (c *ClientWithResponses) AdminUpdateClusterWithResponse(ctx context.Context, clusterID ClusterID, body AdminUpdateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminUpdateClusterResponse, error) {
-	rsp, err := c.AdminUpdateCluster(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminUpdateClusterResponse(rsp)
-}
-
-// AdminGetClusterMetadataWithResponse Cluster metadata as admin
-//
-// Returns cluster metadata without reading assigned teams or counting teams and templates. Never returns the cluster's token.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /unstable/admin/clusters/{clusterID}/metadata (the `AdminGetClusterMetadata` operationId).
-func (c *ClientWithResponses) AdminGetClusterMetadataWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*AdminGetClusterMetadataResponse, error) {
-	rsp, err := c.AdminGetClusterMetadata(ctx, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminGetClusterMetadataResponse(rsp)
-}
-
 // AdminListClusterTeamsWithResponse List a cluster's teams as admin
 //
 // Lists the teams assigned to the cluster.
@@ -29826,36 +27902,6 @@ func (c *ClientWithResponses) AdminListClusterTeamsWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseAdminListClusterTeamsResponse(rsp)
-}
-
-// AdminRotateClusterTokenWithBodyWithResponse Rotate a cluster's token as admin
-//
-// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-func (c *ClientWithResponses) AdminRotateClusterTokenWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error) {
-	rsp, err := c.AdminRotateClusterTokenWithBody(ctx, clusterID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminRotateClusterTokenResponse(rsp)
-}
-
-// AdminRotateClusterTokenWithResponse Rotate a cluster's token as admin
-//
-// Replaces the token used to reach the cluster. The previous token stops working at once. No route returns a cluster's token.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/admin/clusters/{clusterID}/token (the `AdminRotateClusterToken` operationId).
-func (c *ClientWithResponses) AdminRotateClusterTokenWithResponse(ctx context.Context, clusterID ClusterID, body AdminRotateClusterTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*AdminRotateClusterTokenResponse, error) {
-	rsp, err := c.AdminRotateClusterToken(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdminRotateClusterTokenResponse(rsp)
 }
 
 // GetUnstableAdminSandboxesSandboxIDBuildsWithResponse List the builds of a sandbox's snapshot template
@@ -30312,39 +28358,9 @@ func (c *ClientWithResponses) ManagementDeleteClusterWithResponse(ctx context.Co
 	return ParseManagementDeleteClusterResponse(rsp)
 }
 
-// ManagementRegisterClusterWithBodyWithResponse Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *ClientWithResponses) ManagementRegisterClusterWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
-	rsp, err := c.ManagementRegisterClusterWithBody(ctx, clusterID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementRegisterClusterResponse(rsp)
-}
-
-// ManagementRegisterClusterWithResponse Register a cluster.
-//
-// A cluster registered here for the first time starts with deletion protection turned off. Registering an existing cluster again with the same auth organization updates its endpoint, TLS setting, sandbox proxy domain and token, while preserving its regional display name and deletion protection, then sets a telemetry client ID the cluster does not have yet. An omitted telemetry client ID preserves the stored one. A different auth organization returns a conflict with error_code cluster_registration_conflict, and so does a telemetry client ID different from the stored one, after the endpoint, TLS setting, sandbox proxy domain and token are updated. An invalid registration returns 400 with error_code cluster_registration_invalid.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID} (the `ManagementRegisterCluster` operationId).
-func (c *ClientWithResponses) ManagementRegisterClusterWithResponse(ctx context.Context, clusterID ClusterID, body ManagementRegisterClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementRegisterClusterResponse, error) {
-	rsp, err := c.ManagementRegisterCluster(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementRegisterClusterResponse(rsp)
-}
-
 // ManagementRequestClusterDeletionWithResponse Record that a cluster is being deleted.
 //
-// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with cluster_assignment_cluster_deleting. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
+// Records that the caller is deleting the cluster, for a caller that deletes the cluster's teams before the cluster itself. Refused while the cluster has deletion protection turned on; a protection change in flight commits before or after the check, never between. Once recorded, deletion protection cannot be turned on, so the cluster delete that follows is not refused for protection, and no team can be newly assigned to the cluster. An assignment either commits before this request returns, where the caller's next project listing finds it, or is refused with a conflict. Succeeds when the cluster is absent. Repeating the request succeeds. The local cluster's nil ID is rejected.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -30387,34 +28403,17 @@ func (c *ClientWithResponses) ManagementListClusterProjectsWithResponse(ctx cont
 	return ParseManagementListClusterProjectsResponse(rsp)
 }
 
-// ManagementUpdateClusterTelemetryWithBodyWithResponse Update the telemetry identity of an existing cluster.
+// ManagementRemoveClusterRegistrationWithResponse Remove a cluster and leave surviving projects without a runtime.
 //
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
+// Returns a wrapper object for the known response body format(s).
 //
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithBodyWithResponse(ctx context.Context, clusterID ClusterID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
-	rsp, err := c.ManagementUpdateClusterTelemetryWithBody(ctx, clusterID, contentType, body, reqEditors...)
+// Corresponds with DELETE /unstable/management/clusters/{clusterID}/registration (the `ManagementRemoveClusterRegistration` operationId).
+func (c *ClientWithResponses) ManagementRemoveClusterRegistrationWithResponse(ctx context.Context, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementRemoveClusterRegistrationResponse, error) {
+	rsp, err := c.ManagementRemoveClusterRegistration(ctx, clusterID, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseManagementUpdateClusterTelemetryResponse(rsp)
-}
-
-// ManagementUpdateClusterTelemetryWithResponse Update the telemetry identity of an existing cluster.
-//
-// Changes only the telemetry client mapping. Missing or deleting clusters are refused; connection settings, credentials and names are preserved.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/clusters/{clusterID}/telemetry (the `ManagementUpdateClusterTelemetry` operationId).
-func (c *ClientWithResponses) ManagementUpdateClusterTelemetryWithResponse(ctx context.Context, clusterID ClusterID, body ManagementUpdateClusterTelemetryJSONRequestBody, reqEditors ...RequestEditorFn) (*ManagementUpdateClusterTelemetryResponse, error) {
-	rsp, err := c.ManagementUpdateClusterTelemetry(ctx, clusterID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementUpdateClusterTelemetryResponse(rsp)
+	return ParseManagementRemoveClusterRegistrationResponse(rsp)
 }
 
 // ManagementDeleteProjectWithResponse Soft-delete a project.
@@ -30516,36 +28515,6 @@ func (c *ClientWithResponses) ManagementApplyProjectBlockWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseManagementApplyProjectBlockResponse(rsp)
-}
-
-// ManagementDetachProjectClusterWithResponse Detach a cluster assignment from a project.
-//
-// Answers 404 when the project is missing or deleted.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementDetachProjectCluster` operationId).
-func (c *ClientWithResponses) ManagementDetachProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementDetachProjectClusterResponse, error) {
-	rsp, err := c.ManagementDetachProjectCluster(ctx, projectID, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementDetachProjectClusterResponse(rsp)
-}
-
-// ManagementAssignProjectClusterWithResponse Assign a cluster to a project.
-//
-// Assigns the cluster when the project has no cluster assigned. Replaying the identical assignment succeeds; replacing a different assigned cluster returns a conflict. Answers 404 when the project is missing or deleted.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /unstable/management/projects/{projectID}/cluster/{clusterID} (the `ManagementAssignProjectCluster` operationId).
-func (c *ClientWithResponses) ManagementAssignProjectClusterWithResponse(ctx context.Context, projectID openapi_types.UUID, clusterID ClusterID, reqEditors ...RequestEditorFn) (*ManagementAssignProjectClusterResponse, error) {
-	rsp, err := c.ManagementAssignProjectCluster(ctx, projectID, clusterID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseManagementAssignProjectClusterResponse(rsp)
 }
 
 // ManagementUpsertProjectLimitsWithBodyWithResponse Reconcile effective limits for a project.
@@ -32367,12 +30336,26 @@ func ParsePostEventsWebhooksResponse(rsp *http.Response) (*PostEventsWebhooksRes
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -32410,12 +30393,26 @@ func ParseDeleteEventsWebhooksWebhookIDResponse(rsp *http.Response) (*DeleteEven
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -32511,12 +30508,26 @@ func ParsePatchEventsWebhooksWebhookIDResponse(rsp *http.Response) (*PatchEvents
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest N500
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest N503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -34274,7 +32285,7 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34288,14 +32299,14 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest N403
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34308,6 +32319,20 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest N429
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -34316,21 +32341,28 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest N502
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON502 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
-		var dest N504
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34339,6 +32371,46 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 	}
 
 	switch {
+	case rsp.StatusCode == 400:
+		var headers PostSecretsResponse400Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 403:
+		var headers PostSecretsResponse403Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 409:
+		var headers PostSecretsResponse409Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers PostSecretsResponse422Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers422 = &headers
 	case rsp.StatusCode == 429:
 		var headers PostSecretsResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
@@ -34349,6 +32421,46 @@ func ParsePostSecretsResponse(rsp *http.Response) (*PostSecretsResponse, error) 
 			headers.RetryAfter = &value
 		}
 		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers PostSecretsResponse500Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 502:
+		var headers PostSecretsResponse502Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers502 = &headers
+	case rsp.StatusCode == 503:
+		var headers PostSecretsResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
+	case rsp.StatusCode == 504:
+		var headers PostSecretsResponse504Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers504 = &headers
 	}
 
 	return response, nil
@@ -36180,121 +34292,6 @@ func ParseGetTemplatesTemplateIDTagsTagAssignmentsResponse(rsp *http.Response) (
 	return response, nil
 }
 
-// ParseAdminListClustersResponse parses an HTTP response from a AdminListClustersWithResponse call
-func ParseAdminListClustersResponse(rsp *http.Response) (*AdminListClustersResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminListClustersResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClusterListResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdminCreateClusterResponse parses an HTTP response from a AdminCreateClusterWithResponse call
-func ParseAdminCreateClusterResponse(rsp *http.Response) (*AdminCreateClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminCreateClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ClusterDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseAdminListClusterTeamCountsResponse parses an HTTP response from a AdminListClusterTeamCountsWithResponse call
 func ParseAdminListClusterTeamCountsResponse(rsp *http.Response) (*AdminListClusterTeamCountsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36335,253 +34332,6 @@ func ParseAdminListClusterTeamCountsResponse(rsp *http.Response) (*AdminListClus
 	return response, nil
 }
 
-// ParseAdminDeleteClusterResponse parses an HTTP response from a AdminDeleteClusterWithResponse call
-func ParseAdminDeleteClusterResponse(rsp *http.Response) (*AdminDeleteClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminDeleteClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdminGetClusterResponse parses an HTTP response from a AdminGetClusterWithResponse call
-func ParseAdminGetClusterResponse(rsp *http.Response) (*AdminGetClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminGetClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClusterDetailWithTeams
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdminUpdateClusterResponse parses an HTTP response from a AdminUpdateClusterWithResponse call
-func ParseAdminUpdateClusterResponse(rsp *http.Response) (*AdminUpdateClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminUpdateClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClusterDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdminGetClusterMetadataResponse parses an HTTP response from a AdminGetClusterMetadataWithResponse call
-func ParseAdminGetClusterMetadataResponse(rsp *http.Response) (*AdminGetClusterMetadataResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminGetClusterMetadataResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClusterDetail
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseAdminListClusterTeamsResponse parses an HTTP response from a AdminListClusterTeamsWithResponse call
 func ParseAdminListClusterTeamsResponse(rsp *http.Response) (*AdminListClusterTeamsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -36602,63 +34352,6 @@ func ParseAdminListClusterTeamsResponse(rsp *http.Response) (*AdminListClusterTe
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdminRotateClusterTokenResponse parses an HTTP response from a AdminRotateClusterTokenWithResponse call
-func ParseAdminRotateClusterTokenResponse(rsp *http.Response) (*AdminRotateClusterTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdminRotateClusterTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest N400
@@ -38021,63 +35714,6 @@ func ParseManagementDeleteClusterResponse(rsp *http.Response) (*ManagementDelete
 	return response, nil
 }
 
-// ParseManagementRegisterClusterResponse parses an HTTP response from a ManagementRegisterClusterWithResponse call
-func ParseManagementRegisterClusterResponse(rsp *http.Response) (*ManagementRegisterClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementRegisterClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseManagementRequestClusterDeletionResponse parses an HTTP response from a ManagementRequestClusterDeletionWithResponse call
 func ParseManagementRequestClusterDeletionResponse(rsp *http.Response) (*ManagementRequestClusterDeletionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -38239,15 +35875,15 @@ func ParseManagementListClusterProjectsResponse(rsp *http.Response) (*Management
 	return response, nil
 }
 
-// ParseManagementUpdateClusterTelemetryResponse parses an HTTP response from a ManagementUpdateClusterTelemetryWithResponse call
-func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*ManagementUpdateClusterTelemetryResponse, error) {
+// ParseManagementRemoveClusterRegistrationResponse parses an HTTP response from a ManagementRemoveClusterRegistrationWithResponse call
+func ParseManagementRemoveClusterRegistrationResponse(rsp *http.Response) (*ManagementRemoveClusterRegistrationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ManagementUpdateClusterTelemetryResponse{
+	response := &ManagementRemoveClusterRegistrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -38255,27 +35891,6 @@ func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*Managem
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest N409
@@ -38290,13 +35905,6 @@ func ParseManagementUpdateClusterTelemetryResponse(rsp *http.Response) (*Managem
 			return nil, err
 		}
 		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 
@@ -38417,12 +36025,25 @@ func ParseManagementUpsertProjectResponse(rsp *http.Response) (*ManagementUpsert
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers ManagementUpsertProjectResponse503Headers
+		if values := rsp.Header.Values("Should-Retry"); len(values) > 0 {
+			var value bool
+			if err := runtime.BindStyledParameterWithOptions("simple", "Should-Retry", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ShouldRetry = &value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -38522,120 +36143,6 @@ func ParseManagementApplyProjectBlockResponse(rsp *http.Response) (*ManagementAp
 			return nil, err
 		}
 		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseManagementDetachProjectClusterResponse parses an HTTP response from a ManagementDetachProjectClusterWithResponse call
-func ParseManagementDetachProjectClusterResponse(rsp *http.Response) (*ManagementDetachProjectClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementDetachProjectClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseManagementAssignProjectClusterResponse parses an HTTP response from a ManagementAssignProjectClusterWithResponse call
-func ParseManagementAssignProjectClusterResponse(rsp *http.Response) (*ManagementAssignProjectClusterResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ManagementAssignProjectClusterResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest N400
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest N401
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest N404
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest N409
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest N500
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest N503
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 

@@ -38,6 +38,8 @@ type recordedAssignments struct {
 	lookedUp chan struct{}
 	// onAssign, when set, runs as an AssignProject arrives.
 	onAssign func()
+	// lookupErr fails every LookupProjectAssignments.
+	lookupErr error
 }
 
 func (r *recordedAssignments) of(projectID uuid.UUID) *uuid.UUID {
@@ -66,6 +68,9 @@ func (r *recordedAssignments) client(t *testing.T) *clienttests.MockClusterServi
 			}
 			r.mu.Lock()
 			defer r.mu.Unlock()
+			if r.lookupErr != nil {
+				return nil, r.lookupErr
+			}
 			var assignments []*clustersgrpc.ProjectAssignment
 			for _, projectID := range req.GetProjectIds() {
 				if clusterID, ok := r.byProject[uuid.MustParse(projectID)]; ok {
@@ -187,17 +192,50 @@ func TestSyncTeamClusterAssignmentWorker(t *testing.T) {
 	}
 }
 
-func TestSyncTeamClusterAssignmentRetriesWhenTheClusterServiceRefuses(t *testing.T) {
+// clusterRefusal is the FAILED_PRECONDITION the cluster service answers with.
+func clusterRefusal(t *testing.T, reason clustersgrpc.ClusterErrorReason) error {
+	t.Helper()
+
+	st, err := status.New(codes.FailedPrecondition, reason.String()).WithDetails(clustersgrpc.ClusterErrorDetail_builder{Reason: reason}.Build())
+	require.NoError(t, err)
+
+	return st.Err()
+}
+
+func TestSyncTeamClusterAssignmentWhenTheClusterServiceDoesNotRecordTheTeam(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
 	cluster := uuid.New()
-	refused := status.Error(codes.FailedPrecondition, "the cluster is being deleted")
-	records := &recordedAssignments{assignErr: refused}
 
-	result, err := workTeamClusterSync(t, db, records.client(t), teamOnCluster(t, db, &cluster))
-	require.ErrorIs(t, err, refused)
-	require.Equal(t, river.EventKindJobFailed, result.EventKind)
+	// A day of retries would not change either answer, and the discarded job
+	// would be kept for good.
+	for name, refusal := range map[string]error{
+		"a released project cannot be mirrored again":                       clusterRefusal(t, clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_PROJECT_PLACEMENT_CONFLICT),
+		"a cluster being deleted takes no new team and the sync ends":       clusterRefusal(t, clustersgrpc.ClusterErrorReason_CLUSTER_ERROR_REASON_DELETION_REQUESTED),
+		"a cluster the cluster service does not know ends the sync as well": status.Error(codes.NotFound, "cluster not found"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			teamID := teamOnCluster(t, db, &cluster)
+			records := &recordedAssignments{assignErr: refusal}
+
+			result, err := workTeamClusterSync(t, db, records.client(t), teamID)
+			require.NoError(t, err)
+			require.Equal(t, river.EventKindJobCompleted, result.EventKind)
+			assert.Nil(t, records.of(teamID))
+		})
+	}
+
+	t.Run("any other failure retries", func(t *testing.T) {
+		t.Parallel()
+		unavailable := status.Error(codes.Unavailable, "cluster service unavailable")
+		records := &recordedAssignments{assignErr: unavailable}
+
+		result, err := workTeamClusterSync(t, db, records.client(t), teamOnCluster(t, db, &cluster))
+		require.ErrorIs(t, err, unavailable)
+		require.Equal(t, river.EventKindJobFailed, result.EventKind)
+	})
 }
 
 // A session lost mid-call releases the team's lock early, so a later job may

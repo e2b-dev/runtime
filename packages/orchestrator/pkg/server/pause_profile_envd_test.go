@@ -23,7 +23,7 @@ import (
 func TestPause_UnquiescedGuestProceedsPastAMissWhenAllowed(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbePauseServer(t, new(envdProbeMs))
+	s, reader := envdProbePauseServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-unquiesced-envd-proceed", 94)
 	sbx.Config.FirecrackerConfig.Guest = unquiescedGuest{guest.Default()}
 	registerEnvd(t, sbx, &envdAnswer{unreachable: true})
@@ -48,7 +48,7 @@ func TestPause_UnquiescedGuestProceedsPastAMissWhenAllowed(t *testing.T) {
 func TestPause_UnquiescedGuestFilesystemOnlyIsRefusedBeforeTheProbe(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbePauseServer(t, new(envdProbeMs))
+	s, reader := envdProbePauseServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-unquiesced-envd-fs", 95)
 	sbx.Config.FirecrackerConfig.Guest = unquiescedGuest{guest.Default()}
 	answer := &envdAnswer{unreachable: true, begun: make(chan struct{})}
@@ -83,7 +83,7 @@ func TestPause_UnquiescedGuestFilesystemOnlyIsRefusedBeforeTheProbe(t *testing.T
 func TestPause_PoweredOffGuestIsCapturedDiskOnlyWithoutTheProbe(t *testing.T) {
 	t.Parallel()
 
-	s, reader := envdProbePauseServer(t, new(envdProbeMs))
+	s, reader := envdProbePauseServer(t, new(envdFailingProbeMs))
 	sbx := envdProbeSandbox(t, "sbx-poweroff-envd-allowed", 96)
 	answer := &envdAnswer{unreachable: true, begun: make(chan struct{})}
 	registerEnvd(t, sbx, answer)

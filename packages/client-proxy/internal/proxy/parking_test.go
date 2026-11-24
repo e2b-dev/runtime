@@ -293,6 +293,23 @@ func TestResumeFlights_PermanentPlacementRefusalIsNotRetried(t *testing.T) {
 		require.Zero(t, p.metrics.parkingWaitSamples(t))
 	})
 
+	// A node refusing the memory size the API sent from its own record refuses it
+	// on every retry: the page is the API's 500 with the code, not a missing sandbox.
+	t.Run(proxygrpc.SandboxMemoryRecordMismatch+" refused", func(t *testing.T) {
+		t.Parallel()
+
+		refusal := placementStatusWithHTTPStatus(t, codes.Internal, proxygrpc.SandboxMemoryRecordMismatch, http.StatusInternalServerError)
+		resumer := &sequenceResumer{errs: []error{refusal, refusal}, route: testRoute}
+		p := newParkedProxy(t, newFFWithParking(t, true, 15000, 512), resumer)
+
+		rr := p.get(t)
+		require.Equal(t, http.StatusInternalServerError, rr.Code)
+		require.Empty(t, rr.Header().Get("Retry-After"))
+		require.Contains(t, rr.Body.String(), `"error_code":"`+proxygrpc.SandboxMemoryRecordMismatch+`"`)
+		require.EqualValues(t, 1, resumer.calls.Load())
+		require.Zero(t, p.metrics.parkingWaitSamples(t))
+	})
+
 	for _, code := range []string{proxygrpc.PlacementCapacityUnavailable, proxygrpc.PlacementNoCompatibleNode} {
 		t.Run(code+" retried", func(t *testing.T) {
 			t.Parallel()

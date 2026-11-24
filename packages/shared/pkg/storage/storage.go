@@ -111,6 +111,8 @@ func WithCompressConfig(cfg CompressConfig) PutOption { return storageopts.WithC
 
 func WithFrameSink(s FrameSink) PutOption { return storageopts.WithFrameSink(s) }
 
+func WithOverwrite() PutOption { return storageopts.WithOverwrite() }
+
 func WithChecksumSHA256() PutOption {
 	return func(o *PutOptions) { o.Checksum = true }
 }

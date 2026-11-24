@@ -2,6 +2,7 @@ package batcher
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -9,13 +10,26 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
+
+var testMetricReader = sdkmetric.NewManualReader()
+
+// The instruments live on the global meter provider, whose delegate is wired
+// once per process, so the provider is installed before any test runs.
+func TestMain(m *testing.M) {
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(testMetricReader)))
+	m.Run()
+}
 
 func TestBatcherStartStop(t *testing.T) {
 	t.Parallel()
@@ -283,6 +297,58 @@ func TestBatcherRefreshesRunningLimits(t *testing.T) {
 		require.Len(t, batches, 1)
 		require.Equal(t, 1, <-batches, "overflowing updates retain the last valid delay")
 	})
+}
+
+// A failed flush loses its whole batch, so the failed-items counter grows by
+// the batch length.
+func TestBatcherCountsFailedFlushes(t *testing.T) {
+	t.Parallel()
+
+	// The reader is cumulative and lives for the process, so a repeated run
+	// (-count) needs a name of its own.
+	name := t.Name() + "-" + uuid.NewString()
+	calls := 0
+	b, err := NewBatcher(func(context.Context, []int) error {
+		calls++
+		if calls == 1 {
+			return errors.New("insert rejected")
+		}
+
+		return nil
+	}, BatcherOptions{Name: name, MaxDelay: time.Hour, MaxBatchSize: 3})
+	require.NoError(t, err)
+	require.NoError(t, b.Start(t.Context()))
+	for i := range 5 {
+		require.NoError(t, b.Push(i))
+	}
+	require.NoError(t, b.Stop())
+
+	failedItems, ok := failedItemsOf(t, name)
+	require.True(t, ok, "no failed-items series for the batcher")
+	assert.Equal(t, int64(3), failedItems, "only the failed batch's items are lost")
+}
+
+func failedItemsOf(t *testing.T, batcher string) (int64, bool) {
+	t.Helper()
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, testMetricReader.Collect(t.Context(), &collected))
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != "batcher.items.failed" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "batcher.items.failed is not an int64 sum")
+			for _, point := range sum.DataPoints {
+				if v, found := point.Attributes.Value("batcher"); found && v.AsString() == batcher {
+					return point.Value, true
+				}
+			}
+		}
+	}
+
+	return 0, false
 }
 
 func TestBatcherDelayRefreshKeepsBatchAge(t *testing.T) {

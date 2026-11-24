@@ -40,6 +40,12 @@ type RedisConfig struct {
 	// reads and writes too; otherwise only the read and write timeouts do, and a
 	// stalled reply outlives the deadline.
 	ContextTimeoutEnabled bool
+	// LazyConnect returns the client without waiting for Redis to answer: the
+	// first command connects. For a caller that can serve without Redis and has
+	// to start while it is down. The settings are validated either way; an
+	// unreachable address, rejected credentials or an untrusted certificate
+	// then fail each command instead of the start.
+	LazyConnect bool
 }
 
 const (
@@ -245,7 +251,7 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 		}
 		clusterOpts.TLSConfig = tlsConfig
 
-		redisClient = redis.NewClusterClient(clusterOpts)
+		redisClient = newRedisClusterClient(clusterOpts)
 	case config.RedisURL != "":
 		opts, err := newRedisOptions(ctx, config, poolSize, minIdleConns)
 		if err != nil {
@@ -273,6 +279,10 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 		closeErr := redisClient.Close()
 
 		return nil, errors.Join(fmt.Errorf("failed to enable redis metrics: %w", err), closeErr)
+	}
+
+	if config.LazyConnect {
+		return redisClient, nil
 	}
 
 	if err := retry.Do(ctx, startupPingPolicy, pingRetryable, func(ctx context.Context) error {

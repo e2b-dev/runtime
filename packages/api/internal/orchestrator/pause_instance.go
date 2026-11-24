@@ -246,7 +246,21 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, curr
 		// node, so a pause/resume across CPU generations stays compatible.
 		SourceBuildID:       sbx.BuildID,
 		BuildFilesystemOnly: filesystemOnly,
+		StartMemoryMb:       snapshotStartMemoryMB(sbx),
 	}
+}
+
+// snapshotStartMemoryMB is the size a snapshot build records for its starts: the
+// memory the sandbox ran with, when its record knows it. It lives on the new
+// build, so it becomes the sandbox's size only when that build is ready; a pause
+// that fails leaves the size of the last ready build in force.
+func snapshotStartMemoryMB(sbx sandbox.Sandbox) *int64 {
+	if sbx.MemoryMB <= 0 {
+		return nil
+	}
+	memoryMB := sbx.MemoryMB
+
+	return &memoryMB
 }
 
 // throttledUpsertSnapshot runs UpsertSnapshot gated by the snapshot upsert semaphore.
@@ -256,5 +270,13 @@ func (o *Orchestrator) throttledUpsertSnapshot(ctx context.Context, params queri
 	}
 	defer o.snapshotUpsertSem.Release(1)
 
-	return o.sqlcDB.UpsertSnapshot(ctx, params)
+	row, err := o.sqlcDB.UpsertSnapshot(ctx, params)
+	if err == nil && row.MaxRamMb != nil && params.StartMemoryMb == nil {
+		reportMemorySizeUnknown(ctx, "pause", params.RamMb, *row.MaxRamMb,
+			logger.WithSandboxID(params.SandboxID),
+			logger.WithBuildID(row.BuildID.String()),
+		)
+	}
+
+	return row, err
 }

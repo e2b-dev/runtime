@@ -263,8 +263,8 @@ func (_c *MockTemplate_Metadata_Call) RunAndReturn(run func() (metadata.Template
 }
 
 // Rootfs provides a mock function for the type MockTemplate
-func (_mock *MockTemplate) Rootfs() (block.ReadonlyDevice, error) {
-	ret := _mock.Called()
+func (_mock *MockTemplate) Rootfs(ctx context.Context) (block.ReadonlyDevice, error) {
+	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Rootfs")
@@ -272,18 +272,18 @@ func (_mock *MockTemplate) Rootfs() (block.ReadonlyDevice, error) {
 
 	var r0 block.ReadonlyDevice
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func() (block.ReadonlyDevice, error)); ok {
-		return returnFunc()
+	if returnFunc, ok := ret.Get(0).(func(context.Context) (block.ReadonlyDevice, error)); ok {
+		return returnFunc(ctx)
 	}
-	if returnFunc, ok := ret.Get(0).(func() block.ReadonlyDevice); ok {
-		r0 = returnFunc()
+	if returnFunc, ok := ret.Get(0).(func(context.Context) block.ReadonlyDevice); ok {
+		r0 = returnFunc(ctx)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(block.ReadonlyDevice)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func() error); ok {
-		r1 = returnFunc()
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -296,13 +296,20 @@ type MockTemplate_Rootfs_Call struct {
 }
 
 // Rootfs is a helper method to define mock.On call
-func (_e *MockTemplate_Expecter) Rootfs() *MockTemplate_Rootfs_Call {
-	return &MockTemplate_Rootfs_Call{Call: _e.mock.On("Rootfs")}
+//   - ctx context.Context
+func (_e *MockTemplate_Expecter) Rootfs(ctx any) *MockTemplate_Rootfs_Call {
+	return &MockTemplate_Rootfs_Call{Call: _e.mock.On("Rootfs", ctx)}
 }
 
-func (_c *MockTemplate_Rootfs_Call) Run(run func()) *MockTemplate_Rootfs_Call {
+func (_c *MockTemplate_Rootfs_Call) Run(run func(ctx context.Context)) *MockTemplate_Rootfs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run()
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -312,7 +319,7 @@ func (_c *MockTemplate_Rootfs_Call) Return(readonlyDevice block.ReadonlyDevice, 
 	return _c
 }
 
-func (_c *MockTemplate_Rootfs_Call) RunAndReturn(run func() (block.ReadonlyDevice, error)) *MockTemplate_Rootfs_Call {
+func (_c *MockTemplate_Rootfs_Call) RunAndReturn(run func(ctx context.Context) (block.ReadonlyDevice, error)) *MockTemplate_Rootfs_Call {
 	_c.Call.Return(run)
 	return _c
 }

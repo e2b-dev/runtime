@@ -25,6 +25,7 @@ type grpcPausedSandboxResumer struct {
 }
 
 type GRPCOAuthConfig struct {
+	TokenFile    string
 	ClientID     string
 	ClientSecret string
 	TokenURL     string
@@ -38,6 +39,9 @@ func NewGRPCPausedSandboxResumer(ctx context.Context, address string, oauthConfi
 		return nil, errors.New("api grpc address is required")
 	}
 
+	if oauthConfig.TokenFile != "" && (oauthConfig.Enabled() || !useTLS) {
+		return nil, errors.New("projected resume exchange requires edge TLS and a single authentication mode")
+	}
 	auth, err := newGrpcResumeAuth(ctx, oauthConfig)
 	if err != nil {
 		return nil, err
@@ -50,6 +54,10 @@ func NewGRPCPausedSandboxResumer(ctx context.Context, address string, oauthConfi
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create grpc client: %w", err)
+	}
+
+	if path := strings.TrimSpace(oauthConfig.TokenFile); path != "" {
+		auth = newProjectedResumeAuth(ctx, path, proxygrpc.NewResumeTokenServiceClient(conn))
 	}
 
 	return &grpcPausedSandboxResumer{

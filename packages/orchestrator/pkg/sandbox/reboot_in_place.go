@@ -428,8 +428,9 @@ func (s *Sandbox) takeForBoot(ctx context.Context) (*handedOver, error) {
 	return s.takeForReboot(ctx)
 }
 
-// takeForReboot takes the network slot and the rootfs overlay from the
-// cleanup chain. Taking one without the other returns it to its owner.
+// takeForReboot takes the network slot, the rootfs overlay and the data
+// plane serving it from the cleanup chain. Taking one without the others
+// returns it to its owner.
 func (s *Sandbox) takeForReboot(ctx context.Context) (*handedOver, error) {
 	releaseSlot, ok := s.slotRelease.take()
 	if !ok {
@@ -445,6 +446,18 @@ func (s *Sandbox) takeForReboot(ctx context.Context) (*handedOver, error) {
 		return nil, errors.Join(errors.New("the rootfs overlay was already closed"), releaseSlot(cleanupCtx))
 	}
 
+	// The plane closes after the overlay it serves, so it is still held
+	// here. A lifecycle without one hands over nothing for it; one whose
+	// plane was already closed cannot reboot on that disk, so the slot and
+	// the overlay go back like the takes above.
+	releasePlane, ok := s.planeRelease.take()
+	if !ok {
+		if s.planeRelease != nil {
+			return nil, errors.Join(errors.New("the data plane was already closed"), releaseSlot(cleanupCtx), releaseRootfs(cleanupCtx))
+		}
+		releasePlane = func(context.Context) error { return nil }
+	}
+
 	// The slot moves on, this lifecycle's network entry and subscribers do
 	// not: release them now, as the pool's return would have, so the proxy and
 	// the NFS server drop this lifecycle before the next one takes the address.
@@ -455,7 +468,7 @@ func (s *Sandbox) takeForReboot(ctx context.Context) (*handedOver, error) {
 		release = s.sandboxes.NetworkRelease(s.Runtime.SandboxID, s.LifecycleID)
 	}
 	if err := release(ctx, s.Slot.HostIPString()); err != nil {
-		return nil, errors.Join(fmt.Errorf("release the network entry of the lifecycle: %w", err), releaseSlot(cleanupCtx), releaseRootfs(cleanupCtx))
+		return nil, errors.Join(fmt.Errorf("release the network entry of the lifecycle: %w", err), releaseSlot(cleanupCtx), releaseRootfs(cleanupCtx), releasePlane(cleanupCtx))
 	}
 
 	h := &handedOver{
@@ -463,6 +476,7 @@ func (s *Sandbox) takeForReboot(ctx context.Context) (*handedOver, error) {
 		rootfs:             s.rootfs,
 		releaseSlot:        releaseSlot,
 		releaseRootfs:      releaseRootfs,
+		releasePlane:       releasePlane,
 		executionStartedAt: s.GetExecutionStartedAt(),
 	}
 	if v := s.offlineEnvdVersion.Load(); v != nil {

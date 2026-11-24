@@ -28,6 +28,12 @@ const (
 	templateCacheRefreshInterval = 1 * time.Minute
 
 	templateCacheKeyPrefix = "template:info"
+
+	// templateInfoFormat marks an entry written with the build's max_ram_mb and
+	// start_memory_mb. The key stays shared with older replicas so their
+	// invalidations, privacy changes included, still reach it; an entry
+	// without the mark is refetched.
+	templateInfoFormat = 1
 )
 
 var tracer = otel.Tracer("github.com/e2b-dev/infra/packages/api/internal/cache/templates")
@@ -46,6 +52,7 @@ type TemplateInfo struct {
 	ClusterID uuid.UUID         `json:"cluster_id"`
 	Build     *queries.EnvBuild `json:"build"`
 	Tag       string            `json:"tag"`
+	Format    int               `json:"format,omitempty"`
 }
 
 // TemplateCache caches template+build by templateID:tag.
@@ -147,7 +154,12 @@ func (c *TemplateCache) getByID(ctx context.Context, templateID string, tag *str
 	}
 	cacheKey := buildCacheKey(templateID, tagValue)
 
-	info, err := c.cache.GetOrSet(ctx, cacheKey, c.fetchTemplateWithBuild(templateID, tag))
+	fetch := c.fetchTemplateWithBuild(templateID, tag)
+	// An entry below the current format was written by an older replica,
+	// without the fields this one reads, and is refilled under the cache lock.
+	info, err := c.cache.GetOrSetFresh(ctx, cacheKey, fetch, func(info *TemplateInfo) bool {
+		return info.Format < templateInfoFormat
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +204,7 @@ func (c *TemplateCache) fetchTemplateWithBuild(templateID string, tag *string) f
 			ClusterID: clusterID,
 			Build:     build,
 			Tag:       tagValue,
+			Format:    templateInfoFormat,
 		}, nil
 	}
 }

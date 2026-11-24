@@ -187,7 +187,7 @@ func TestHeaderSource_Stream_Rootfs(t *testing.T) {
 	dev.EXPECT().Header().Return(h)
 
 	tmplMock := templatemocks.NewMockTemplate(t)
-	tmplMock.EXPECT().Rootfs().Return(dev, nil)
+	tmplMock.EXPECT().Rootfs(mock.Anything).Return(dev, nil)
 
 	cache := peerservermocks.NewMockCache(t)
 	cache.EXPECT().LookupPinned(mock.Anything, "build-1").Return(tmplMock, func() {}, true)

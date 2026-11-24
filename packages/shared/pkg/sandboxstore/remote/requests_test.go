@@ -14,8 +14,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -27,14 +28,16 @@ func TestRequestsCarryTheCallersValues(t *testing.T) {
 	end := time.Date(2026, 11, 13, 10, 0, 0, 987654321, time.UTC)
 	transition := sandboxtypes.StateTransition{Sandbox: sbx, OriginalEndTime: &end, ID: "transition-1", InFlightID: "transition-0"}
 	requireNoZeroField(t, transition)
-	wireTransition := scheduling.StateTransition_builder{Record: encode(t, sbx), OriginalEndTime: timestamppb.New(end), Id: "transition-1", InFlightId: "transition-0"}.Build()
+	wireTransition := statepb.StateTransition_builder{Record: encode(t, sbx), OriginalEndTime: timestamppb.New(end), Id: "transition-1", InFlightId: "transition-0"}.Build()
 	hold := sandboxtypes.Hold{TeamID: teamID, SandboxID: sandboxID, ExecutionID: sbx.ExecutionID, SourceNodeID: "node-a", ID: "hold-1"}
 	requireNoZeroField(t, hold)
-	wireHold := scheduling.Hold_builder{TeamId: teamID.String(), SandboxId: sandboxID, ExecutionId: sbx.ExecutionID, SourceNodeId: "node-a", Id: "hold-1"}.Build()
+	wireHold := statepb.Hold_builder{TeamId: teamID.String(), SandboxId: sandboxID, ExecutionId: sbx.ExecutionID, SourceNodeId: "node-a", Id: "hold-1"}.Build()
 	token := sandboxtypes.UpdateToken("\x00opaque\xff token")
 	removeOpts := sandboxtypes.RemoveOpts{
 		Action: sandboxtypes.StateActionSnapshot, Eviction: true, Reason: sandboxtypes.KillReasonTimeout, FilesystemOnly: true,
 		RequireEnvdHealthy: true, ExpectExecutionID: sbx.ExecutionID, BeforeEndTime: true,
+		// The API's store reads it; the request does not carry it.
+		WaitForLifecycleHold: true,
 	}
 	requireNoZeroField(t, removeOpts)
 	restoreOpts := sandboxtypes.RestoreOpts{RetryAfter: 90*time.Second + 123*time.Nanosecond, HoldOnly: true, EnvdRefusal: true}
@@ -51,89 +54,89 @@ func TestRequestsCarryTheCallersValues(t *testing.T) {
 	}{
 		"Add": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) { _ = s.Add(ctx, sbx) },
-			want: scheduling.AddRequest_builder{Record: encode(t, sbx)}.Build(),
+			want: statepb.AddRequest_builder{Record: encode(t, sbx)}.Build(),
 		},
 		"Get": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.Get(ctx, teamID, sandboxID)
 			},
-			want: scheduling.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
+			want: statepb.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
 		},
 		"Remove": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_ = s.Remove(ctx, teamID, sandboxID, sbx.ExecutionID)
 			},
-			want: scheduling.RemoveRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, ExpectedExecutionId: sbx.ExecutionID}.Build(),
+			want: statepb.RemoveRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, ExpectedExecutionId: sbx.ExecutionID}.Build(),
 		},
 		"TeamItems": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.TeamItems(ctx, teamID, []sandboxtypes.State{sandboxtypes.StateSnapshotting, sandboxtypes.StateRunning, sandboxtypes.StatePausing, sandboxtypes.StateKilling})
 			},
-			want: scheduling.TeamItemsRequest_builder{TeamId: teamID.String(), States: []scheduling.SandboxState{
-				scheduling.SandboxState_SANDBOX_STATE_SNAPSHOTTING, scheduling.SandboxState_SANDBOX_STATE_RUNNING,
-				scheduling.SandboxState_SANDBOX_STATE_PAUSING, scheduling.SandboxState_SANDBOX_STATE_KILLING,
+			want: statepb.TeamItemsRequest_builder{TeamId: teamID.String(), States: []statepb.SandboxState{
+				statepb.SandboxState_SANDBOX_STATE_SNAPSHOTTING, statepb.SandboxState_SANDBOX_STATE_RUNNING,
+				statepb.SandboxState_SANDBOX_STATE_PAUSING, statepb.SandboxState_SANDBOX_STATE_KILLING,
 			}}.Build(),
 		},
 		"ExpiredItems": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) { _, _ = s.ExpiredItems(ctx) },
-			want: scheduling.ExpiredItemsRequest_builder{}.Build(),
+			want: statepb.ExpiredItemsRequest_builder{}.Build(),
 		},
 		"TeamsWithSandboxCount": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.TeamsWithSandboxCount(ctx)
 			},
-			want: scheduling.TeamsWithSandboxCountRequest_builder{}.Build(),
+			want: statepb.TeamsWithSandboxCountRequest_builder{}.Build(),
 		},
 		"BeginUpdate": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _, _ = s.BeginUpdate(ctx, teamID, sandboxID)
 			},
-			want: scheduling.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
+			want: statepb.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
 		},
 		"CommitUpdate": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.CommitUpdate(ctx, teamID, sandboxID, token, sbx)
 			},
-			want: scheduling.CommitUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token), Record: encode(t, sbx)}.Build(),
+			want: statepb.CommitUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token), Record: encode(t, sbx)}.Build(),
 		},
 		"AbortUpdate": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_ = s.AbortUpdate(ctx, teamID, sandboxID, token)
 			},
-			want: scheduling.AbortUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token)}.Build(),
+			want: statepb.AbortUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token)}.Build(),
 		},
 		"HoldExecution": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_ = s.HoldExecution(ctx, hold, until)
 			},
-			want: scheduling.HoldExecutionRequest_builder{Hold: wireHold, Until: timestamppb.New(until)}.Build(),
+			want: statepb.HoldExecutionRequest_builder{Hold: wireHold, Until: timestamppb.New(until)}.Build(),
 		},
 		"MoveHeldExecution": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.MoveHeldExecution(ctx, hold, "node-b")
 			},
-			want: scheduling.MoveHeldExecutionRequest_builder{Hold: wireHold, NodeId: "node-b"}.Build(),
+			want: statepb.MoveHeldExecutionRequest_builder{Hold: wireHold, NodeId: "node-b"}.Build(),
 		},
 		"ReleaseHeldExecution": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_ = s.ReleaseHeldExecution(ctx, hold)
 			},
-			want: scheduling.ReleaseHeldExecutionRequest_builder{Hold: wireHold}.Build(),
+			want: statepb.ReleaseHeldExecutionRequest_builder{Hold: wireHold}.Build(),
 		},
 		"RemoveHeldExecution": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.RemoveHeldExecution(ctx, hold)
 			},
-			want: scheduling.RemoveHeldExecutionRequest_builder{Hold: wireHold}.Build(),
+			want: statepb.RemoveHeldExecutionRequest_builder{Hold: wireHold}.Build(),
 		},
 		"BeginRemoving": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _, _ = s.BeginRemoving(ctx, teamID, sandboxID, removeOpts)
 			},
-			want: scheduling.BeginRemovingRequest_builder{
+			want: statepb.BeginRemovingRequest_builder{
 				TeamId: teamID.String(), SandboxId: sandboxID,
-				Options: scheduling.RemoveOptions_builder{
-					Action: scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT, Eviction: true, Reason: "timeout", FilesystemOnly: true,
+				Options: statepb.RemoveOptions_builder{
+					Action: statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT, Eviction: true, Reason: "timeout", FilesystemOnly: true,
 					RequireEnvdHealthy: true, ExpectExecutionId: sbx.ExecutionID, BeforeEndTime: true,
 				}.Build(),
 			}.Build(),
@@ -142,27 +145,27 @@ func TestRequestsCarryTheCallersValues(t *testing.T) {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_ = s.FinishTransition(ctx, teamID, sandboxID, "transition-1", sandboxtypes.StateActionKill, outcome)
 			},
-			want: scheduling.FinishTransitionRequest_builder{
-				TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_KILL,
-				Result: scheduling.TransitionResult_builder{Failed: true, Error: "boom", SkipRestore: true, Restored: true, RefusalClass: "unsupported"}.Build(),
+			want: statepb.FinishTransitionRequest_builder{
+				TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_KILL,
+				Result: statepb.TransitionResult_builder{Failed: true, Error: "boom", SkipRestore: true, Restored: true, RefusalClass: "unsupported"}.Build(),
 			}.Build(),
 		},
 		"RestoreRunning": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.RestoreRunning(ctx, transition, restoreOpts)
 			},
-			want: scheduling.RestoreRunningRequest_builder{
+			want: statepb.RestoreRunningRequest_builder{
 				Transition: wireTransition,
-				Options:    scheduling.RestoreOptions_builder{RetryAfter: durationpb.New(restoreOpts.RetryAfter), HoldOnly: true, EnvdRefusal: true}.Build(),
+				Options:    statepb.RestoreOptions_builder{RetryAfter: durationpb.New(restoreOpts.RetryAfter), HoldOnly: true, EnvdRefusal: true}.Build(),
 			}.Build(),
 		},
 		"RestoreCheckpointed": {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.RestoreCheckpointed(ctx, transition, placement)
 			},
-			want: scheduling.RestoreCheckpointedRequest_builder{
+			want: statepb.RestoreCheckpointedRequest_builder{
 				Transition: wireTransition,
-				Placement: scheduling.NetworkPlacement_builder{
+				Placement: statepb.NetworkPlacement_builder{
 					ExecutionId: sbx.ExecutionID, NetworkMode: "mode", RouterId: "router", IngressAddress: "10.0.0.2", IngressPort: 5010,
 				}.Build(),
 			}.Build(),
@@ -171,51 +174,51 @@ func TestRequestsCarryTheCallersValues(t *testing.T) {
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.RestoreCheckpointed(ctx, transition, nil)
 			},
-			want: scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition}.Build(),
+			want: statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition}.Build(),
 		},
 		"WaitForTransition": {
-			resp: scheduling.WaitForTransitionResponse_builder{Outcome: scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED}.Build(),
+			resp: statepb.WaitForTransitionResponse_builder{Outcome: statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED}.Build(),
 			call: func(ctx context.Context, s *remote.Storage, _ *remote.ReservationStorage) {
 				_, _ = s.WaitForTransition(ctx, teamID, sandboxID, "transition-1")
 			},
-			want: scheduling.WaitForTransitionRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: "transition-1"}.Build(),
+			want: statepb.WaitForTransitionRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: "transition-1"}.Build(),
 		},
 		"Reserve": {
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_, _ = r.Reserve(ctx, teamID, sandboxID, -1)
 			},
-			want: scheduling.ReserveRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Limit: -1}.Build(),
+			want: reservationpb.ReserveRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Limit: -1}.Build(),
 		},
 		"FinishStart": {
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_ = r.FinishStart(ctx, teamID, sandboxID, []byte("\x00result\xff"))
 			},
-			want: scheduling.FinishStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Result: []byte("\x00result\xff")}.Build(),
+			want: reservationpb.FinishStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, Result: []byte("\x00result\xff")}.Build(),
 		},
 		"WaitForStart": {
-			resp: scheduling.WaitForStartResponse_builder{Outcome: scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED}.Build(),
+			resp: reservationpb.WaitForStartResponse_builder{Outcome: reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED}.Build(),
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_, _ = r.WaitForStart(ctx, teamID, sandboxID)
 			},
-			want: scheduling.WaitForStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
+			want: reservationpb.WaitForStartRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
 		},
 		"Release": {
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_ = r.Release(ctx, teamID, sandboxID)
 			},
-			want: scheduling.ReleaseRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
+			want: reservationpb.ReleaseRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
 		},
 		"ClaimKill": {
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_, _, _ = r.ClaimKill(ctx, teamID, sandboxID)
 			},
-			want: scheduling.ClaimKillRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
+			want: reservationpb.ClaimKillRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build(),
 		},
 		"ReleaseKillClaim": {
 			call: func(ctx context.Context, _ *remote.Storage, r *remote.ReservationStorage) {
 				_ = r.ReleaseKillClaim(ctx, teamID, sandboxID, "claim-1")
 			},
-			want: scheduling.ReleaseKillClaimRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, ClaimId: "claim-1"}.Build(),
+			want: reservationpb.ReleaseKillClaimRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID, ClaimId: "claim-1"}.Build(),
 		},
 	}
 	for name, tt := range tests {
@@ -251,19 +254,19 @@ func TestPlacementCoversEveryField(t *testing.T) {
 
 	placement := &orchestrator.SandboxNetworkPlacement{ExecutionId: "execution", NetworkMode: "mode", RouterId: "router", IngressAddress: "10.0.0.2", IngressPort: 5010}
 	requireEveryFieldSet(t, placement.ProtoReflect())
-	mirror := &scheduling.NetworkPlacement{}
+	mirror := &statepb.NetworkPlacement{}
 	require.Equal(t, placement.ProtoReflect().Descriptor().Fields().Len(), mirror.ProtoReflect().Descriptor().Fields().Len(), "the mirror has every field of the orchestrator's placement")
 
 	rec := &recorder{}
 	s, _ := newStores(dial(t, func(_ context.Context, _ string, req proto.Message, _ func(proto.Message) error) (proto.Message, error) {
 		rec.record(req)
 
-		return scheduling.RestoreCheckpointedResponse_builder{}.Build(), nil
+		return statepb.RestoreCheckpointedResponse_builder{}.Build(), nil
 	}))
 	end := time.Now()
 	_, _ = s.RestoreCheckpointed(callContext(t), sandboxtypes.StateTransition{Sandbox: testRecord(), OriginalEndTime: &end}, placement)
 
-	sent := rec.last(t).(*scheduling.RestoreCheckpointedRequest).GetPlacement()
+	sent := rec.last(t).(*statepb.RestoreCheckpointedRequest).GetPlacement()
 	require.NotNil(t, sent)
 	requireEveryFieldSet(t, sent.ProtoReflect())
 	sent.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {

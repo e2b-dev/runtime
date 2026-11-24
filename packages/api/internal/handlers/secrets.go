@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
@@ -121,7 +122,7 @@ func newReadinessBalancedClient(address string, creds credentials.TransportCrede
 }
 
 // PostSecrets creates a secret with its first version.
-func (a *APIStore) PostSecrets(c *gin.Context) {
+func (a *APIStore) PostSecrets(c *gin.Context, _ api.PostSecretsParams) {
 	c.Header("Cache-Control", "no-store")
 
 	client, projectID, team, ok := a.secretsBackend(c)
@@ -129,46 +130,65 @@ func (a *APIStore) PostSecrets(c *gin.Context) {
 		return
 	}
 
+	// The same body fails the same way on every retry, so the client is told not to retry.
+	invalidRequest := &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage, Retryable: apierrors.NoRetry}
+
 	var body api.PostSecretsJSONRequestBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		a.rejectSecretsRequest(c, "secrets request body is not valid")
+		apierrors.SendAPIError(c, invalidRequest)
+		telemetry.ReportError(c.Request.Context(), "secrets request body is not valid", errSecretsRequestInvalid)
 
 		return
 	}
 
 	name, err := secretsstore.NormalizeName(body.Name)
 	if err != nil {
-		a.rejectSecretsRequest(c, "secrets request carries an invalid name")
+		apierrors.SendAPIError(c, invalidRequest)
+		telemetry.ReportError(c.Request.Context(), "secrets request carries an invalid name", errSecretsRequestInvalid)
 
 		return
 	}
 
-	value := []byte(body.Value)
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), secretsBackendTimeout)
-	defer cancel()
-
-	response, err := client.CreateSecret(ctx, &managementv1.CreateSecretRequest{
+	request := &managementv1.CreateSecretRequest{
 		ProjectId:           projectID,
 		Name:                name,
-		Value:               value,
+		Value:               []byte(body.Value),
 		Metadata:            secretMetadataValues(body.Metadata),
 		ProjectSecretsLimit: projectSecretsLimit(team),
+	}
+
+	// The value stays out of the idempotency fingerprint so Redis holds nothing
+	// derived from it; a key reused with a different value replays the first result.
+	fingerprint := struct {
+		Name     string              `json:"name"`
+		Metadata *api.SecretMetadata `json:"metadata,omitempty"`
+	}{body.Name, body.Metadata}
+
+	idempotency.Execute(c, fingerprint, func() *apierrors.APIError {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), secretsBackendTimeout)
+		defer cancel()
+
+		response, err := client.CreateSecret(ctx, request)
+		if err != nil {
+			publicError := secretsBackendStatus(err)
+			telemetry.ReportErrorByCode(c.Request.Context(), publicError.Code, "secrets backend call failed", errSecretsBackendCall,
+				attribute.String("rpc.grpc.status_code", status.Code(err).String()),
+			)
+
+			return publicError
+		}
+
+		secret, ok := secretFromBackend(response.GetSecret())
+		if !ok {
+			telemetry.ReportCriticalError(c.Request.Context(), "secrets backend response was unusable", errSecretsBackendResponse)
+
+			return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage, Retryable: apierrors.UndefinedRetry}
+		}
+
+		c.JSON(http.StatusCreated, secret)
+
+		return nil
 	})
-	if err != nil {
-		a.sendSecretsBackendError(c, err)
-
-		return
-	}
-
-	secret, ok := secretFromBackend(response.GetSecret())
-	if !ok {
-		a.sendSecretsBackendResponseError(c)
-
-		return
-	}
-
-	c.JSON(http.StatusCreated, secret)
 }
 
 // GetSecrets lists the project's secrets.
@@ -400,6 +420,8 @@ func (a *APIStore) rejectSecretsRequest(c *gin.Context, reason string) {
 // and the typed quota detail determine the public response.
 func (a *APIStore) sendSecretsBackendError(c *gin.Context, err error) {
 	publicError := secretsBackendStatus(err)
+	// Only secret creation declares Should-Retry in the spec.
+	publicError.Retryable = apierrors.UndefinedRetry
 
 	apierrors.SendAPIError(c, publicError)
 	telemetry.ReportErrorByCode(c.Request.Context(), publicError.Code, "secrets backend call failed", errSecretsBackendCall,
@@ -415,6 +437,9 @@ func (a *APIStore) sendSecretsBackendResponseError(c *gin.Context) {
 }
 
 // secretsBackendStatus is the whole public error contract of the private hop.
+// NoRetry marks the refusals the backend makes before anything is published,
+// so the same request fails the same way; every other outcome leaves retry
+// undefined.
 func secretsBackendStatus(err error) *apierrors.APIError {
 	st, ok := status.FromError(err)
 	if !ok {
@@ -423,15 +448,20 @@ func secretsBackendStatus(err error) *apierrors.APIError {
 
 	switch st.Code() {
 	case codes.InvalidArgument:
-		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage}
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage, Retryable: apierrors.NoRetry}
 	case codes.NotFound:
 		return &apierrors.APIError{Code: http.StatusNotFound, ClientMsg: secretsNotFoundMessage}
-	case codes.AlreadyExists, codes.Aborted, codes.FailedPrecondition:
+	case codes.AlreadyExists:
+		return &apierrors.APIError{Code: http.StatusConflict, ClientMsg: secretsConflictMessage, Retryable: apierrors.NoRetry}
+	case codes.Aborted, codes.FailedPrecondition:
 		return &apierrors.APIError{Code: http.StatusConflict, ClientMsg: secretsConflictMessage}
 	case codes.ResourceExhausted:
 		return secretsExhaustedStatus(st)
 	case codes.DeadlineExceeded:
 		return &apierrors.APIError{Code: http.StatusGatewayTimeout, ClientMsg: secretsBackendTimeoutMessage}
+	case codes.Unauthenticated, codes.PermissionDenied:
+		// The API's own credentials were refused: a client cannot fix it by retrying.
+		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage, Retryable: apierrors.NoRetry}
 	default:
 		// Unavailable, Unimplemented, Internal, Unknown and everything else
 		// the backend may grow are one outcome to a client: the backend did
@@ -463,6 +493,7 @@ func secretsExhaustedStatus(st *status.Status) *apierrors.APIError {
 			Code:      http.StatusConflict,
 			ClientMsg: "Project secret limit reached",
 			ErrorCode: secretLimitReachedCode,
+			Retryable: apierrors.NoRetry,
 		}
 		if reasonDetails := detail.GetReasonDetails(); reasonDetails != "" {
 			publicError.ClientMsg = reasonDetails
@@ -470,7 +501,7 @@ func secretsExhaustedStatus(st *status.Status) *apierrors.APIError {
 
 		return publicError
 	case managementv1.ManagementErrorReason_MANAGEMENT_ERROR_REASON_VALUE_TOO_LARGE:
-		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage}
+		return &apierrors.APIError{Code: http.StatusBadRequest, ClientMsg: secretsInvalidRequestMessage, Retryable: apierrors.NoRetry}
 	default:
 		// Unspecified today, and whatever the contract grows tomorrow.
 		return &apierrors.APIError{Code: http.StatusBadGateway, ClientMsg: secretsBackendMessage}

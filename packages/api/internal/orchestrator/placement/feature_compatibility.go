@@ -1,6 +1,8 @@
 package placement
 
 import (
+	"slices"
+
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
@@ -61,6 +63,15 @@ var featureGates = []featureGate{
 			return req.GetSandbox().GetMaxVcpus() > 0
 		},
 	},
+	{
+		// The API sends memory_mb for every start from a build with a memory
+		// maximum whose size it knows, so this covers every such start. An
+		// older orchestrator ignores the field or reserves the whole maximum.
+		feature: Feature{name: "memory-resize", minVersion: clusters.SandboxMemoryResizeMinVersion},
+		requested: func(req *orchestrator.SandboxCreateRequest) bool {
+			return req.GetSandbox().GetMemoryMb() > 0
+		},
+	},
 }
 
 // EgressUpdateFeatures reports the capabilities a live network update needs
@@ -107,6 +118,26 @@ type FeatureRequirement struct {
 	// minVersion is the highest floor among features, so one comparison
 	// answers for all of them.
 	minVersion *semver.Version
+}
+
+// RequestFeatureNames names the version-gated capabilities req needs, for the
+// sandbox's record to keep: a later move of the sandbox to another node is
+// checked against them (RequireNamed).
+func RequestFeatureNames(req *orchestrator.SandboxCreateRequest) []string {
+	return requiredFeatures(req).FeatureNames()
+}
+
+// RequireNamed is the requirement a record kept through RequestFeatureNames. A
+// name no gate carries any more is skipped.
+func RequireNamed(names []string) FeatureRequirement {
+	var features []Feature
+	for _, gate := range featureGates {
+		if slices.Contains(names, gate.feature.name) {
+			features = append(features, gate.feature)
+		}
+	}
+
+	return Require(features...)
 }
 
 // requiredFeatures reports the capabilities req needs from the node serving it.

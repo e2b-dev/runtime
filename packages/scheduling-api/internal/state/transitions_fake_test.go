@@ -17,8 +17,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -29,25 +29,25 @@ var (
 	errInvalidTransition = &sandboxtypes.InvalidStateTransitionError{CurrentState: sandboxtypes.StateKilling, TargetState: sandboxtypes.StatePausing}
 )
 
-var transitionOutcomes = map[error]scheduling.StateOutcome{
-	sandboxtypes.ErrNotFound:           scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND,
-	sandboxtypes.ErrLifecycleHeld:      scheduling.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD,
-	sandboxtypes.ErrExecutionMismatch:  scheduling.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH,
-	sandboxtypes.ErrLockLost:           scheduling.StateOutcome_STATE_OUTCOME_LOCK_LOST,
-	sandboxtypes.ErrEvictionInProgress: scheduling.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS,
-	sandboxtypes.ErrEvictionNotNeeded:  scheduling.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED,
-	sandboxtypes.ErrRestoreConflict:    scheduling.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT,
-	errInvalidTransition:               scheduling.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION,
+var transitionOutcomes = map[error]statepb.StateOutcome{
+	sandboxtypes.ErrNotFound:           statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND,
+	sandboxtypes.ErrLifecycleHeld:      statepb.StateOutcome_STATE_OUTCOME_LIFECYCLE_HELD,
+	sandboxtypes.ErrExecutionMismatch:  statepb.StateOutcome_STATE_OUTCOME_EXECUTION_MISMATCH,
+	sandboxtypes.ErrLockLost:           statepb.StateOutcome_STATE_OUTCOME_LOCK_LOST,
+	sandboxtypes.ErrEvictionInProgress: statepb.StateOutcome_STATE_OUTCOME_EVICTION_IN_PROGRESS,
+	sandboxtypes.ErrEvictionNotNeeded:  statepb.StateOutcome_STATE_OUTCOME_EVICTION_NOT_NEEDED,
+	sandboxtypes.ErrRestoreConflict:    statepb.StateOutcome_STATE_OUTCOME_RESTORE_CONFLICT,
+	errInvalidTransition:               statepb.StateOutcome_STATE_OUTCOME_INVALID_TRANSITION,
 }
 
 func transitionRecord() sandboxtypes.Sandbox {
 	return minimalRecord(transitionTeam, transitionSandbox)
 }
 
-func wireTransition(t *testing.T, sbx sandboxtypes.Sandbox) *scheduling.StateTransition {
+func wireTransition(t *testing.T, sbx sandboxtypes.Sandbox) *statepb.StateTransition {
 	t.Helper()
 
-	return scheduling.StateTransition_builder{
+	return statepb.StateTransition_builder{
 		Record:          encode(t, sbx),
 		OriginalEndTime: timestamppb.New(originalEndTime),
 		Id:              "transition-1",
@@ -55,19 +55,19 @@ func wireTransition(t *testing.T, sbx sandboxtypes.Sandbox) *scheduling.StateTra
 	}.Build()
 }
 
-func removeOptions(action scheduling.RemoveAction) *scheduling.RemoveOptions {
-	return scheduling.RemoveOptions_builder{Action: action}.Build()
+func removeOptions(action statepb.RemoveAction) *statepb.RemoveOptions {
+	return statepb.RemoveOptions_builder{Action: action}.Build()
 }
 
 type transitionResponse struct {
-	outcome    scheduling.StateOutcome
-	current    scheduling.SandboxState
-	transition *scheduling.StateTransition
+	outcome    statepb.StateOutcome
+	current    statepb.SandboxState
+	transition *statepb.StateTransition
 	record     []byte
 }
 
 type transitionCall struct {
-	call      func(ctx context.Context, client scheduling.StateServiceClient) (transitionResponse, error)
+	call      func(ctx context.Context, client statepb.StateServiceClient) (transitionResponse, error)
 	sentinels []error
 }
 
@@ -78,9 +78,9 @@ func transitionCalls(t *testing.T) map[string]transitionCall {
 
 	return map[string]transitionCall{
 		"BeginRemoving": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (transitionResponse, error) {
-				resp, err := c.BeginRemoving(ctx, scheduling.BeginRemovingRequest_builder{
-					TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(scheduling.RemoveAction_REMOVE_ACTION_PAUSE),
+			call: func(ctx context.Context, c statepb.StateServiceClient) (transitionResponse, error) {
+				resp, err := c.BeginRemoving(ctx, statepb.BeginRemovingRequest_builder{
+					TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(statepb.RemoveAction_REMOVE_ACTION_PAUSE),
 				}.Build())
 
 				return transitionResponse{resp.GetOutcome(), resp.GetCurrentState(), resp.GetTransition(), nil}, err
@@ -91,16 +91,16 @@ func transitionCalls(t *testing.T) map[string]transitionCall {
 			},
 		},
 		"RestoreRunning": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (transitionResponse, error) {
-				resp, err := c.RestoreRunning(ctx, scheduling.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (transitionResponse, error) {
+				resp, err := c.RestoreRunning(ctx, statepb.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 				return transitionResponse{resp.GetOutcome(), resp.GetCurrentState(), nil, resp.GetRecord()}, err
 			},
 			sentinels: restoreSentinels,
 		},
 		"RestoreCheckpointed": {
-			call: func(ctx context.Context, c scheduling.StateServiceClient) (transitionResponse, error) {
-				resp, err := c.RestoreCheckpointed(ctx, scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+			call: func(ctx context.Context, c statepb.StateServiceClient) (transitionResponse, error) {
+				resp, err := c.RestoreCheckpointed(ctx, statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 				return transitionResponse{resp.GetOutcome(), resp.GetCurrentState(), nil, resp.GetRecord()}, err
 			},
@@ -131,9 +131,9 @@ func TestTransitionOutcomeMapping(t *testing.T) {
 					assert.Equal(t, transitionOutcomes[sentinel], resp.outcome)
 					assert.Empty(t, resp.record, "a refusal carries no restored record")
 					if errors.Is(sentinel, errInvalidTransition) {
-						assert.Equal(t, scheduling.SandboxState_SANDBOX_STATE_KILLING, resp.current)
+						assert.Equal(t, statepb.SandboxState_SANDBOX_STATE_KILLING, resp.current)
 					} else {
-						assert.Equal(t, scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED, resp.current)
+						assert.Equal(t, statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED, resp.current)
 					}
 					if name == "BeginRemoving" {
 						require.NotNil(t, resp.transition, "a refusal carries the transition the store returned")
@@ -151,8 +151,8 @@ func TestTransitionOutcomeMapping(t *testing.T) {
 			fake.record = transitionRecord()
 			resp, err := rpc.call(callContext(t), newClient(t, fake))
 			require.NoError(t, err)
-			assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.outcome)
-			assert.Equal(t, scheduling.SandboxState_SANDBOX_STATE_UNSPECIFIED, resp.current)
+			assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.outcome)
+			assert.Equal(t, statepb.SandboxState_SANDBOX_STATE_UNSPECIFIED, resp.current)
 			if name == "BeginRemoving" {
 				assert.Nil(t, resp.transition, "a zero transition is not sent")
 			} else {
@@ -182,11 +182,11 @@ func TestBeginRemovingCarriesTheTransition(t *testing.T) {
 			fake := newFake()
 			fake.transition = tt.transition
 			fake.alreadyDone = tt.alreadyDone
-			resp, err := newClient(t, fake).BeginRemoving(callContext(t), scheduling.BeginRemovingRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(scheduling.RemoveAction_REMOVE_ACTION_PAUSE),
+			resp, err := newClient(t, fake).BeginRemoving(callContext(t), statepb.BeginRemovingRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(statepb.RemoveAction_REMOVE_ACTION_PAUSE),
 			}.Build())
 			require.NoError(t, err)
-			assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+			assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 			assert.Equal(t, tt.alreadyDone, resp.GetAlreadyDone())
 			wire := resp.GetTransition()
 			assert.Equal(t, sbx, decode(t, wire.GetRecord()))
@@ -203,23 +203,23 @@ func TestBeginRemovingCarriesTheTransition(t *testing.T) {
 func TestEveryActionIsMapped(t *testing.T) {
 	t.Parallel()
 
-	predefined := map[scheduling.RemoveAction]sandboxtypes.StateAction{
-		scheduling.RemoveAction_REMOVE_ACTION_PAUSE:    sandboxtypes.StateActionPause,
-		scheduling.RemoveAction_REMOVE_ACTION_KILL:     sandboxtypes.StateActionKill,
-		scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT: sandboxtypes.StateActionSnapshot,
+	predefined := map[statepb.RemoveAction]sandboxtypes.StateAction{
+		statepb.RemoveAction_REMOVE_ACTION_PAUSE:    sandboxtypes.StateActionPause,
+		statepb.RemoveAction_REMOVE_ACTION_KILL:     sandboxtypes.StateActionKill,
+		statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT: sandboxtypes.StateActionSnapshot,
 	}
-	require.Len(t, scheduling.RemoveAction_name, len(predefined)+1, "every predefined StateAction has one enum value besides UNSPECIFIED")
+	require.Len(t, statepb.RemoveAction_name, len(predefined)+1, "every predefined StateAction has one enum value besides UNSPECIFIED")
 
 	for value, want := range predefined {
 		fake := newFake()
 		client := newClient(t, fake)
-		_, err := client.BeginRemoving(callContext(t), scheduling.BeginRemovingRequest_builder{
+		_, err := client.BeginRemoving(callContext(t), statepb.BeginRemovingRequest_builder{
 			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(value),
 		}.Build())
 		require.NoError(t, err)
 		assert.Equal(t, want, fake.snapshot().removeOpts.Action, "%v reaches the store as the predefined action", value)
 
-		_, err = client.FinishTransition(callContext(t), scheduling.FinishTransitionRequest_builder{
+		_, err = client.FinishTransition(callContext(t), statepb.FinishTransitionRequest_builder{
 			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: value,
 		}.Build())
 		require.NoError(t, err)
@@ -248,8 +248,8 @@ func TestFinishTransitionFailuresAreInternal(t *testing.T) {
 
 			fake := newFake()
 			fake.err = storeErr
-			_, err := newClient(t, fake).FinishTransition(callContext(t), scheduling.FinishTransitionRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT,
+			_, err := newClient(t, fake).FinishTransition(callContext(t), statepb.FinishTransitionRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT,
 			}.Build())
 			st := requireCode(t, err, codes.Internal)
 			assert.Equal(t, "internal error", st.Message())
@@ -259,16 +259,16 @@ func TestFinishTransitionFailuresAreInternal(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
 
-		resp, err := newClient(t, newFake()).FinishTransition(callContext(t), scheduling.FinishTransitionRequest_builder{
-			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_PAUSE,
+		resp, err := newClient(t, newFake()).FinishTransition(callContext(t), statepb.FinishTransitionRequest_builder{
+			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_PAUSE,
 		}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 	})
 }
 
-func waitFor(ctx context.Context, client scheduling.StateServiceClient, transitionID string) (*scheduling.WaitForTransitionResponse, error) {
-	return client.WaitForTransition(ctx, scheduling.WaitForTransitionRequest_builder{
+func waitFor(ctx context.Context, client statepb.StateServiceClient, transitionID string) (*statepb.WaitForTransitionResponse, error) {
+	return client.WaitForTransition(ctx, statepb.WaitForTransitionRequest_builder{
 		TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: transitionID,
 	}.Build())
 }
@@ -282,18 +282,18 @@ func TestWaitForTransitionOutcomes(t *testing.T) {
 	tests := []struct {
 		name    string
 		err     error
-		outcome scheduling.WaitForTransitionOutcome
+		outcome statepb.WaitForTransitionOutcome
 		class   string
 		failure string
 	}{
-		{"finished", nil, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED, "", ""},
-		{"restored busy node", restored(sandboxtypes.PauseQueueExhaustedError{}), scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "", ""},
-		{"restored without a refusal", restored(nil), scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "", ""},
-		{"restored checkpoint", restored(sandboxtypes.PauseRefusedCheckpointInProgressError{}), scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "checkpoint_in_progress", ""},
-		{"restored envd", restored(sandboxtypes.PauseRefusedEnvdUnresponsiveError{}), scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "envd_unresponsive", ""},
-		{"restored unsupported", restored(sandboxtypes.PauseUnsupportedError{}), scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "unsupported", ""},
-		{"failed", &sandboxtypes.TransitionFailedError{Message: "boom"}, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED, "", "boom"},
-		{"another team", sandboxtypes.ErrNotFound, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND, "", ""},
+		{"finished", nil, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED, "", ""},
+		{"restored busy node", restored(sandboxtypes.PauseQueueExhaustedError{}), statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "", ""},
+		{"restored without a refusal", restored(nil), statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "", ""},
+		{"restored checkpoint", restored(sandboxtypes.PauseRefusedCheckpointInProgressError{}), statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "checkpoint_in_progress", ""},
+		{"restored envd", restored(sandboxtypes.PauseRefusedEnvdUnresponsiveError{}), statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "envd_unresponsive", ""},
+		{"restored unsupported", restored(sandboxtypes.PauseUnsupportedError{}), statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED, "unsupported", ""},
+		{"failed", &sandboxtypes.TransitionFailedError{Message: "boom"}, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED, "", "boom"},
+		{"another team", sandboxtypes.ErrNotFound, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND, "", ""},
 	}
 	for _, tt := range tests {
 		for _, wrapped := range []bool{false, true} {
@@ -341,7 +341,7 @@ func TestWaitForTransitionMaxWaitIsWaiting(t *testing.T) {
 			fake.wait = wait
 			resp, err := waitFor(t.Context(), newClientWithWait(t, fake, 10*time.Millisecond), "")
 			require.NoError(t, err)
-			assert.Equal(t, scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, resp.GetOutcome())
+			assert.Equal(t, statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING, resp.GetOutcome())
 			assert.Equal(t, "transition-1", resp.GetTransitionId())
 			assert.True(t, fake.snapshot().waitDeadline, "the store's wait is bounded")
 		})
@@ -358,7 +358,7 @@ func TestWaitForTransitionMaxWaitIsWaiting(t *testing.T) {
 
 			return "transition-1", context.DeadlineExceeded
 		}
-		_, err := state.NewServer(fake, time.Hour).WaitForTransition(ctx, scheduling.WaitForTransitionRequest_builder{
+		_, err := state.NewServer(fake, time.Hour).WaitForTransition(ctx, statepb.WaitForTransitionRequest_builder{
 			TeamId: transitionTeam.String(), SandboxId: transitionSandbox,
 		}.Build())
 		requireCode(t, err, codes.Canceled)
@@ -369,31 +369,31 @@ func transitionRPCs(t *testing.T) map[string]rpcCall {
 	t.Helper()
 
 	return map[string]rpcCall{
-		"BeginRemoving": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.BeginRemoving(ctx, scheduling.BeginRemovingRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(scheduling.RemoveAction_REMOVE_ACTION_KILL),
+		"BeginRemoving": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.BeginRemoving(ctx, statepb.BeginRemovingRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(statepb.RemoveAction_REMOVE_ACTION_KILL),
 			}.Build())
 
 			return err
 		},
-		"FinishTransition": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.FinishTransition(ctx, scheduling.FinishTransitionRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_KILL,
+		"FinishTransition": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.FinishTransition(ctx, statepb.FinishTransitionRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_KILL,
 			}.Build())
 
 			return err
 		},
-		"RestoreRunning": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.RestoreRunning(ctx, scheduling.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+		"RestoreRunning": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.RestoreRunning(ctx, statepb.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 			return err
 		},
-		"RestoreCheckpointed": func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.RestoreCheckpointed(ctx, scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+		"RestoreCheckpointed": func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.RestoreCheckpointed(ctx, statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 			return err
 		},
-		"WaitForTransition": func(ctx context.Context, c scheduling.StateServiceClient) error {
+		"WaitForTransition": func(ctx context.Context, c statepb.StateServiceClient) error {
 			_, err := waitFor(ctx, c, "transition-1")
 
 			return err
@@ -437,31 +437,31 @@ func TestTransitionCancelledCaller(t *testing.T) {
 
 	handlerCalls := map[string]func(ctx context.Context, s *state.Server) error{
 		"BeginRemoving": func(ctx context.Context, s *state.Server) error {
-			_, err := s.BeginRemoving(ctx, scheduling.BeginRemovingRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(scheduling.RemoveAction_REMOVE_ACTION_PAUSE),
+			_, err := s.BeginRemoving(ctx, statepb.BeginRemovingRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, Options: removeOptions(statepb.RemoveAction_REMOVE_ACTION_PAUSE),
 			}.Build())
 
 			return err
 		},
 		"FinishTransition": func(ctx context.Context, s *state.Server) error {
-			_, err := s.FinishTransition(ctx, scheduling.FinishTransitionRequest_builder{
-				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_PAUSE,
+			_, err := s.FinishTransition(ctx, statepb.FinishTransitionRequest_builder{
+				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_PAUSE,
 			}.Build())
 
 			return err
 		},
 		"RestoreRunning": func(ctx context.Context, s *state.Server) error {
-			_, err := s.RestoreRunning(ctx, scheduling.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+			_, err := s.RestoreRunning(ctx, statepb.RestoreRunningRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 			return err
 		},
 		"RestoreCheckpointed": func(ctx context.Context, s *state.Server) error {
-			_, err := s.RestoreCheckpointed(ctx, scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
+			_, err := s.RestoreCheckpointed(ctx, statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, transitionRecord())}.Build())
 
 			return err
 		},
 		"WaitForTransition": func(ctx context.Context, s *state.Server) error {
-			_, err := s.WaitForTransition(ctx, scheduling.WaitForTransitionRequest_builder{
+			_, err := s.WaitForTransition(ctx, statepb.WaitForTransitionRequest_builder{
 				TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1",
 			}.Build())
 
@@ -486,83 +486,83 @@ func TestTransitionInvalidRequests(t *testing.T) {
 	t.Parallel()
 
 	team := transitionTeam.String()
-	begin := func(team, sandbox string, options *scheduling.RemoveOptions) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.BeginRemoving(ctx, scheduling.BeginRemovingRequest_builder{TeamId: team, SandboxId: sandbox, Options: options}.Build())
+	begin := func(team, sandbox string, options *statepb.RemoveOptions) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.BeginRemoving(ctx, statepb.BeginRemovingRequest_builder{TeamId: team, SandboxId: sandbox, Options: options}.Build())
 
 			return err
 		}
 	}
-	finish := func(team, sandbox, transitionID string, action scheduling.RemoveAction) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.FinishTransition(ctx, scheduling.FinishTransitionRequest_builder{TeamId: team, SandboxId: sandbox, TransitionId: transitionID, Action: action}.Build())
+	finish := func(team, sandbox, transitionID string, action statepb.RemoveAction) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.FinishTransition(ctx, statepb.FinishTransitionRequest_builder{TeamId: team, SandboxId: sandbox, TransitionId: transitionID, Action: action}.Build())
 
 			return err
 		}
 	}
-	restore := func(transition *scheduling.StateTransition, options *scheduling.RestoreOptions) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.RestoreRunning(ctx, scheduling.RestoreRunningRequest_builder{Transition: transition, Options: options}.Build())
+	restore := func(transition *statepb.StateTransition, options *statepb.RestoreOptions) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.RestoreRunning(ctx, statepb.RestoreRunningRequest_builder{Transition: transition, Options: options}.Build())
 
 			return err
 		}
 	}
-	checkpointed := func(transition *scheduling.StateTransition) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.RestoreCheckpointed(ctx, scheduling.RestoreCheckpointedRequest_builder{Transition: transition}.Build())
+	checkpointed := func(transition *statepb.StateTransition) rpcCall {
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.RestoreCheckpointed(ctx, statepb.RestoreCheckpointedRequest_builder{Transition: transition}.Build())
 
 			return err
 		}
 	}
 	wait := func(team, sandbox string) rpcCall {
-		return func(ctx context.Context, c scheduling.StateServiceClient) error {
-			_, err := c.WaitForTransition(ctx, scheduling.WaitForTransitionRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+		return func(ctx context.Context, c statepb.StateServiceClient) error {
+			_, err := c.WaitForTransition(ctx, statepb.WaitForTransitionRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}
 	}
-	withRecord := func(mutate func(*sandboxtypes.Sandbox)) *scheduling.StateTransition {
+	withRecord := func(mutate func(*sandboxtypes.Sandbox)) *statepb.StateTransition {
 		sbx := transitionRecord()
 		mutate(&sbx)
 
 		return wireTransition(t, sbx)
 	}
-	withTransition := func(mutate func(*scheduling.StateTransition)) *scheduling.StateTransition {
+	withTransition := func(mutate func(*statepb.StateTransition)) *statepb.StateTransition {
 		transition := wireTransition(t, transitionRecord())
 		mutate(transition)
 
 		return transition
 	}
-	pause := removeOptions(scheduling.RemoveAction_REMOVE_ACTION_PAUSE)
+	pause := removeOptions(statepb.RemoveAction_REMOVE_ACTION_PAUSE)
 
 	tests := map[string]rpcCall{
 		"BeginRemoving team not a UUID":       begin("team-1", transitionSandbox, pause),
 		"BeginRemoving braced sandbox":        begin(team, "a{b", pause),
 		"BeginRemoving no options":            begin(team, transitionSandbox, nil),
-		"BeginRemoving unspecified action":    begin(team, transitionSandbox, removeOptions(scheduling.RemoveAction_REMOVE_ACTION_UNSPECIFIED)),
-		"BeginRemoving unknown action":        begin(team, transitionSandbox, removeOptions(scheduling.RemoveAction(99))),
-		"FinishTransition team not a UUID":    finish("team-1", transitionSandbox, "transition-1", scheduling.RemoveAction_REMOVE_ACTION_KILL),
-		"FinishTransition empty sandbox":      finish(team, "", "transition-1", scheduling.RemoveAction_REMOVE_ACTION_KILL),
-		"FinishTransition empty transition":   finish(team, transitionSandbox, "", scheduling.RemoveAction_REMOVE_ACTION_KILL),
-		"FinishTransition unspecified action": finish(team, transitionSandbox, "transition-1", scheduling.RemoveAction_REMOVE_ACTION_UNSPECIFIED),
-		"FinishTransition unknown action":     finish(team, transitionSandbox, "transition-1", scheduling.RemoveAction(99)),
+		"BeginRemoving unspecified action":    begin(team, transitionSandbox, removeOptions(statepb.RemoveAction_REMOVE_ACTION_UNSPECIFIED)),
+		"BeginRemoving unknown action":        begin(team, transitionSandbox, removeOptions(statepb.RemoveAction(99))),
+		"FinishTransition team not a UUID":    finish("team-1", transitionSandbox, "transition-1", statepb.RemoveAction_REMOVE_ACTION_KILL),
+		"FinishTransition empty sandbox":      finish(team, "", "transition-1", statepb.RemoveAction_REMOVE_ACTION_KILL),
+		"FinishTransition empty transition":   finish(team, transitionSandbox, "", statepb.RemoveAction_REMOVE_ACTION_KILL),
+		"FinishTransition unspecified action": finish(team, transitionSandbox, "transition-1", statepb.RemoveAction_REMOVE_ACTION_UNSPECIFIED),
+		"FinishTransition unknown action":     finish(team, transitionSandbox, "transition-1", statepb.RemoveAction(99)),
 		"RestoreRunning no transition":        restore(nil, nil),
-		"RestoreRunning record not JSON":      restore(withTransition(func(tr *scheduling.StateTransition) { tr.SetRecord([]byte("not json")) }), nil),
+		"RestoreRunning record not JSON":      restore(withTransition(func(tr *statepb.StateTransition) { tr.SetRecord([]byte("not json")) }), nil),
 		"RestoreRunning colon in sandbox ID":  restore(withRecord(func(s *sandboxtypes.Sandbox) { s.SandboxID = "a:b" }), nil),
 		"RestoreRunning braced sandbox ID":    restore(withRecord(func(s *sandboxtypes.Sandbox) { s.SandboxID = "a{b" }), nil),
 		"RestoreRunning nil team":             restore(withRecord(func(s *sandboxtypes.Sandbox) { s.TeamID = uuid.Nil }), nil),
 		"RestoreRunning non-canonical execution": restore(withRecord(func(s *sandboxtypes.Sandbox) {
 			s.ExecutionID = "execution-1"
 		}), nil),
-		"RestoreRunning no original end time": restore(withTransition(func(tr *scheduling.StateTransition) { tr.ClearOriginalEndTime() }), nil),
-		"RestoreRunning invalid original end time": restore(withTransition(func(tr *scheduling.StateTransition) {
+		"RestoreRunning no original end time": restore(withTransition(func(tr *statepb.StateTransition) { tr.ClearOriginalEndTime() }), nil),
+		"RestoreRunning invalid original end time": restore(withTransition(func(tr *statepb.StateTransition) {
 			tr.SetOriginalEndTime(&timestamppb.Timestamp{Seconds: 1, Nanos: -1})
 		}), nil),
-		"RestoreRunning invalid retry_after": restore(wireTransition(t, transitionRecord()), scheduling.RestoreOptions_builder{
+		"RestoreRunning invalid retry_after": restore(wireTransition(t, transitionRecord()), statepb.RestoreOptions_builder{
 			RetryAfter: &durationpb.Duration{Seconds: 1, Nanos: -1},
 		}.Build()),
 		"RestoreCheckpointed no transition":        checkpointed(nil),
-		"RestoreCheckpointed no original end time": checkpointed(withTransition(func(tr *scheduling.StateTransition) { tr.ClearOriginalEndTime() })),
+		"RestoreCheckpointed no original end time": checkpointed(withTransition(func(tr *statepb.StateTransition) { tr.ClearOriginalEndTime() })),
 		"RestoreCheckpointed colon in sandbox ID":  checkpointed(withRecord(func(s *sandboxtypes.Sandbox) { s.SandboxID = "a:b" })),
 		"RestoreCheckpointed empty execution":      checkpointed(withRecord(func(s *sandboxtypes.Sandbox) { s.ExecutionID = "" })),
 		"WaitForTransition team not a UUID":        wait("team-1", transitionSandbox),
@@ -605,21 +605,24 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 		t.Parallel()
 
 		want := sandboxtypes.RemoveOpts{
-			Action:             sandboxtypes.StateActionSnapshot,
-			Eviction:           true,
-			Reason:             sandboxtypes.KillReasonTimeout,
-			FilesystemOnly:     true,
-			RequireEnvdHealthy: true,
-			ExpectExecutionID:  uuid.NewString(),
-			BeforeEndTime:      true,
+			Action:               sandboxtypes.StateActionSnapshot,
+			Eviction:             true,
+			Reason:               sandboxtypes.KillReasonTimeout,
+			FilesystemOnly:       true,
+			RequireEnvdHealthy:   true,
+			ExpectExecutionID:    uuid.NewString(),
+			BeforeEndTime:        true,
+			WaitForLifecycleHold: true,
 		}
 		requireNoZeroField(t, want)
+		// The API's store reads it; the request does not carry it.
+		want.WaitForLifecycleHold = false
 
 		fake := newFake()
-		_, err := newClient(t, fake).BeginRemoving(callContext(t), scheduling.BeginRemovingRequest_builder{
+		_, err := newClient(t, fake).BeginRemoving(callContext(t), statepb.BeginRemovingRequest_builder{
 			TeamId: transitionTeam.String(), SandboxId: transitionSandbox,
-			Options: scheduling.RemoveOptions_builder{
-				Action:             scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT,
+			Options: statepb.RemoveOptions_builder{
+				Action:             statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT,
 				Eviction:           want.Eviction,
 				Reason:             string(want.Reason),
 				FilesystemOnly:     want.FilesystemOnly,
@@ -641,9 +644,9 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 		requireNoZeroField(t, want)
 
 		fake := newFake()
-		_, err := newClient(t, fake).FinishTransition(callContext(t), scheduling.FinishTransitionRequest_builder{
-			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT,
-			Result: scheduling.TransitionResult_builder{
+		_, err := newClient(t, fake).FinishTransition(callContext(t), statepb.FinishTransitionRequest_builder{
+			TeamId: transitionTeam.String(), SandboxId: transitionSandbox, TransitionId: "transition-1", Action: statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT,
+			Result: statepb.TransitionResult_builder{
 				Failed: want.Failed, Error: want.Error, SkipRestore: want.SkipRestore, Restored: want.Restored, RefusalClass: want.RefusalClass,
 			}.Build(),
 		}.Build())
@@ -667,14 +670,14 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 
 		fake := newFake()
 		fake.record = full
-		resp, err := newClient(t, fake).RestoreRunning(callContext(t), scheduling.RestoreRunningRequest_builder{
+		resp, err := newClient(t, fake).RestoreRunning(callContext(t), statepb.RestoreRunningRequest_builder{
 			Transition: wireTransition(t, full),
-			Options: scheduling.RestoreOptions_builder{
+			Options: statepb.RestoreOptions_builder{
 				RetryAfter: durationpb.New(wantOpts.RetryAfter), HoldOnly: wantOpts.HoldOnly, EnvdRefusal: wantOpts.EnvdRefusal,
 			}.Build(),
 		}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
+		assert.Equal(t, statepb.StateOutcome_STATE_OUTCOME_OK, resp.GetOutcome())
 		assert.Equal(t, full, decode(t, resp.GetRecord()))
 		seen := fake.snapshot()
 		assert.Equal(t, wantTransition, seen.restoring)
@@ -684,7 +687,7 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 	t.Run("RestoreCheckpointed", func(t *testing.T) {
 		t.Parallel()
 
-		mirror := &scheduling.NetworkPlacement{}
+		mirror := &statepb.NetworkPlacement{}
 		original := &orchestrator.SandboxNetworkPlacement{
 			ExecutionId: uuid.NewString(), NetworkMode: "full-router", RouterId: "router", IngressAddress: "10.0.0.2", IngressPort: 5010,
 		}
@@ -696,17 +699,17 @@ func TestTransitionStoreReceivesTheCallersValues(t *testing.T) {
 		fake := newFake()
 		fake.record = full
 		client := newClient(t, fake)
-		_, err := client.RestoreCheckpointed(callContext(t), scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, full), Placement: mirror}.Build())
+		_, err := client.RestoreCheckpointed(callContext(t), statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, full), Placement: mirror}.Build())
 		require.NoError(t, err)
 		seen := fake.snapshot()
 		assert.Equal(t, wantTransition, seen.restoring)
 		assert.True(t, proto.Equal(original, seen.placement), "orchestrator to mirror to orchestrator: got %v", seen.placement)
 
-		back := &scheduling.NetworkPlacement{}
+		back := &statepb.NetworkPlacement{}
 		copyByName(seen.placement.ProtoReflect(), back.ProtoReflect())
 		assert.True(t, proto.Equal(mirror, back), "mirror to orchestrator to mirror: got %v", back)
 
-		_, err = client.RestoreCheckpointed(callContext(t), scheduling.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, full)}.Build())
+		_, err = client.RestoreCheckpointed(callContext(t), statepb.RestoreCheckpointedRequest_builder{Transition: wireTransition(t, full)}.Build())
 		require.NoError(t, err)
 		assert.Nil(t, fake.snapshot().placement, "an absent placement is nil")
 	})

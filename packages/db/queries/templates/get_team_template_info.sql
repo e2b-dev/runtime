@@ -25,6 +25,8 @@ SELECT
     db.finished_at AS default_build_finished_at,
     db.vcpu AS default_build_vcpu,
     db.max_vcpu AS default_build_max_vcpu,
+    db.max_ram_mb AS default_build_max_ram_mb,
+    db.start_memory_mb AS default_build_start_memory_mb,
     db.ram_mb AS default_build_ram_mb,
     db.total_disk_size_mb AS default_build_total_disk_size_mb,
     db.envd_version AS default_build_envd_version
@@ -45,7 +47,7 @@ LEFT JOIN LATERAL (
 ) AS latest_build ON TRUE
 LEFT JOIN LATERAL (
     SELECT b.id, b.created_at, b.updated_at, b.finished_at,
-           b.vcpu, b.max_vcpu, b.ram_mb, b.total_disk_size_mb, b.envd_version
+           b.vcpu, b.max_vcpu, b.max_ram_mb, b.start_memory_mb, b.ram_mb, b.total_disk_size_mb, b.envd_version
     FROM public.env_build_assignments AS ba
     LEFT JOIN public.env_builds AS b ON b.id = ba.build_id
     WHERE ba.env_id = e.id AND ba.tag = 'default' AND b.status_group = 'ready'

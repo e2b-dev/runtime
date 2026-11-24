@@ -420,3 +420,30 @@ func TestNodeSatisfiesFeatures_ResizableVcpu(t *testing.T) {
 		})
 	}
 }
+
+// Only a request that names a memory size needs the memory-resize release.
+func TestRequiredFeatures_MemoryResize(t *testing.T) {
+	t.Parallel()
+
+	req := testSbxRequest("sbx-1")
+	req.Sandbox.RamMb = 1024
+	assert.Empty(t, requiredFeatures(req).MinVersion())
+
+	req.Sandbox.MemoryMb = 2048
+	assert.Equal(t, clusters.SandboxMemoryResizeMinVersion.String(), requiredFeatures(req).MinVersion())
+	assert.Equal(t, []string{"memory-resize"}, requiredFeatures(req).FeatureNames())
+}
+
+// A record keeps the names of the gates its start needed; rebuilding the
+// requirement from them gives the same floor, and a name no gate carries is skipped.
+func TestRequireNamedRebuildsTheStartRequirement(t *testing.T) {
+	t.Parallel()
+
+	req := &orchestrator.SandboxCreateRequest{Sandbox: &orchestrator.SandboxConfig{MaxVcpus: 4, MemoryMb: 2048}}
+	names := RequestFeatureNames(req)
+	assert.ElementsMatch(t, []string{"resizable-vcpu", "memory-resize"}, names)
+	assert.Equal(t, requiredFeatures(req).MinVersion(), RequireNamed(names).MinVersion())
+	assert.Equal(t, clusters.ResizableTemplateBuildsMinVersion.String(), RequireNamed([]string{"resizable-vcpu", "gone"}).MinVersion())
+	assert.Empty(t, RequireNamed(nil).MinVersion())
+	assert.Empty(t, RequestFeatureNames(&orchestrator.SandboxCreateRequest{Sandbox: &orchestrator.SandboxConfig{}}))
+}

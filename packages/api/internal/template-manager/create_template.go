@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -51,6 +50,7 @@ func (tm *TemplateManager) CreateTemplate(
 	freeDiskSizeMB,
 	memoryMB int64,
 	maxVCpuCount *int64,
+	maxMemoryMB *int64,
 	readyCommand *string,
 	fromImage *string,
 	fromTemplate *string,
@@ -92,12 +92,7 @@ func (tm *TemplateManager) CreateTemplate(
 		return fmt.Errorf("failed to get features for firecracker version '%s': %w", firecrackerVersion, err)
 	}
 
-	var minVersion *semver.Version
-	if maxVCpuCount != nil {
-		minVersion = clusters.ResizableTemplateBuildsMinVersion
-	}
-
-	client, err := tm.buildDispatchClient(ctx, clusterID, nodeID, minVersion)
+	client, err := tm.buildDispatchClient(ctx, clusterID, nodeID, clusters.TemplateBuilderMinVersion(maxVCpuCount, maxMemoryMB))
 	if err != nil {
 		return fmt.Errorf("failed to get builder: %w", err)
 	}
@@ -137,6 +132,7 @@ func (tm *TemplateManager) CreateTemplate(
 		Steps:              convertTemplateSteps(steps),
 		FromImageRegistry:  imageRegistry,
 		MaxVCpuCount:       sharedutils.CastPtr(maxVCpuCount, func(v int64) int32 { return int32(v) }),
+		MaxMemoryMB:        sharedutils.CastPtr(maxMemoryMB, func(v int64) int32 { return int32(v) }),
 	}
 
 	err = setTemplateSource(ctx, tm, teamID, teamSlug, template, fromImage, fromTemplate)

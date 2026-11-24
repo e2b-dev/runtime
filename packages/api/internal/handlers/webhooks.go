@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
+	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
+	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
@@ -35,7 +39,7 @@ func (a *APIStore) webhooksBackend(c *gin.Context) (uuid.UUID, *string, bool) {
 func (a *APIStore) PostEventsWebhooks(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	teamID, clusterID, ok := a.webhooksBackend(c)
+	teamID, _, ok := a.webhooksBackend(c)
 	if !ok {
 		return
 	}
@@ -47,15 +51,17 @@ func (a *APIStore) PostEventsWebhooks(c *gin.Context) {
 		return
 	}
 
-	response, err := a.webhookManagement.CreateWebhook(ctx, webhookmanagement.CreateWebhookRequest_builder{
-		TeamId:          teamID.String(),
-		ClusterId:       clusterID,
-		Name:            body.Name,
-		Url:             body.Url,
-		Events:          body.Events,
-		Enabled:         body.Enabled,
-		SignatureSecret: body.SignatureSecret,
-	}.Build())
+	response, err := withLiveWebhookProject(ctx, a.sqlcDB, teamID, func(clusterID *string) (*webhookmanagement.CreateWebhookResponse, error) {
+		return a.webhookManagement.CreateWebhook(ctx, webhookmanagement.CreateWebhookRequest_builder{
+			TeamId:          teamID.String(),
+			ClusterId:       clusterID,
+			Name:            body.Name,
+			Url:             body.Url,
+			Events:          body.Events,
+			Enabled:         body.Enabled,
+			SignatureSecret: body.SignatureSecret,
+		}.Build())
+	})
 	if err != nil {
 		a.sendWebhooksError(c, err, "Failed to create webhook")
 
@@ -72,6 +78,20 @@ func (a *APIStore) PostEventsWebhooks(c *gin.Context) {
 		Enabled:   webhook.GetEnabled(),
 		Events:    webhook.GetEvents(),
 	})
+}
+
+func withLiveWebhookProject[T any](ctx context.Context, db *sqlcdb.Client, projectID uuid.UUID, write func(*string) (*T, error)) (*T, error) {
+	txDB, tx, err := db.WithTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin webhook write: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	cluster, err := txDB.LockProjectForWebhookWrite(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("lock live project for webhook write: %w", err)
+	}
+
+	return write(optionalClusterID(cluster))
 }
 
 func (a *APIStore) GetEventsWebhooks(c *gin.Context) {
@@ -140,16 +160,18 @@ func (a *APIStore) GetEventsWebhooksWebhookID(c *gin.Context, webhookID api.Webh
 func (a *APIStore) DeleteEventsWebhooksWebhookID(c *gin.Context, webhookID api.WebhookID) {
 	ctx := c.Request.Context()
 
-	teamID, clusterID, ok := a.webhooksBackend(c)
+	teamID, _, ok := a.webhooksBackend(c)
 	if !ok {
 		return
 	}
 
-	_, err := a.webhookManagement.DeleteWebhook(ctx, webhookmanagement.DeleteWebhookRequest_builder{
-		TeamId:    teamID.String(),
-		ClusterId: clusterID,
-		WebhookId: webhookID.String(),
-	}.Build())
+	_, err := withLiveWebhookProject(ctx, a.sqlcDB, teamID, func(clusterID *string) (*webhookmanagement.DeleteWebhookResponse, error) {
+		return a.webhookManagement.DeleteWebhook(ctx, webhookmanagement.DeleteWebhookRequest_builder{
+			TeamId:    teamID.String(),
+			ClusterId: clusterID,
+			WebhookId: webhookID.String(),
+		}.Build())
+	})
 	if err != nil {
 		a.sendWebhooksError(c, err, "Failed to delete webhook")
 
@@ -163,7 +185,7 @@ func (a *APIStore) DeleteEventsWebhooksWebhookID(c *gin.Context, webhookID api.W
 func (a *APIStore) PatchEventsWebhooksWebhookID(c *gin.Context, webhookID api.WebhookID) {
 	ctx := c.Request.Context()
 
-	teamID, clusterID, ok := a.webhooksBackend(c)
+	teamID, _, ok := a.webhooksBackend(c)
 	if !ok {
 		return
 	}
@@ -182,16 +204,18 @@ func (a *APIStore) PatchEventsWebhooksWebhookID(c *gin.Context, webhookID api.We
 		events = webhookmanagement.WebhookEventsUpdate_builder{Values: *body.Events}.Build()
 	}
 
-	response, err := a.webhookManagement.UpdateWebhook(ctx, webhookmanagement.UpdateWebhookRequest_builder{
-		TeamId:          teamID.String(),
-		ClusterId:       clusterID,
-		WebhookId:       webhookID.String(),
-		Name:            body.Name,
-		Url:             body.Url,
-		Events:          events,
-		Enabled:         body.Enabled,
-		SignatureSecret: body.SignatureSecret,
-	}.Build())
+	response, err := withLiveWebhookProject(ctx, a.sqlcDB, teamID, func(clusterID *string) (*webhookmanagement.UpdateWebhookResponse, error) {
+		return a.webhookManagement.UpdateWebhook(ctx, webhookmanagement.UpdateWebhookRequest_builder{
+			TeamId:          teamID.String(),
+			ClusterId:       clusterID,
+			WebhookId:       webhookID.String(),
+			Name:            body.Name,
+			Url:             body.Url,
+			Events:          events,
+			Enabled:         body.Enabled,
+			SignatureSecret: body.SignatureSecret,
+		}.Build())
+	})
 	if err != nil {
 		a.sendWebhooksError(c, err, "Failed to update webhook")
 
@@ -215,5 +239,10 @@ const webhookNotFound = "Webhook not found"
 // sendWebhooksError answers a failed webhook management call. The fallback
 // varies by operation, so each call site names its own; the resource does not.
 func (a *APIStore) sendWebhooksError(c *gin.Context, err error, fallback string) {
+	if dberrors.IsNotFoundError(err) {
+		a.sendAPIStoreError(c, http.StatusNotFound, "Project not found")
+
+		return
+	}
 	a.sendWebhooksBackendError(c, err, webhooksMessages{notFound: webhookNotFound, fallback: fallback})
 }

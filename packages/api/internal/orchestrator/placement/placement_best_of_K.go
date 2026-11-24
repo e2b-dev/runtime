@@ -67,11 +67,17 @@ func (b *BestOfK) Score(node *nodemanager.Node, resources nodemanager.SandboxRes
 
 	cpuScore := (cpuRequested + float64(reserved) + config.Alpha*busyCPUs) / totalCapacity
 
-	if !config.ScoreHugepages {
-		return cpuScore
+	score := cpuScore
+	if config.ScoreHugepages {
+		score = max(score, memoryScore(metrics, resources, pendingMiB, config))
+	}
+	// One full unit of load penalizes a recent refusal without making the
+	// node ineligible. Equally penalized candidates retain their load ordering.
+	if resources.HugePages && metrics.RecentHugePageRefusal {
+		score++
 	}
 
-	return max(cpuScore, memoryScore(metrics, resources, pendingMiB, config))
+	return score
 }
 
 // memoryScore is the CPU score's shape over the hugepage pool, where sandbox
@@ -217,7 +223,7 @@ func unavailableNodeWouldFit(nodes []*nodemanager.Node, excludedNodes map[string
 			continue
 		}
 
-		if NodeSatisfiesCPU(n, requirements.CPU) && NodeSatisfiesFeatures(n, requirements.Features) && (!filterByLabels || isNodeLabelsCompatible(n, requiredLabels)) {
+		if NodeSatisfiesCPU(n, requirements.CPU) && NodeSatisfiesFeatures(n, requirements.Features) && (!filterByLabels || NodeSatisfiesLabels(n, requiredLabels)) {
 			return true
 		}
 	}
@@ -272,7 +278,7 @@ func (b *BestOfK) sample(items []*nodemanager.Node, config BestOfKConfig, exclud
 		}
 
 		// Skip if node doesn't have the required labels
-		if filterByLabels && !isNodeLabelsCompatible(n, requiredLabels) {
+		if filterByLabels && !NodeSatisfiesLabels(n, requiredLabels) {
 			continue
 		}
 

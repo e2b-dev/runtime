@@ -2,6 +2,7 @@ package logs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -50,7 +51,30 @@ func formatMethod(method string) string {
 	return fmt.Sprintf("%s %s", servicePart, methodPart)
 }
 
-func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc {
+// Option adjusts how a wrapper logs a call.
+type Option func(*options)
+
+type options struct {
+	redact func(msg any) any
+}
+
+// WithRedact sets the function that turns a message into the value to log.
+func WithRedact(redact func(msg any) any) Option {
+	return func(o *options) { o.redact = redact }
+}
+
+func newOptions(opts []Option) options {
+	o := options{redact: func(msg any) any { return msg }}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	return o
+}
+
+func NewUnaryLogInterceptor(logger *zerolog.Logger, opts ...Option) connect.UnaryInterceptorFunc {
+	o := newOptions(opts)
+
 	interceptor := func(next connect.UnaryFunc) connect.UnaryFunc {
 		return connect.UnaryFunc(func(
 			ctx context.Context,
@@ -60,8 +84,7 @@ func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc
 
 			res, err := next(ctx, req)
 
-			l := logger.
-				Err(err).
+			l := endLogEvent(ctx, logger, zerolog.InfoLevel, err).
 				Str("method", DefaultHTTPMethod+" "+req.Spec().Procedure).
 				Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -70,11 +93,11 @@ func NewUnaryLogInterceptor(logger *zerolog.Logger) connect.UnaryInterceptorFunc
 			}
 
 			if req != nil {
-				l = l.Interface("request", req.Any())
+				l = l.Interface("request", o.redact(req.Any()))
 			}
 
 			if res != nil && err == nil {
-				l = l.Interface("response", res.Any())
+				l = l.Interface("response", o.redact(res.Any()))
 			}
 
 			if res == nil && err == nil {
@@ -96,7 +119,9 @@ func LogServerStreamWithoutEvents[T any, R any](
 	req *connect.Request[R],
 	stream *connect.ServerStream[T],
 	handler func(ctx context.Context, req *connect.Request[R], stream *connect.ServerStream[T]) error,
+	opts ...Option,
 ) error {
+	o := newOptions(opts)
 	ctx = AddRequestIDToContext(ctx)
 
 	l := logger.Debug().
@@ -104,14 +129,14 @@ func LogServerStreamWithoutEvents[T any, R any](
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
 	if req != nil {
-		l = l.Interface("request", req.Any())
+		l = l.Interface("request", o.redact(req.Any()))
 	}
 
 	l.Msg(fmt.Sprintf("%s (server stream start)", formatMethod(req.Spec().Procedure)))
 
 	err := handler(ctx, req, stream)
 
-	logEvent := getErrDebugLogEvent(logger, err).
+	logEvent := endLogEvent(ctx, logger, zerolog.DebugLevel, err).
 		Str("method", DefaultHTTPMethod+" "+req.Spec().Procedure).
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -131,7 +156,9 @@ func LogClientStreamWithoutEvents[T any, R any](
 	logger *zerolog.Logger,
 	stream *connect.ClientStream[T],
 	handler func(ctx context.Context, stream *connect.ClientStream[T]) (*connect.Response[R], error),
+	opts ...Option,
 ) (*connect.Response[R], error) {
+	o := newOptions(opts)
 	ctx = AddRequestIDToContext(ctx)
 
 	logger.Debug().
@@ -141,7 +168,7 @@ func LogClientStreamWithoutEvents[T any, R any](
 
 	res, err := handler(ctx, stream)
 
-	logEvent := getErrDebugLogEvent(logger, err).
+	logEvent := endLogEvent(ctx, logger, zerolog.DebugLevel, err).
 		Str("method", DefaultHTTPMethod+" "+stream.Spec().Procedure).
 		Str(string(OperationIDKey), ctx.Value(OperationIDKey).(string))
 
@@ -150,7 +177,7 @@ func LogClientStreamWithoutEvents[T any, R any](
 	}
 
 	if res != nil && err == nil {
-		logEvent = logEvent.Interface("response", res.Any())
+		logEvent = logEvent.Interface("response", o.redact(res.Any()))
 	}
 
 	if res == nil && err == nil {
@@ -162,11 +189,17 @@ func LogClientStreamWithoutEvents[T any, R any](
 	return res, err
 }
 
-// Return logger with error level if err is not nil, otherwise return logger with debug level
-func getErrDebugLogEvent(logger *zerolog.Logger, err error) *zerolog.Event {
-	if err != nil {
-		return logger.Error().Err(err) //nolint:zerologlint // this builds an event, it is not expected to return it
+// endLogEvent returns the event for a call's final log line: the success level
+// when err is nil, debug when the client cancelled the call, and error
+// otherwise. A cancelled call can fail in any way, for example a stream write
+// to the closed connection, so the request context decides, not the error.
+func endLogEvent(ctx context.Context, logger *zerolog.Logger, success zerolog.Level, err error) *zerolog.Event {
+	switch {
+	case err == nil:
+		return logger.WithLevel(success) //nolint:zerologlint // the caller adds fields and sends it
+	case errors.Is(ctx.Err(), context.Canceled):
+		return logger.Debug().Err(err) //nolint:zerologlint // the caller adds fields and sends it
+	default:
+		return logger.Error().Err(err) //nolint:zerologlint // the caller adds fields and sends it
 	}
-
-	return logger.Debug() //nolint:zerologlint // this builds an event, it is not expected to return it
 }

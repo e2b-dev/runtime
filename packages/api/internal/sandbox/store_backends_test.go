@@ -36,6 +36,8 @@ type fakeBackend struct {
 	mu     sync.Mutex
 	calls  []backendCall
 	onCall func(method string)
+	// held is how many more begins a lifecycle hold refuses.
+	held int
 }
 
 var (
@@ -112,8 +114,23 @@ func (f *fakeBackend) TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]
 	return map[uuid.UUID]int64{}, nil
 }
 
+// refuseHeld reports whether a lifecycle hold refuses this begin.
+func (f *fakeBackend) refuseHeld() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.held == 0 {
+		return false
+	}
+	f.held--
+
+	return true
+}
+
 func (f *fakeBackend) BeginUpdate(ctx context.Context, _ uuid.UUID, _ string) (Sandbox, sandboxtypes.UpdateToken, error) {
 	f.record(ctx, "BeginUpdate")
+	if f.refuseHeld() {
+		return Sandbox{}, "", ErrLifecycleHeld
+	}
 
 	return Sandbox{}, f.token, nil
 }
@@ -138,6 +155,9 @@ func (f *fakeBackend) AbortUpdate(ctx context.Context, _ uuid.UUID, _ string, to
 
 func (f *fakeBackend) BeginRemoving(ctx context.Context, _ uuid.UUID, _ string, _ RemoveOpts) (StateTransition, bool, error) {
 	f.record(ctx, "BeginRemoving")
+	if f.refuseHeld() {
+		return StateTransition{}, false, ErrLifecycleHeld
+	}
 
 	return StateTransition{ID: "transition"}, false, nil
 }
@@ -660,6 +680,19 @@ func TestStoreKeepsOnePairWhenTheFlagFlips(t *testing.T) {
 			},
 		},
 		{
+			name: "update after a hold",
+			want: []string{"BeginUpdate", "BeginUpdate", "CommitUpdate"},
+			before: func(f *fixture) {
+				f.local.held, f.remote.held = 1, 1
+			},
+			run: func(t *testing.T, f *fixture, startOn bool) {
+				t.Helper()
+				flipOn(f, startOn, "BeginUpdate")
+				_, err := f.store.Update(t.Context(), f.teamID, f.sandboxID, func(sbx Sandbox) (Sandbox, error) { return sbx, nil })
+				require.NoError(t, err)
+			},
+		},
+		{
 			name: "remove",
 			want: []string{"Remove", "Release"},
 			run: func(t *testing.T, f *fixture, startOn bool) {
@@ -686,6 +719,20 @@ func TestStoreKeepsOnePairWhenTheFlagFlips(t *testing.T) {
 				_, _, finish, err := f.store.StartRemoving(t.Context(), f.teamID, f.sandboxID, RemoveOpts{Action: StateActionKill})
 				require.NoError(t, err)
 				f.setFlag(!startOn)
+				finish(t.Context(), nil)
+			},
+		},
+		{
+			name: "start removing after a hold",
+			want: []string{"BeginRemoving", "BeginRemoving", "FinishTransition"},
+			before: func(f *fixture) {
+				f.local.held, f.remote.held = 1, 1
+			},
+			run: func(t *testing.T, f *fixture, startOn bool) {
+				t.Helper()
+				flipOn(f, startOn, "BeginRemoving")
+				_, _, finish, err := f.store.StartRemoving(t.Context(), f.teamID, f.sandboxID, RemoveOpts{Action: StateActionKill, WaitForLifecycleHold: true})
+				require.NoError(t, err)
 				finish(t.Context(), nil)
 			},
 		},

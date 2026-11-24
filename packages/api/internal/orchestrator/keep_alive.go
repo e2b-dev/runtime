@@ -20,9 +20,10 @@ var (
 )
 
 func (o *Orchestrator) KeepAliveFor(ctx context.Context, teamID uuid.UUID, sandboxID string, duration time.Duration, allowShorter bool) (*sandbox.Sandbox, *api.APIError) {
-	now := time.Now()
-
 	updateFunc := func(sbx sandbox.Sandbox) (sandbox.Sandbox, error) {
+		// Read under the record's lock: the update may have waited out a
+		// lifecycle hold, and the timeout counts from when it is set.
+		now := time.Now()
 		if sbx.State != sandbox.StateRunning {
 			return sbx, &sandbox.NotRunningError{SandboxID: sandboxID, State: sbx.State}
 		}

@@ -21,24 +21,24 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxconfig"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 const hangTimeout = 30 * time.Second
 
-func newClient(t *testing.T, storage sandboxtypes.Storage) scheduling.StateServiceClient {
+func newClient(t *testing.T, storage sandboxtypes.Storage) statepb.StateServiceClient {
 	t.Helper()
 
 	return newClientWithWait(t, storage, hangTimeout)
 }
 
-func newClientWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration) scheduling.StateServiceClient {
+func newClientWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration) statepb.StateServiceClient {
 	t.Helper()
 
-	return scheduling.NewStateServiceClient(newConnWithWait(t, storage, maxWait))
+	return statepb.NewStateServiceClient(newConnWithWait(t, storage, maxWait))
 }
 
 func newConnWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Duration, options ...grpc.DialOption) *grpc.ClientConn {
@@ -46,7 +46,7 @@ func newConnWithWait(t *testing.T, storage sandboxtypes.Storage, maxWait time.Du
 
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	scheduling.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
+	statepb.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
 	go func() {
 		assert.NoError(t, server.Serve(listener))
 	}()
@@ -140,6 +140,9 @@ func fullRecord(teamID uuid.UUID, sandboxID string) sandboxtypes.Sandbox {
 		VCpu:                       2,
 		TotalDiskSizeMB:            1024,
 		RamMB:                      512,
+		MemoryMB:                   1024,
+		PlacedMemoryMB:             2048,
+		RequiredFeatures:           []string{"memory-resize"},
 		KernelVersion:              "kernel",
 		FirecrackerVersion:         "firecracker",
 		FirecrackerVersionResolved: true,
@@ -291,7 +294,7 @@ func flatten(messages [][][]byte) [][]byte {
 	return records
 }
 
-func readTeamItems(t *testing.T, stream grpc.ServerStreamingClient[scheduling.TeamItemsResponse]) ([][]byte, int, error) {
+func readTeamItems(t *testing.T, stream grpc.ServerStreamingClient[statepb.TeamItemsResponse]) ([][]byte, int, error) {
 	t.Helper()
 
 	messages, err := readMessages(t, stream)
@@ -299,7 +302,7 @@ func readTeamItems(t *testing.T, stream grpc.ServerStreamingClient[scheduling.Te
 	return flatten(messages), len(messages), err
 }
 
-func readExpiredItems(t *testing.T, stream grpc.ServerStreamingClient[scheduling.ExpiredItemsResponse]) ([][]byte, int, error) {
+func readExpiredItems(t *testing.T, stream grpc.ServerStreamingClient[statepb.ExpiredItemsResponse]) ([][]byte, int, error) {
 	t.Helper()
 
 	messages, err := readMessages(t, stream)

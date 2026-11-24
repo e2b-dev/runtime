@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,12 +29,11 @@ func TestUpsertProjectCreatesThenReconciles(t *testing.T) {
 	t.Parallel()
 
 	db := testutils.SetupDatabase(t)
-	store, auth := newManagementStore(t, db)
+	store, _ := newManagementStore(t, db)
 	project := newProjectFixture()
 
 	created := callUpsertProject(t, store, project.id, project.request())
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	require.Empty(t, *auth.invalidatedTeamIDs, "a project that did not exist has nothing cached")
 
 	renamed := project.request()
 	renamed.Name = "Acme Renamed"
@@ -42,8 +42,28 @@ func TestUpsertProjectCreatesThenReconciles(t *testing.T) {
 	require.Equal(t, http.StatusOK, reconciled.Code, reconciled.Body.String())
 
 	require.Equal(t, "Acme Renamed", teamColumn(t, db, project.id, "name"))
-	// The team changed, so every cached copy of it is stale.
-	require.Equal(t, []uuid.UUID{project.id}, *auth.invalidatedTeamIDs)
+}
+
+func TestUnversionedProjectRequiresCacheEvictionBeforeAcknowledgement(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	store, cache := newManagementStore(t, db)
+	project := newProjectFixture()
+	cluster := createCluster(t, db)
+	request := project.request()
+	request.ClusterId = &cluster
+
+	cache.invalidateTeamErr = errors.New("cache unavailable")
+	require.Equal(t, http.StatusInternalServerError, callUpsertProject(t, store, project.id, request).Code)
+	require.Equal(t, &cluster, teamCluster(t, db, project.id))
+	require.Equal(t, http.StatusInternalServerError, callUpsertProject(t, store, project.id, request).Code)
+	cache.invalidateTeamErr = nil
+	res := callUpsertProject(t, store, project.id, request)
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+	var stored api.ManagementProject
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &stored))
+	require.Equal(t, &cluster, stored.ClusterId)
 }
 
 // A retry after a response the caller never saw has to land on the same state.

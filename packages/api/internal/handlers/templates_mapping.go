@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/db/queries"
 	sharedUtils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -12,6 +13,15 @@ import (
 // selects these columns, in this order, so that its generated row type
 // converts to this one.
 type templateRow = queries.ListDefaultTemplatesRow
+
+// templateMemoryMB is the memory a sandbox created from a build starts with: its
+// boot RAM, or for a snapshot template of a grown sandbox the size it was taken
+// at. A create that names no memoryMB starts at exactly this.
+func templateMemoryMB(ramMB int64, maxRAMMB, startMemoryMB *int64) api.MemoryMB {
+	memoryMB, _ := orchestrator.BuildStartMemoryMB(ramMB, maxRAMMB, startMemoryMB)
+
+	return api.MemoryMB(memoryMB)
+}
 
 // templateToAPI maps a template list row. Without usage, the template's usage
 // fields (spawn and build counts, last spawn, creator) stay zero or empty: a
@@ -32,7 +42,8 @@ func templateToAPI(ctx context.Context, row templateRow, withUsage bool) api.Tem
 		BuildID:     row.BuildID.String(),
 		CpuCount:    api.CPUCount(row.BuildVcpu),
 		MaxCpuCount: sharedUtils.CastPtr(row.BuildMaxVcpu, func(v int64) api.CPUCount { return api.CPUCount(v) }),
-		MemoryMB:    api.MemoryMB(row.BuildRamMb),
+		MaxMemoryMB: sharedUtils.CastPtr(row.BuildMaxRamMb, func(v int64) api.MemoryMB { return api.MemoryMB(v) }),
+		MemoryMB:    templateMemoryMB(row.BuildRamMb, row.BuildMaxRamMb, row.BuildStartMemoryMb),
 		DiskSizeMB:  api.DiskSizeMB(diskMB),
 		Public:      row.Public,
 		Aliases:     row.Aliases,
@@ -77,6 +88,7 @@ func templateWithBuilds(template api.Template, builds []api.TemplateBuild) api.T
 		BuildID:       template.BuildID,
 		CpuCount:      template.CpuCount,
 		MaxCpuCount:   template.MaxCpuCount,
+		MaxMemoryMB:   template.MaxMemoryMB,
 		MemoryMB:      template.MemoryMB,
 		DiskSizeMB:    template.DiskSizeMB,
 		Public:        template.Public,

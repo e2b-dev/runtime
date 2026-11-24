@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
@@ -203,7 +203,7 @@ func TestRemoteWaitForStartAcrossPolls(t *testing.T) {
 	waiting := make(chan struct{}, 64)
 	countWaiting := grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		err := invoker(ctx, method, req, reply, cc, opts...)
-		if resp, ok := reply.(*scheduling.WaitForStartResponse); ok && err == nil && resp.GetOutcome() == scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING {
+		if resp, ok := reply.(*reservationpb.WaitForStartResponse); ok && err == nil && resp.GetOutcome() == reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING {
 			select {
 			case waiting <- struct{}{}:
 			default:

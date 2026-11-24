@@ -52,8 +52,6 @@ CREATE TRIGGER post_user_signup
 
 -- Phase 3: Add delete-sync trigger so auth.users deletions propagate to public.users
 -- (which then cascades to access_tokens, users_teams, etc. via the re-pointed FKs).
-GRANT DELETE ON public.users TO trigger_user;
-
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.sync_delete_auth_users_to_public_users_trigger() RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -64,8 +62,6 @@ BEGIN
 END;
 $func$ SECURITY DEFINER SET search_path = public;
 -- +goose StatementEnd
-
-ALTER FUNCTION public.sync_delete_auth_users_to_public_users_trigger() OWNER TO trigger_user;
 
 CREATE TRIGGER sync_deletes_to_public_users
     AFTER DELETE ON auth.users
@@ -96,7 +92,6 @@ CREATE TRIGGER post_user_signup
 -- Drop delete-sync trigger and function
 DROP TRIGGER IF EXISTS sync_deletes_to_public_users ON auth.users;
 DROP FUNCTION IF EXISTS public.sync_delete_auth_users_to_public_users_trigger();
-REVOKE DELETE ON public.users FROM trigger_user;
 
 -- Restore FK from public.users to auth.users
 ALTER TABLE public.users

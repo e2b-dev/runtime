@@ -21,8 +21,8 @@ func TestNewProcessIsConfiguredOverAnEmptyDirectory(t *testing.T) {
 	require.NoError(t, err)
 	_ = mtls.NewServerCredentials(cfg)
 
-	assert.Equal(t, int64(1), servicetest.ListenerMode(t, metrics, "http", "off", mtls.SourceFallback))
-	assert.Equal(t, int64(-1), servicetest.ListenerMode(t, metrics, "http", "permissive", mtls.SourceFallback), "an absent series reads -1")
+	assert.Equal(t, int64(1), servicetest.ListenerMode(t, metrics, "http", "off", mtls.SourceStatic))
+	assert.Equal(t, int64(-1), servicetest.ListenerMode(t, metrics, "http", "permissive", mtls.SourceStatic), "an absent series reads -1")
 }
 
 func TestFlagsDriveAListenerAndAHop(t *testing.T) {

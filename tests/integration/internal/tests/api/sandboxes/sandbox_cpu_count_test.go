@@ -42,3 +42,35 @@ func TestSandboxCreate_CpuCountAboveTemplateBound(t *testing.T) {
 	require.NotNil(t, resp.JSON400.ErrorCode)
 	assert.Equal(t, wantCode, *resp.JSON400.ErrorCode)
 }
+
+// TestSandboxCreate_MemoryAboveTemplateBound verifies that a memoryMB the
+// template cannot run is refused up front with a named error code, for test
+// templates whose memory can or cannot grow. Requires resizable-templates enabled.
+func TestSandboxCreate_MemoryAboveTemplateBound(t *testing.T) {
+	t.Parallel()
+	c := setup.GetAPIClient()
+
+	tmpl, err := c.GetTemplatesTemplateIDWithResponse(t.Context(), setup.SandboxTemplateID, &api.GetTemplatesTemplateIDParams{}, setup.WithAPIKey())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, tmpl.StatusCode())
+	require.NotNil(t, tmpl.JSON200)
+
+	bound := tmpl.JSON200.MemoryMB
+	wantCode := "sandbox_memory_not_resizable"
+	if tmpl.JSON200.MaxMemoryMB != nil {
+		bound = *tmpl.JSON200.MaxMemoryMB
+		wantCode = "sandbox_memory_out_of_range"
+	}
+
+	timeout := int32(30)
+	resp, err := c.PostSandboxesWithResponse(t.Context(), api.NewSandbox{
+		TemplateID: setup.SandboxTemplateID,
+		Timeout:    &timeout,
+		MemoryMB:   new(bound + 128),
+	}, setup.WithAPIKey())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode(), string(resp.Body))
+	require.NotNil(t, resp.JSON400)
+	require.NotNil(t, resp.JSON400.ErrorCode)
+	assert.Equal(t, wantCode, *resp.JSON400.ErrorCode)
+}

@@ -1,0 +1,13 @@
+syntax = "proto3";
+package proxy;
+option go_package = "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy;proxygrpc";
+
+// The proxy exchanges its projected Kubernetes credential in gRPC authorization metadata.
+service ResumeTokenService {
+  rpc ExchangeResumeToken(ExchangeResumeTokenRequest) returns (ExchangeResumeTokenResponse);
+}
+message ExchangeResumeTokenRequest {}
+message ExchangeResumeTokenResponse {
+  string access_token = 1;
+  int64 expires_at_unix = 2;
+}

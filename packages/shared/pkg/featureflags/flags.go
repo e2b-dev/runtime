@@ -194,6 +194,12 @@ var (
 	OrchAcceptsCombinedHostFlag         = NewBoolFlag("orch-accepts-combined-host", false)
 	WorkspacesEnabledFlag               = NewBoolFlag("workspacesEnabled", false)
 
+	// NFSCacheIndexWritesFlag lets orchestrators record the builds they use
+	// from the NFS chunk cache in Redis, the last-use index the cache cleaner
+	// evicts from. Read at every flush, so turning it off stops writes within
+	// one flush interval.
+	NFSCacheIndexWritesFlag = NewBoolFlag("nfs-cache-index-writes", false)
+
 	// ClientProxyResumeParkingFlag lets client-proxy retry a wake-on-traffic
 	// resume that failed retryably, read by each request at its own park
 	// transition: off means the first retryable failure is that request's answer.
@@ -1022,6 +1028,67 @@ var (
 	// 1 or lower keeps the existing serial path.
 	MaxParallelBuildReadSegments = NewIntFlag("max-parallel-build-read-segments", 1)
 )
+
+// RootfsReadAheadFlag configures read-ahead for sandboxes reading their rootfs
+// cold and in order, as one JSON object:
+//
+//	{"chunks": 8, "streams": 16, "nodeMaxInflight": 32}
+//
+// chunks is how many chunks a sequential cold reader of a rootfs build file
+// keeps fetching ahead of itself. A reader counts as sequential once it misses
+// two chunks in a row, or misses a chunk inside or at the edge of what was read
+// ahead for it. 0 or negative turns read-ahead off; above 64 is treated as 64.
+//
+// streams is how many sequential readers of one rootfs build file are followed
+// at once, for example several sandboxes started from the same template. A cold
+// read that continues none of them takes over the slot used least recently, so
+// with more readers than slots they keep taking each other's slots and none
+// gets read-ahead. The file may have chunks fetches in flight per slot. Below 1
+// is treated as 1, above 32 as 32.
+//
+// nodeMaxInflight caps the read-ahead fetches running at once across all files
+// on the orchestrator. A chunk that finds the cap full is not fetched ahead
+// then; the reader's next cold read tries it again, or the reader fetches it on
+// demand. 0 or negative allows none.
+//
+// A missing or non-numeric field takes its default (chunks 0, streams 4,
+// nodeMaxInflight 32), so an unset or malformed value leaves read-ahead off.
+// Evaluated on every cold rootfs read, so a change applies without a restart.
+var RootfsReadAheadFlag = NewJSONFlag("rootfs-read-ahead", ldvalue.Null())
+
+// Defaults of RootfsReadAheadFlag's fields.
+const (
+	RootfsReadAheadDefaultChunks          = 0
+	RootfsReadAheadDefaultStreams         = 4
+	RootfsReadAheadDefaultNodeMaxInflight = 32
+)
+
+// RootfsReadAheadConfig is one evaluation of RootfsReadAheadFlag, before the
+// reader clamps it.
+type RootfsReadAheadConfig struct {
+	Chunks          int
+	Streams         int
+	NodeMaxInflight int
+}
+
+// GetRootfsReadAheadConfig evaluates RootfsReadAheadFlag.
+func GetRootfsReadAheadConfig(ctx context.Context, ff *Client, contexts ...ldcontext.Context) RootfsReadAheadConfig {
+	v := ff.JSONFlag(ctx, RootfsReadAheadFlag, contexts...)
+	num := func(key string, def int) int {
+		f := v.GetByKey(key)
+		if !f.IsNumber() {
+			return def
+		}
+
+		return f.IntValue()
+	}
+
+	return RootfsReadAheadConfig{
+		Chunks:          num("chunks", RootfsReadAheadDefaultChunks),
+		Streams:         num("streams", RootfsReadAheadDefaultStreams),
+		NodeMaxInflight: num("nodeMaxInflight", RootfsReadAheadDefaultNodeMaxInflight),
+	}
+}
 
 // ReclaimConfigFlag holds per-step caps in milliseconds for the pre-pause
 // reclaim chain. Missing/zero/negative values disable the step.

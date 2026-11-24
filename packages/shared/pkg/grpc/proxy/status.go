@@ -27,6 +27,11 @@ const (
 	// the node took while the sandbox's guest agent did not answer; only a
 	// resume without memory brings the sandbox back.
 	SnapshotGuestAgentUnresponsive = "sandbox_snapshot_guest_agent_unresponsive"
+
+	// SandboxMemoryRecordMismatch is a node refusing the memory size the API
+	// sent from its own record, not from the request: the record disagrees
+	// with the node's snapshot, and every retry sends the same size.
+	SandboxMemoryRecordMismatch = "sandbox_memory_record_mismatch"
 )
 
 // PermanentPlacementRefusal reports an error code for a placement no retry
@@ -37,8 +42,15 @@ const (
 // a node pool that is only briefly draining or unhealthy, so both are
 // retried. A snapshot taken over an unresponsive guest agent is refused a
 // memory resume for good; only an explicit resume without memory changes it.
+// A memory size the API sent from its own record that the node refuses is
+// refused again on every retry.
 func PermanentPlacementRefusal(code string) bool {
-	return code == PlacementFeatureUnsupported || code == PlacementCreateRefused || code == SnapshotGuestAgentUnresponsive
+	switch code {
+	case PlacementFeatureUnsupported, PlacementCreateRefused, SnapshotGuestAgentUnresponsive, SandboxMemoryRecordMismatch:
+		return true
+	default:
+		return false
+	}
 }
 
 // RetryablePlacementFailure reports an error code for a placement the API

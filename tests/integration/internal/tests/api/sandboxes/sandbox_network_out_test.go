@@ -470,6 +470,12 @@ func TestEgressFirewallPrivateIPRangesAlwaysBlocked(t *testing.T) {
 			testIP:    "169.254.0.1",
 			testDesc:  "169.254.0.0/16 range (link-local)",
 		},
+		{
+			name:      "azure_host_endpoint_168.63.129.16/32",
+			allowedIP: "168.63.129.16/32",
+			testIP:    "168.63.129.16",
+			testDesc:  "168.63.129.16 (Azure host endpoint)",
+		},
 	}
 
 	for _, tc := range testCases {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -376,6 +377,25 @@ func TestRedisCache_RedisRefresh_UpdatesRedis(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 }
 
+func TestRedisCache_RefreshDoesNotRecreateEvictedEntry(t *testing.T) {
+	t.Parallel()
+	client := redis_utils.SetupInstance(t)
+	rc := newTestRedisCache(t, client)
+	ctx := t.Context()
+	key := "key"
+	rc.Set(ctx, key, testValue{Name: "cached"})
+
+	rc.refreshRedis(ctx, key, func(ctx context.Context, key string) (testValue, error) {
+		deleted, err := client.Del(ctx, rc.RedisKey(key)).Result()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), deleted)
+
+		return testValue{Name: "refreshed"}, nil
+	})
+
+	assert.ErrorIs(t, client.Get(ctx, rc.RedisKey(key)).Err(), redis.Nil)
+}
+
 func TestRedisCache_RedisRefresh_ErrorKeepsStaleValue(t *testing.T) {
 	t.Parallel()
 	redisClient := redis_utils.SetupInstance(t)
@@ -614,4 +634,86 @@ func TestRedisCache_Lock_Disabled(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, expected, result)
+}
+
+func TestRedisCache_GetOrSetFresh_ReplacesAStaleEntry(t *testing.T) {
+	t.Parallel()
+	redisClient := redis_utils.SetupInstance(t)
+	rc := newTestRedisCacheWithLock(t, redisClient)
+	defer rc.Close(t.Context())
+
+	rc.Set(t.Context(), "key", testValue{ID: "1", Name: "old"})
+	fresh := testValue{ID: "1", Name: "new"}
+	got, err := rc.GetOrSetFresh(t.Context(), "key", func(context.Context, string) (testValue, error) { return fresh, nil },
+		func(v testValue) bool { return v.Name == "old" })
+	require.NoError(t, err)
+	assert.Equal(t, fresh, got)
+
+	cached, _, err := rc.getFromRedis(t.Context(), "key")
+	require.NoError(t, err)
+	assert.Equal(t, fresh, cached, "the stale entry is replaced")
+}
+
+func TestRedisCache_GetOrSetFresh_ServesAFreshEntryWithoutWritingAStaleOne(t *testing.T) {
+	t.Parallel()
+	redisClient := redis_utils.SetupInstance(t)
+	rc := newTestRedisCacheWithLock(t, redisClient)
+	defer rc.Close(t.Context())
+
+	rc.Set(t.Context(), "key", testValue{ID: "1", Name: "old"})
+	var calls atomic.Int32
+	got, err := rc.GetOrSetFresh(t.Context(), "key", func(context.Context, string) (testValue, error) {
+		calls.Add(1)
+
+		return testValue{ID: "1", Name: fmt.Sprintf("read %d", calls.Load())}, nil
+	}, func(testValue) bool { return true })
+	require.NoError(t, err)
+	assert.Equal(t, "read 2", got.Name, "an entry that stays stale is answered from the backing store")
+	assert.Equal(t, int32(2), calls.Load())
+}
+
+// A refill holds the per-key lock across its read and write, so an invalidation
+// that starts while the refill is reading waits for it and removes what it wrote.
+func TestRedisCache_GetOrSetFresh_InvalidationDuringTheRefillWins(t *testing.T) {
+	t.Parallel()
+	redisClient := redis_utils.SetupInstance(t)
+	rc := newTestRedisCacheWithLock(t, redisClient)
+	defer rc.Close(t.Context())
+
+	rc.Set(t.Context(), "key", testValue{ID: "1", Name: "old"})
+	reading := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	callback := func(context.Context, string) (testValue, error) { //nolint:unparam // a DataCallback's shape
+		once.Do(func() { close(reading) })
+		<-release
+
+		return testValue{ID: "1", Name: "read before the invalidation"}, nil
+	}
+
+	refilled := make(chan error, 1)
+	go func() {
+		_, err := rc.GetOrSetFresh(context.WithoutCancel(t.Context()), "key", callback, func(v testValue) bool { return v.Name == "old" })
+		refilled <- err
+	}()
+	<-reading
+
+	invalidated := make(chan struct{})
+	go func() {
+		rc.Delete(context.WithoutCancel(t.Context()), "key")
+		close(invalidated)
+	}()
+	select {
+	case <-invalidated:
+		require.Fail(t, "the invalidation must wait for the refill holding the lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-refilled)
+	<-invalidated
+
+	exists, err := redisClient.Exists(t.Context(), rc.RedisKey("key")).Result()
+	require.NoError(t, err)
+	assert.Zero(t, exists, "the invalidation removes what the refill wrote")
 }

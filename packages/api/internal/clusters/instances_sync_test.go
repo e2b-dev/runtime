@@ -15,11 +15,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
 	"github.com/e2b-dev/infra/packages/shared/pkg/synchronization"
@@ -172,6 +175,31 @@ func TestClusterStartRunsInitialDiscoveryOnlyForSyncImmediately(t *testing.T) {
 			}
 		})
 	}
+}
+
+//nolint:paralleltest // ReplaceGlobals mutates process state
+func TestClusterStartLogsFailedDiscoveryWithClusterID(t *testing.T) {
+	core, logs := observer.New(zap.ErrorLevel)
+	t.Cleanup(logger.ReplaceGlobals(t.Context(), logger.NewTracedLoggerFromCore(core)))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	record := Record{ID: uuid.New(), Endpoint: strings.TrimPrefix(server.URL, "http://")}
+	cluster, err := newRemoteCluster(nil, nil, record)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cluster.Close(t.Context()) })
+
+	cluster.Start(t.Context(), syncImmediately)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		failures := logs.FilterLevelExact(zap.ErrorLevel).All()
+		require.NotEmpty(c, failures)
+		fields := failures[0].ContextMap()
+		assert.Equal(c, record.ID.String(), fields["cluster.id"])
+		assert.Contains(c, fields["error"], "403 Forbidden")
+	}, time.Second, 10*time.Millisecond)
 }
 
 // listInstancesFunc is a query-style discoverer: it answers every call

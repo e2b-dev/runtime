@@ -1,8 +1,8 @@
 # scheduling-api
 
 gRPC service for scheduling. It serves the start reservation service
-`e2b.scheduling.v1.ReservationService` and the sandbox state service
-`e2b.scheduling.v1.StateService` on the Redis data of the API: it connects to
+`e2b.scheduling.reservation.v1.ReservationService` and the sandbox state service
+`e2b.scheduling.state.v1.StateService` on the Redis data of the API: it connects to
 the same Redis and reads and writes the same keys. The API's sandbox store
 calls it when the `sandbox-state-scheduling-api` flag is on, which it is not by
 default.
@@ -12,13 +12,9 @@ sandbox store interfaces `Storage` and `ReservationStorage` over a gRPC
 connection to this service, with the same results and errors as the Redis
 backends.
 
-The contracts are
-[`e2b/scheduling/v1/reservation.proto`](e2b/scheduling/v1/reservation.proto)
-and [`e2b/scheduling/v1/state.proto`](e2b/scheduling/v1/state.proto) in this
-directory. The generated Go code is in
-`packages/shared/pkg/grpc/scheduling`. After a change to the proto, run
-`make generate`. Generation needs network access: it fetches the protovalidate
-rules with `buf export`.
+The generated Go code of the contracts is in
+`packages/shared/pkg/grpc/contracts/scheduling/reservation` and
+`packages/shared/pkg/grpc/contracts/scheduling/state`.
 
 ## Transport
 
@@ -53,8 +49,7 @@ The protos describe each method, its fields and its outcomes.
 
 ### StateService
 
-The records of running sandboxes, as the JSON of the store's record. See
-[`state.proto`](e2b/scheduling/v1/state.proto) for each method.
+The records of running sandboxes, as the JSON of the store's record.
 
 | Group | Methods |
 |---|---|
@@ -102,7 +97,8 @@ configuration or the listener fails on start, the service closes what it
 opened and exits with an error.
 
 The standard gRPC health service then reports `SERVING` for `""`,
-`e2b.scheduling.v1.ReservationService` and `e2b.scheduling.v1.StateService`.
+`e2b.scheduling.reservation.v1.ReservationService` and
+`e2b.scheduling.state.v1.StateService`.
 On `SIGTERM` or `SIGINT` all health statuses change to `NOT_SERVING`. The listener keeps serving for 10 s, then
 stops gracefully within 10 s. Then the service stops the sandbox store and
 closes the Redis client.
@@ -142,7 +138,6 @@ make test
 ## Commands
 
 ```bash
-make generate   # regenerate the Go code from the proto
 make build      # bin/scheduling-api
 make test       # go test -race ./...; needs REDIS_TEST_DATABASE_URL
 make run-local  # build and listen on :50051; needs INFRA_REDIS_URL, and the E2B_TLS_* files or E2B_TLS_GRPC_MODE=off

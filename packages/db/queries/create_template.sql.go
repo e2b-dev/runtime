@@ -61,7 +61,9 @@ INSERT INTO "public"."env_builds" (
     ready_cmd,
     dockerfile,
     version,
-    max_vcpu
+    max_vcpu,
+    max_ram_mb,
+    start_memory_mb
 ) VALUES (
     $1,
     $2::text,
@@ -77,7 +79,9 @@ INSERT INTO "public"."env_builds" (
     $10,
     $11,
     $12,
-    $13
+    $13,
+    $14,
+    $15
 )
 `
 
@@ -95,6 +99,8 @@ type CreateTemplateBuildParams struct {
 	Dockerfile         *string
 	Version            *string
 	MaxVcpu            *int64
+	MaxRamMb           *int64
+	StartMemoryMb      *int64
 }
 
 // kernel_version and firecracker_version are populated here for backwards
@@ -119,6 +125,8 @@ func (q *Queries) CreateTemplateBuild(ctx context.Context, arg CreateTemplateBui
 		arg.Dockerfile,
 		arg.Version,
 		arg.MaxVcpu,
+		arg.MaxRamMb,
+		arg.StartMemoryMb,
 	)
 	return err
 }

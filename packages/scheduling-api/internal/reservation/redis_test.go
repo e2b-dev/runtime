@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 	"google.golang.org/grpc/codes"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	reservations_redis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
@@ -57,7 +57,7 @@ func (w *waitEntered) awaitEntered(t *testing.T) {
 
 type redisSetup struct {
 	records *storage_redis.Storage
-	client  scheduling.ReservationServiceClient
+	client  reservationpb.ReservationServiceClient
 	waits   *waitEntered
 }
 
@@ -83,8 +83,8 @@ func TestRedisReserveOutcomes(t *testing.T) {
 
 		ctx := callContext(t)
 		id := newIDs()
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING, reserve(ctx, t, s.client, id, 10))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING, reserve(ctx, t, s.client, id, 10))
 	})
 
 	t.Run("limit reached", func(t *testing.T) {
@@ -93,15 +93,15 @@ func TestRedisReserveOutcomes(t *testing.T) {
 		ctx := callContext(t)
 		first := newIDs()
 		second := ids{team: first.team, sandbox: "other-" + first.sandbox}
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, first, 1))
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED, reserve(ctx, t, s.client, second, 1))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, first, 1))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED, reserve(ctx, t, s.client, second, 1))
 	})
 
 	t.Run("limit zero", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := callContext(t)
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED, reserve(ctx, t, s.client, newIDs(), 0))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED, reserve(ctx, t, s.client, newIDs(), 0))
 	})
 
 	t.Run("negative limit is unlimited", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestRedisReserveOutcomes(t *testing.T) {
 		team := uuid.NewString()
 		for i := range 5 {
 			id := ids{team: team, sandbox: fmt.Sprintf("unlimited-%d", i)}
-			assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, -1))
+			assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, -1))
 		}
 	})
 
@@ -131,7 +131,7 @@ func TestRedisReserveOutcomes(t *testing.T) {
 			MaxInstanceLength: time.Hour,
 			State:             sandboxtypes.StateRunning,
 		}))
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS, reserve(ctx, t, s.client, id, 10))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS, reserve(ctx, t, s.client, id, 10))
 	})
 
 	t.Run("kill claimed", func(t *testing.T) {
@@ -140,7 +140,7 @@ func TestRedisReserveOutcomes(t *testing.T) {
 		ctx := callContext(t)
 		id := newIDs()
 		require.True(t, claimKill(ctx, t, s.client, id).GetClaimed())
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_KILLED, reserve(ctx, t, s.client, id, 10))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_KILLED, reserve(ctx, t, s.client, id, 10))
 	})
 }
 
@@ -151,12 +151,12 @@ func TestRedisFinishedResultIsOpaque(t *testing.T) {
 	ctx := callContext(t)
 	id := newIDs()
 
-	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+	require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 	finishStart(ctx, t, s.client, id, notUTF8)
 
 	resp, err := waitForStart(ctx, s.client, id)
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
 	assert.Equal(t, notUTF8, resp.GetResult())
 }
 
@@ -167,18 +167,18 @@ func TestRedisWaitingThenFinished(t *testing.T) {
 	ctx := callContext(t)
 	id := newIDs()
 
-	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+	require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 
 	resp, err := waitForStart(ctx, s.client, id)
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
 	assert.Empty(t, resp.GetResult())
 
 	finishStart(ctx, t, s.client, id, notUTF8)
 
 	resp, err = waitForStart(ctx, s.client, id)
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
 	assert.Equal(t, notUTF8, resp.GetResult())
 }
 
@@ -194,9 +194,9 @@ func TestRedisWaitInFlight(t *testing.T) {
 		other := dial(t, serve(t, s.waits.ReservationStorage, hangTimeout))
 		ctx := callContext(t)
 		id := newIDs()
-		require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+		require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 
-		done := make(chan *scheduling.WaitForStartResponse, 1)
+		done := make(chan *reservationpb.WaitForStartResponse, 1)
 		go func() {
 			resp, err := waitForStart(ctx, s.client, id)
 			assert.NoError(t, err)
@@ -206,7 +206,7 @@ func TestRedisWaitInFlight(t *testing.T) {
 		finishStart(ctx, t, other, id, notUTF8)
 
 		resp := <-done
-		assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
+		assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
 		assert.Equal(t, notUTF8, resp.GetResult())
 	})
 
@@ -217,20 +217,20 @@ func TestRedisWaitInFlight(t *testing.T) {
 		other := dial(t, serve(t, s.waits.ReservationStorage, hangTimeout))
 		ctx := callContext(t)
 		id := newIDs()
-		require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+		require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 
-		done := make(chan *scheduling.WaitForStartResponse, 1)
+		done := make(chan *reservationpb.WaitForStartResponse, 1)
 		go func() {
 			resp, err := waitForStart(ctx, s.client, id)
 			assert.NoError(t, err)
 			done <- resp
 		}()
 		s.waits.awaitEntered(t)
-		_, err := other.Release(ctx, scheduling.ReleaseRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
+		_, err := other.Release(ctx, reservationpb.ReleaseRequest_builder{TeamId: id.team, SandboxId: id.sandbox}.Build())
 		require.NoError(t, err)
 
 		resp := <-done
-		assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
+		assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
 		assert.Empty(t, resp.GetResult())
 	})
 }
@@ -243,7 +243,7 @@ func TestRedisNothingPendingIsNoResult(t *testing.T) {
 
 	resp, err := waitForStart(ctx, s.client, newIDs())
 	require.NoError(t, err)
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
 }
 
 func TestRedisKillClaims(t *testing.T) {
@@ -259,13 +259,13 @@ func TestRedisKillClaims(t *testing.T) {
 		claim := claimKill(ctx, t, s.client, id)
 		require.True(t, claim.GetClaimed())
 		require.NotEmpty(t, claim.GetClaimId())
-		require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_KILLED, reserve(ctx, t, s.client, id, 10))
+		require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_KILLED, reserve(ctx, t, s.client, id, 10))
 
-		_, err := s.client.ReleaseKillClaim(ctx, scheduling.ReleaseKillClaimRequest_builder{
+		_, err := s.client.ReleaseKillClaim(ctx, reservationpb.ReleaseKillClaimRequest_builder{
 			TeamId: id.team, SandboxId: id.sandbox, ClaimId: claim.GetClaimId(),
 		}.Build())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+		assert.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 	})
 
 	t.Run("pending start", func(t *testing.T) {
@@ -273,7 +273,7 @@ func TestRedisKillClaims(t *testing.T) {
 
 		ctx := callContext(t)
 		id := newIDs()
-		require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
+		require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, s.client, id, 10))
 		claim := claimKill(ctx, t, s.client, id)
 		assert.False(t, claim.GetClaimed())
 		assert.Empty(t, claim.GetClaimId())
@@ -285,7 +285,7 @@ func TestRedisCallerDeadline(t *testing.T) {
 
 	s := setupRedis(t, redis_utils.SetupInstance(t), time.Hour)
 	id := newIDs()
-	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(callContext(t), t, s.client, id, 10))
+	require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(callContext(t), t, s.client, id, 10))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
@@ -302,9 +302,9 @@ func TestRedisTwoServers(t *testing.T) {
 	ctx := callContext(t)
 	id := newIDs()
 
-	require.Equal(t, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, first.client, id, 10))
+	require.Equal(t, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED, reserve(ctx, t, first.client, id, 10))
 
-	done := make(chan *scheduling.WaitForStartResponse, 1)
+	done := make(chan *reservationpb.WaitForStartResponse, 1)
 	go func() {
 		resp, err := waitForStart(ctx, first.client, id)
 		assert.NoError(t, err)
@@ -314,6 +314,6 @@ func TestRedisTwoServers(t *testing.T) {
 	finishStart(ctx, t, second.client, id, notUTF8)
 
 	resp := <-done
-	assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
+	assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
 	assert.Equal(t, notUTF8, resp.GetResult())
 }

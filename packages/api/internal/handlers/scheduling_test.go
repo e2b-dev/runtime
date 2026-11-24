@@ -17,7 +17,8 @@ import (
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/resolver"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
@@ -27,15 +28,15 @@ var schedulingResolver = registerSecretsTestResolver("scheduling-test-replicas",
 const schedulingBatch = 10
 
 type fakeStateService struct {
-	scheduling.UnimplementedStateServiceServer
+	statepb.UnimplementedStateServiceServer
 
 	calls atomic.Int64
 }
 
-func (s *fakeStateService) Get(context.Context, *scheduling.GetRequest) (*scheduling.GetResponse, error) {
+func (s *fakeStateService) Get(context.Context, *statepb.GetRequest) (*statepb.GetResponse, error) {
 	s.calls.Add(1)
 
-	return scheduling.GetResponse_builder{Outcome: scheduling.StateOutcome_STATE_OUTCOME_NOT_FOUND}.Build(), nil
+	return statepb.GetResponse_builder{Outcome: statepb.StateOutcome_STATE_OUTCOME_NOT_FOUND}.Build(), nil
 }
 
 type schedulingReplica struct {
@@ -51,8 +52,8 @@ func startSchedulingReplica(t *testing.T) *schedulingReplica {
 	require.NoError(t, err)
 	server := grpc.NewServer()
 	replica := &schedulingReplica{state: &fakeStateService{}, health: health.NewServer(), address: listener.Addr().String()}
-	scheduling.RegisterStateServiceServer(server, replica.state)
-	for _, name := range []string{scheduling.StateService_ServiceDesc.ServiceName, scheduling.ReservationService_ServiceDesc.ServiceName} {
+	statepb.RegisterStateServiceServer(server, replica.state)
+	for _, name := range []string{statepb.StateService_ServiceDesc.ServiceName, reservationpb.ReservationService_ServiceDesc.ServiceName} {
 		replica.health.SetServingStatus(name, healthv1.HealthCheckResponse_SERVING)
 	}
 	healthv1.RegisterHealthServer(server, replica.health)
@@ -63,7 +64,7 @@ func startSchedulingReplica(t *testing.T) *schedulingReplica {
 }
 
 func (r *schedulingReplica) setStateServing(serving healthv1.HealthCheckResponse_ServingStatus) {
-	r.health.SetServingStatus(scheduling.StateService_ServiceDesc.ServiceName, serving)
+	r.health.SetServingStatus(statepb.StateService_ServiceDesc.ServiceName, serving)
 }
 
 func awaitSchedulingBatch(t *testing.T, storage *remote.Storage, a, b *schedulingReplica, done func(fromA, fromB int64) bool) {

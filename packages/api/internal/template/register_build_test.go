@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
@@ -162,4 +163,135 @@ func TestResolveMaxVcpu_TeamTargeting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func maxMemoryFlags(t *testing.T, enabled bool, ratio *int, kernel, firecracker string) *featureflags.Client {
+	t.Helper()
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.ResizableTemplatesFlag.Key()).VariationForAll(enabled))
+	if ratio != nil {
+		td.Update(td.Flag(featureflags.TemplateMemoryHotplugMaxRatioFlag.Key()).ValueForAll(ldvalue.Int(*ratio)))
+	}
+	if kernel != "" {
+		td.Update(td.Flag(featureflags.BuildKernelVersion.Key()).ValueForAll(ldvalue.String(kernel)))
+	}
+	if firecracker != "" {
+		td.Update(td.Flag(featureflags.BuildFirecrackerVersion.Key()).ValueForAll(ldvalue.String(firecracker)))
+	}
+	flags, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
+
+	return flags
+}
+
+func TestResolveMaxMemory(t *testing.T) {
+	t.Parallel()
+
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}, Limits: &types.TeamLimits{MaxVcpu: 8, MaxRamMb: 16384}}
+	tests := []struct {
+		name        string
+		enabled     bool
+		ratio       *int
+		ramMB       int64
+		requested   *int32
+		want        *int64
+		clientMsg   string
+		kernel      string
+		firecracker string
+	}{
+		{name: "flag off without field", ramMB: 1024},
+		{name: "flag on without field", enabled: true, ramMB: 1024},
+		{name: "flag off with field", ramMB: 1024, requested: new(int32(2048)), clientMsg: "Resizable templates are not enabled for your team"},
+		{name: "within the default ratio", enabled: true, ramMB: 1024, requested: new(int32(4096)), want: new(int64(4096))},
+		{name: "equal to memory stores none", enabled: true, ramMB: 1024, requested: new(int32(1024))},
+		{name: "above the default ratio", enabled: true, ramMB: 1024, requested: new(int32(4224)), clientMsg: "Max memory can be at most 4096 MiB for a memory of 1024 MiB"},
+		{name: "ratio rounds down to whole blocks", enabled: true, ratio: new(1), ramMB: 1000, requested: new(int32(2024)), clientMsg: "Max memory can be at most 1896 MiB for a memory of 1000 MiB"},
+		{name: "ratio zero is no cap", enabled: true, ratio: new(0), ramMB: 1024, requested: new(int32(16384)), want: new(int64(16384))},
+		{name: "not whole blocks", enabled: true, ramMB: 1024, requested: new(int32(1100)), clientMsg: "Max memory minus memory (76 MiB) must be a multiple of 128 MiB"},
+		{name: "above team limit", enabled: true, ratio: new(0), ramMB: 1024, requested: new(int32(32768)), clientMsg: "Max memory can't be higher than 16384 MiB (if you need to increase this limit, please contact support)"},
+		{name: "a kernel new enough", enabled: true, ramMB: 1024, requested: new(int32(2048)), kernel: "vmlinux-6.1.158_2391e03", firecracker: "v1.17-0.4.1", want: new(int64(2048))},
+		{name: "a kernel too old", enabled: true, ramMB: 1024, requested: new(int32(2048)), kernel: "vmlinux-5.10.186", clientMsg: "Max memory is not available: the template's kernel does not support memory hotplug"},
+		{name: "a Firecracker too old", enabled: true, ramMB: 1024, requested: new(int32(2048)), kernel: "vmlinux-6.1.158", firecracker: "v1.12.1_717921c", clientMsg: "Max memory is not available: the template's Firecracker version does not support memory hotplug"},
+		{name: "unreadable versions are not refused", enabled: true, ramMB: 1024, requested: new(int32(2048)), kernel: "custom", firecracker: "custom", want: new(int64(2048))},
+		{name: "no region needs no hotplug support", enabled: true, ramMB: 1024, requested: new(int32(1024)), kernel: "vmlinux-5.10.186"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			flags := maxMemoryFlags(t, tt.enabled, tt.ratio, tt.kernel, tt.firecracker)
+			got, apiErr := resolveMaxMemory(t.Context(), flags, team, "template-id", tt.ramMB, tt.requested)
+			if tt.clientMsg != "" {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+				assert.Equal(t, tt.clientMsg, apiErr.ClientMsg)
+				assert.Nil(t, got)
+
+				return
+			}
+			require.Nil(t, apiErr)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// The ratio is read with the template's context as well as the team's, as
+// the template-manager reads it, so a per-template override applies here too.
+func TestResolveMaxMemory_TemplateTargeting(t *testing.T) {
+	t.Parallel()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.ResizableTemplatesFlag.Key()).VariationForAll(true))
+	td.Update(td.Flag(featureflags.TemplateMemoryHotplugMaxRatioFlag.Key()).
+		Variations(ldvalue.Int(3), ldvalue.Int(7)).
+		FallthroughVariationIndex(0).
+		VariationIndexForKey(featureflags.TemplateKind, "big-template", 1))
+	flags, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
+
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}, Limits: &types.TeamLimits{MaxRamMb: 16384}}
+	got, apiErr := resolveMaxMemory(t.Context(), flags, team, "big-template", 1024, new(int32(8192)))
+	require.Nil(t, apiErr)
+	assert.Equal(t, new(int64(8192)), got)
+
+	_, apiErr = resolveMaxMemory(t.Context(), flags, team, "other-template", 1024, new(int32(8192)))
+	require.NotNil(t, apiErr)
+}
+
+// The kernel and Firecracker versions are read with the template's context, as the
+// template-manager reads them, so a template pinned to a hotplug-capable kernel passes
+// while the fallthrough is too old, and the reverse is refused.
+func TestResolveMaxMemory_VersionTemplateTargeting(t *testing.T) {
+	t.Parallel()
+
+	td := ldtestdata.DataSource()
+	td.Update(td.Flag(featureflags.ResizableTemplatesFlag.Key()).VariationForAll(true))
+	td.Update(td.Flag(featureflags.BuildKernelVersion.Key()).
+		Variations(ldvalue.String("vmlinux-5.10.186"), ldvalue.String("vmlinux-6.1.158")).
+		FallthroughVariationIndex(0).
+		VariationIndexForKey(featureflags.TemplateKind, "pinned-new", 1))
+	td.Update(td.Flag(featureflags.BuildFirecrackerVersion.Key()).
+		Variations(ldvalue.String("v1.17-0.4.1"), ldvalue.String("v1.12.1_717921c")).
+		FallthroughVariationIndex(0).
+		VariationIndexForKey(featureflags.TemplateKind, "pinned-old-fc", 1))
+	flags, err := featureflags.NewClientWithDatasource(td)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
+
+	team := &types.Team{Team: &dbtypes.Team{ID: uuid.New()}, Limits: &types.TeamLimits{MaxRamMb: 16384}}
+	got, apiErr := resolveMaxMemory(t.Context(), flags, team, "pinned-new", 1024, new(int32(2048)))
+	require.Nil(t, apiErr, "a template pinned to a hotplug-capable kernel passes")
+	assert.Equal(t, new(int64(2048)), got)
+
+	_, apiErr = resolveMaxMemory(t.Context(), flags, team, "unpinned", 1024, new(int32(2048)))
+	require.NotNil(t, apiErr, "the fallthrough kernel is too old")
+	assert.Equal(t, "Max memory is not available: the template's kernel does not support memory hotplug", apiErr.ClientMsg)
+
+	// A template pinned to an old Firecracker is refused even though the fallthrough could build it.
+	td.Update(td.Flag(featureflags.BuildKernelVersion.Key()).ValueForAll(ldvalue.String("vmlinux-6.1.158")))
+	_, apiErr = resolveMaxMemory(t.Context(), flags, team, "pinned-old-fc", 1024, new(int32(2048)))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, "Max memory is not available: the template's Firecracker version does not support memory hotplug", apiErr.ClientMsg)
 }

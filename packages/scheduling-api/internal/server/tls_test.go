@@ -18,7 +18,7 @@ import (
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/config"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/mtlstest"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -101,7 +101,7 @@ func TestMutualTLS(t *testing.T) {
 				if tc.signer == nil {
 					_, err = healthv1.NewHealthClient(conn).Check(ctx, &healthv1.HealthCheckRequest{})
 					require.NoError(t, err, "plaintext is limited to health probes")
-					stream, err := scheduling.NewStateServiceClient(conn).TeamItems(ctx, scheduling.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
+					stream, err := statepb.NewStateServiceClient(conn).TeamItems(ctx, statepb.TeamItemsRequest_builder{TeamId: uuid.NewString()}.Build())
 					require.NoError(t, err)
 					_, err = stream.Recv()
 					require.Equal(t, codes.Unauthenticated, status.Code(err), "plaintext streams are rejected: %v", err)

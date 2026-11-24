@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/reservation"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
@@ -85,37 +85,37 @@ func (f *fakeStorage) ReleaseKillClaim(context.Context, uuid.UUID, string, strin
 
 type rpcCall struct {
 	name string
-	call func(ctx context.Context, client scheduling.ReservationServiceClient, team, sandbox string) error
+	call func(ctx context.Context, client reservationpb.ReservationServiceClient, team, sandbox string) error
 }
 
 var rpcCalls = []rpcCall{
-	{"Reserve", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.Reserve(ctx, scheduling.ReserveRequest_builder{TeamId: team, SandboxId: sandbox, Limit: 10}.Build())
+	{"Reserve", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.Reserve(ctx, reservationpb.ReserveRequest_builder{TeamId: team, SandboxId: sandbox, Limit: 10}.Build())
 
 		return err
 	}},
-	{"FinishStart", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.FinishStart(ctx, scheduling.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox, Result: []byte("r")}.Build())
+	{"FinishStart", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.FinishStart(ctx, reservationpb.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox, Result: []byte("r")}.Build())
 
 		return err
 	}},
-	{"WaitForStart", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+	{"WaitForStart", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 		return err
 	}},
-	{"Release", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.Release(ctx, scheduling.ReleaseRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+	{"Release", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.Release(ctx, reservationpb.ReleaseRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 		return err
 	}},
-	{"ClaimKill", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.ClaimKill(ctx, scheduling.ClaimKillRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+	{"ClaimKill", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.ClaimKill(ctx, reservationpb.ClaimKillRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 		return err
 	}},
-	{"ReleaseKillClaim", func(ctx context.Context, c scheduling.ReservationServiceClient, team, sandbox string) error {
-		_, err := c.ReleaseKillClaim(ctx, scheduling.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: sandbox, ClaimId: "claim"}.Build())
+	{"ReleaseKillClaim", func(ctx context.Context, c reservationpb.ReservationServiceClient, team, sandbox string) error {
+		_, err := c.ReleaseKillClaim(ctx, reservationpb.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: sandbox, ClaimId: "claim"}.Build())
 
 		return err
 	}},
@@ -129,16 +129,16 @@ func TestReserveOutcomeMapping(t *testing.T) {
 		name     string
 		reserved bool
 		err      error
-		want     scheduling.ReserveOutcome
+		want     reservationpb.ReserveOutcome
 	}{
-		{"reserved", true, nil, scheduling.ReserveOutcome_RESERVE_OUTCOME_RESERVED},
-		{"already pending", false, nil, scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING},
-		{"already exists", false, sandboxtypes.ErrAlreadyExists, scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS},
-		{"wrapped already exists", false, fmt.Errorf("x: %w", sandboxtypes.ErrAlreadyExists), scheduling.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS},
-		{"limit exceeded", false, limit, scheduling.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED},
-		{"wrapped limit exceeded", false, fmt.Errorf("x: %w", limit), scheduling.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED},
-		{"killed", false, sandboxtypes.ErrSandboxKilled, scheduling.ReserveOutcome_RESERVE_OUTCOME_KILLED},
-		{"wrapped killed", false, fmt.Errorf("x: %w", sandboxtypes.ErrSandboxKilled), scheduling.ReserveOutcome_RESERVE_OUTCOME_KILLED},
+		{"reserved", true, nil, reservationpb.ReserveOutcome_RESERVE_OUTCOME_RESERVED},
+		{"already pending", false, nil, reservationpb.ReserveOutcome_RESERVE_OUTCOME_ALREADY_PENDING},
+		{"already exists", false, sandboxtypes.ErrAlreadyExists, reservationpb.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS},
+		{"wrapped already exists", false, fmt.Errorf("x: %w", sandboxtypes.ErrAlreadyExists), reservationpb.ReserveOutcome_RESERVE_OUTCOME_ALREADY_EXISTS},
+		{"limit exceeded", false, limit, reservationpb.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED},
+		{"wrapped limit exceeded", false, fmt.Errorf("x: %w", limit), reservationpb.ReserveOutcome_RESERVE_OUTCOME_LIMIT_EXCEEDED},
+		{"killed", false, sandboxtypes.ErrSandboxKilled, reservationpb.ReserveOutcome_RESERVE_OUTCOME_KILLED},
+		{"wrapped killed", false, fmt.Errorf("x: %w", sandboxtypes.ErrSandboxKilled), reservationpb.ReserveOutcome_RESERVE_OUTCOME_KILLED},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -222,32 +222,32 @@ func TestCancelledCaller(t *testing.T) {
 		call func(ctx context.Context, s *reservation.Server) error
 	}{
 		{"Reserve", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.Reserve(ctx, scheduling.ReserveRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+			_, err := s.Reserve(ctx, reservationpb.ReserveRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}},
 		{"FinishStart", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.FinishStart(ctx, scheduling.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+			_, err := s.FinishStart(ctx, reservationpb.FinishStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}},
 		{"WaitForStart", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+			_, err := s.WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}},
 		{"Release", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.Release(ctx, scheduling.ReleaseRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+			_, err := s.Release(ctx, reservationpb.ReleaseRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}},
 		{"ClaimKill", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.ClaimKill(ctx, scheduling.ClaimKillRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
+			_, err := s.ClaimKill(ctx, reservationpb.ClaimKillRequest_builder{TeamId: team, SandboxId: sandbox}.Build())
 
 			return err
 		}},
 		{"ReleaseKillClaim", func(ctx context.Context, s *reservation.Server) error {
-			_, err := s.ReleaseKillClaim(ctx, scheduling.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: sandbox, ClaimId: "claim"}.Build())
+			_, err := s.ReleaseKillClaim(ctx, reservationpb.ReleaseKillClaimRequest_builder{TeamId: team, SandboxId: sandbox, ClaimId: "claim"}.Build())
 
 			return err
 		}},
@@ -298,7 +298,7 @@ func TestInvalidIDs(t *testing.T) {
 
 		fake := &fakeStorage{}
 		client := newClient(t, fake, time.Hour)
-		_, err := client.ReleaseKillClaim(callContext(t), scheduling.ReleaseKillClaimRequest_builder{
+		_, err := client.ReleaseKillClaim(callContext(t), reservationpb.ReleaseKillClaimRequest_builder{
 			TeamId: valid.team, SandboxId: valid.sandbox,
 		}.Build())
 		requireCode(t, err, codes.InvalidArgument)
@@ -339,7 +339,7 @@ func TestMaxWaitIsWaiting(t *testing.T) {
 
 			resp, err := waitForStart(t.Context(), client, newIDs())
 			require.NoError(t, err)
-			assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
+			assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_WAITING, resp.GetOutcome())
 			assert.True(t, <-hadDeadline)
 		})
 	}
@@ -354,7 +354,7 @@ func TestWaitForStartOutcomes(t *testing.T) {
 		fake := &fakeStorage{wait: func(context.Context) ([]byte, error) { return notUTF8, nil }}
 		resp, err := waitForStart(callContext(t), newClient(t, fake, time.Hour), newIDs())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
+		assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_FINISHED, resp.GetOutcome())
 		assert.Equal(t, notUTF8, resp.GetResult())
 	})
 
@@ -364,7 +364,7 @@ func TestWaitForStartOutcomes(t *testing.T) {
 		fake := &fakeStorage{err: fmt.Errorf("x: %w", &sandboxtypes.StartResultMissingError{SandboxID: "sbx"})}
 		resp, err := waitForStart(callContext(t), newClient(t, fake, time.Hour), newIDs())
 		require.NoError(t, err)
-		assert.Equal(t, scheduling.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
+		assert.Equal(t, reservationpb.WaitForStartOutcome_WAIT_FOR_START_OUTCOME_NO_RESULT, resp.GetOutcome())
 	})
 
 	t.Run("caller ended during the wait", func(t *testing.T) {
@@ -378,7 +378,7 @@ func TestWaitForStartOutcomes(t *testing.T) {
 			return nil, context.DeadlineExceeded
 		}}
 		server := reservation.NewServer(fake, time.Hour)
-		_, err := server.WaitForStart(ctx, scheduling.WaitForStartRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
+		_, err := server.WaitForStart(ctx, reservationpb.WaitForStartRequest_builder{TeamId: uuid.NewString(), SandboxId: "sbx"}.Build())
 		requireCode(t, err, codes.Canceled)
 	})
 }

@@ -14,7 +14,8 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/reservation"
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/state"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
+	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -54,8 +55,8 @@ func New(tel *telemetry.Client, tlsConfig mtls.ServerConfig, reservations sandbo
 		e2bgrpc.WithMaxMessageSize(maxMessageSize),
 		e2bgrpc.WithWaitForHandlers(),
 	)
-	scheduling.RegisterReservationServiceServer(server, reservation.NewServer(reservations, maxWait))
-	scheduling.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
+	reservationpb.RegisterReservationServiceServer(server, reservation.NewServer(reservations, maxWait))
+	statepb.RegisterStateServiceServer(server, state.NewServer(storage, maxWait))
 
 	return server, nil
 }

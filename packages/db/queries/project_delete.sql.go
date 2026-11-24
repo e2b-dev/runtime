@@ -64,6 +64,19 @@ func (q *Queries) LockProjectForDeletion(ctx context.Context, projectID uuid.UUI
 	return id, err
 }
 
+const lockProjectForWebhookWrite = `-- name: LockProjectForWebhookWrite :one
+SELECT cluster_id FROM public.teams
+WHERE id = $1::uuid AND deleted_at IS NULL
+FOR SHARE
+`
+
+func (q *Queries) LockProjectForWebhookWrite(ctx context.Context, projectID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockProjectForWebhookWrite, projectID)
+	var cluster_id *uuid.UUID
+	err := row.Scan(&cluster_id)
+	return cluster_id, err
+}
+
 const markProjectDeleted = `-- name: MarkProjectDeleted :exec
 UPDATE public.teams
 SET deleted_at = COALESCE(deleted_at, now()),

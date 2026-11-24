@@ -11,36 +11,36 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
-	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/scheduling"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/sandboxtypes"
 )
 
 type Storage struct {
-	client scheduling.StateServiceClient
+	client statepb.StateServiceClient
 }
 
 var _ sandboxtypes.Storage = (*Storage)(nil)
 
 // NewStorage is the sandbox record store served by the state gRPC service.
 func NewStorage(conn grpc.ClientConnInterface) *Storage {
-	return &Storage{client: scheduling.NewStateServiceClient(conn)}
+	return &Storage{client: statepb.NewStateServiceClient(conn)}
 }
 
-var wireActions = map[sandboxtypes.StateAction]scheduling.RemoveAction{
-	sandboxtypes.StateActionPause:    scheduling.RemoveAction_REMOVE_ACTION_PAUSE,
-	sandboxtypes.StateActionKill:     scheduling.RemoveAction_REMOVE_ACTION_KILL,
-	sandboxtypes.StateActionSnapshot: scheduling.RemoveAction_REMOVE_ACTION_SNAPSHOT,
+var wireActions = map[sandboxtypes.StateAction]statepb.RemoveAction{
+	sandboxtypes.StateActionPause:    statepb.RemoveAction_REMOVE_ACTION_PAUSE,
+	sandboxtypes.StateActionKill:     statepb.RemoveAction_REMOVE_ACTION_KILL,
+	sandboxtypes.StateActionSnapshot: statepb.RemoveAction_REMOVE_ACTION_SNAPSHOT,
 }
 
 func (s *Storage) Add(ctx context.Context, sbx sandboxtypes.Sandbox) error {
-	const method = scheduling.StateService_Add_FullMethodName
+	const method = statepb.StateService_Add_FullMethodName
 	record, err := encodeRecord(method, sbx)
 	if err != nil {
 		return err
 	}
-	resp, err := unary(ctx, method, s.client.Add, scheduling.AddRequest_builder{Record: record}.Build())
+	resp, err := unary(ctx, method, s.client.Add, statepb.AddRequest_builder{Record: record}.Build())
 	if err != nil {
 		return err
 	}
@@ -49,8 +49,8 @@ func (s *Storage) Add(ctx context.Context, sbx sandboxtypes.Sandbox) error {
 }
 
 func (s *Storage) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_Get_FullMethodName
-	resp, err := unary(ctx, method, s.client.Get, scheduling.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
+	const method = statepb.StateService_Get_FullMethodName
+	resp, err := unary(ctx, method, s.client.Get, statepb.GetRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
@@ -62,8 +62,8 @@ func (s *Storage) Get(ctx context.Context, teamID uuid.UUID, sandboxID string) (
 }
 
 func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expectedExecutionID string) error {
-	const method = scheduling.StateService_Remove_FullMethodName
-	resp, err := unary(ctx, method, s.client.Remove, scheduling.RemoveRequest_builder{
+	const method = statepb.StateService_Remove_FullMethodName
+	resp, err := unary(ctx, method, s.client.Remove, statepb.RemoveRequest_builder{
 		TeamId: teamID.String(), SandboxId: sandboxID, ExpectedExecutionId: expectedExecutionID,
 	}.Build())
 	if err != nil {
@@ -74,8 +74,8 @@ func (s *Storage) Remove(ctx context.Context, teamID uuid.UUID, sandboxID, expec
 }
 
 func (s *Storage) TeamItems(ctx context.Context, teamID uuid.UUID, filter []sandboxtypes.State) ([]sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_TeamItems_FullMethodName
-	wanted := make([]scheduling.SandboxState, 0, len(filter))
+	const method = statepb.StateService_TeamItems_FullMethodName
+	wanted := make([]statepb.SandboxState, 0, len(filter))
 	for _, state := range filter {
 		wire, ok := wireStates[state]
 		if !ok {
@@ -84,16 +84,16 @@ func (s *Storage) TeamItems(ctx context.Context, teamID uuid.UUID, filter []sand
 		wanted = append(wanted, wire)
 	}
 
-	return readRecords(ctx, method, s.client.TeamItems, scheduling.TeamItemsRequest_builder{TeamId: teamID.String(), States: wanted}.Build(), []sandboxtypes.Sandbox{})
+	return readRecords(ctx, method, s.client.TeamItems, statepb.TeamItemsRequest_builder{TeamId: teamID.String(), States: wanted}.Build(), []sandboxtypes.Sandbox{})
 }
 
 func (s *Storage) ExpiredItems(ctx context.Context) ([]sandboxtypes.Sandbox, error) {
-	return readRecords(ctx, scheduling.StateService_ExpiredItems_FullMethodName, s.client.ExpiredItems, scheduling.ExpiredItemsRequest_builder{}.Build(), nil)
+	return readRecords(ctx, statepb.StateService_ExpiredItems_FullMethodName, s.client.ExpiredItems, statepb.ExpiredItemsRequest_builder{}.Build(), nil)
 }
 
 func (s *Storage) TeamsWithSandboxCount(ctx context.Context) (map[uuid.UUID]int64, error) {
-	const method = scheduling.StateService_TeamsWithSandboxCount_FullMethodName
-	resp, err := unary(ctx, method, s.client.TeamsWithSandboxCount, scheduling.TeamsWithSandboxCountRequest_builder{}.Build())
+	const method = statepb.StateService_TeamsWithSandboxCount_FullMethodName
+	resp, err := unary(ctx, method, s.client.TeamsWithSandboxCount, statepb.TeamsWithSandboxCountRequest_builder{}.Build())
 	if err != nil {
 		return nil, err
 	}
@@ -116,10 +116,10 @@ type reference struct {
 }
 
 func (s *Storage) Reconcile(ctx context.Context, sandboxes []sandboxtypes.NodeSandbox, nodeID string) []sandboxtypes.NodeSandbox {
-	wire := make([]*scheduling.NodeSandbox, 0, len(sandboxes))
+	wire := make([]*statepb.NodeSandbox, 0, len(sandboxes))
 	byReference := make(map[reference]sandboxtypes.NodeSandbox, len(sandboxes))
 	for _, sbx := range sandboxes {
-		wire = append(wire, scheduling.NodeSandbox_builder{
+		wire = append(wire, statepb.NodeSandbox_builder{
 			SandboxId:   sbx.SandboxID,
 			ExecutionId: sbx.ExecutionID,
 			TeamId:      sbx.TeamID.String(),
@@ -136,7 +136,7 @@ func (s *Storage) Reconcile(ctx context.Context, sandboxes []sandboxtypes.NodeSa
 		byReference[reference{teamID: sbx.TeamID.String(), sandboxID: sbx.SandboxID}] = sbx
 	}
 
-	resp, err := unary(ctx, scheduling.StateService_Reconcile_FullMethodName, s.client.Reconcile, scheduling.ReconcileRequest_builder{NodeId: nodeID, Sandboxes: wire}.Build())
+	resp, err := unary(ctx, statepb.StateService_Reconcile_FullMethodName, s.client.Reconcile, statepb.ReconcileRequest_builder{NodeId: nodeID, Sandboxes: wire}.Build())
 	if err != nil {
 		// No orphans on a failure: the caller kills every orphan it is told of.
 		logger.L().Warn(ctx, "Failed to reconcile the node's sandboxes, skipping", logger.WithNodeID(nodeID), zap.Error(err))
@@ -155,8 +155,8 @@ func (s *Storage) Reconcile(ctx context.Context, sandboxes []sandboxtypes.NodeSa
 }
 
 func (s *Storage) BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string) (sandboxtypes.Sandbox, sandboxtypes.UpdateToken, error) {
-	const method = scheduling.StateService_BeginUpdate_FullMethodName
-	resp, err := unary(ctx, method, s.client.BeginUpdate, scheduling.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
+	const method = statepb.StateService_BeginUpdate_FullMethodName
+	resp, err := unary(ctx, method, s.client.BeginUpdate, statepb.BeginUpdateRequest_builder{TeamId: teamID.String(), SandboxId: sandboxID}.Build())
 	if err != nil {
 		return sandboxtypes.Sandbox{}, "", err
 	}
@@ -172,12 +172,12 @@ func (s *Storage) BeginUpdate(ctx context.Context, teamID uuid.UUID, sandboxID s
 }
 
 func (s *Storage) CommitUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken, updated sandboxtypes.Sandbox) (sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_CommitUpdate_FullMethodName
+	const method = statepb.StateService_CommitUpdate_FullMethodName
 	record, err := encodeRecord(method, updated)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	resp, err := unary(ctx, method, s.client.CommitUpdate, scheduling.CommitUpdateRequest_builder{
+	resp, err := unary(ctx, method, s.client.CommitUpdate, statepb.CommitUpdateRequest_builder{
 		TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token), Record: record,
 	}.Build())
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *Storage) CommitUpdate(ctx context.Context, teamID uuid.UUID, sandboxID 
 }
 
 func (s *Storage) AbortUpdate(ctx context.Context, teamID uuid.UUID, sandboxID string, token sandboxtypes.UpdateToken) error {
-	const method = scheduling.StateService_AbortUpdate_FullMethodName
-	resp, err := unary(ctx, method, s.client.AbortUpdate, scheduling.AbortUpdateRequest_builder{
+	const method = statepb.StateService_AbortUpdate_FullMethodName
+	resp, err := unary(ctx, method, s.client.AbortUpdate, statepb.AbortUpdateRequest_builder{
 		TeamId: teamID.String(), SandboxId: sandboxID, Token: []byte(token),
 	}.Build())
 	if err != nil {
@@ -202,8 +202,8 @@ func (s *Storage) AbortUpdate(ctx context.Context, teamID uuid.UUID, sandboxID s
 	return outcomeError(method, resp.GetOutcome())
 }
 
-func wireHold(hold sandboxtypes.Hold) *scheduling.Hold {
-	return scheduling.Hold_builder{
+func wireHold(hold sandboxtypes.Hold) *statepb.Hold {
+	return statepb.Hold_builder{
 		TeamId:       hold.TeamID.String(),
 		SandboxId:    hold.SandboxID,
 		ExecutionId:  hold.ExecutionID,
@@ -213,8 +213,8 @@ func wireHold(hold sandboxtypes.Hold) *scheduling.Hold {
 }
 
 func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, until time.Time) error {
-	const method = scheduling.StateService_HoldExecution_FullMethodName
-	resp, err := unary(ctx, method, s.client.HoldExecution, scheduling.HoldExecutionRequest_builder{Hold: wireHold(hold), Until: timestamppb.New(until)}.Build())
+	const method = statepb.StateService_HoldExecution_FullMethodName
+	resp, err := unary(ctx, method, s.client.HoldExecution, statepb.HoldExecutionRequest_builder{Hold: wireHold(hold), Until: timestamppb.New(until)}.Build())
 	if err != nil {
 		return err
 	}
@@ -223,8 +223,8 @@ func (s *Storage) HoldExecution(ctx context.Context, hold sandboxtypes.Hold, unt
 }
 
 func (s *Storage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold, nodeID string) (bool, error) {
-	const method = scheduling.StateService_MoveHeldExecution_FullMethodName
-	resp, err := unary(ctx, method, s.client.MoveHeldExecution, scheduling.MoveHeldExecutionRequest_builder{Hold: wireHold(hold), NodeId: nodeID}.Build())
+	const method = statepb.StateService_MoveHeldExecution_FullMethodName
+	resp, err := unary(ctx, method, s.client.MoveHeldExecution, statepb.MoveHeldExecutionRequest_builder{Hold: wireHold(hold), NodeId: nodeID}.Build())
 	if err != nil {
 		return false, err
 	}
@@ -236,8 +236,8 @@ func (s *Storage) MoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold,
 }
 
 func (s *Storage) ReleaseHeldExecution(ctx context.Context, hold sandboxtypes.Hold) error {
-	const method = scheduling.StateService_ReleaseHeldExecution_FullMethodName
-	resp, err := unary(ctx, method, s.client.ReleaseHeldExecution, scheduling.ReleaseHeldExecutionRequest_builder{Hold: wireHold(hold)}.Build())
+	const method = statepb.StateService_ReleaseHeldExecution_FullMethodName
+	resp, err := unary(ctx, method, s.client.ReleaseHeldExecution, statepb.ReleaseHeldExecutionRequest_builder{Hold: wireHold(hold)}.Build())
 	if err != nil {
 		return err
 	}
@@ -246,8 +246,8 @@ func (s *Storage) ReleaseHeldExecution(ctx context.Context, hold sandboxtypes.Ho
 }
 
 func (s *Storage) RemoveHeldExecution(ctx context.Context, hold sandboxtypes.Hold) (sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_RemoveHeldExecution_FullMethodName
-	resp, err := unary(ctx, method, s.client.RemoveHeldExecution, scheduling.RemoveHeldExecutionRequest_builder{Hold: wireHold(hold)}.Build())
+	const method = statepb.StateService_RemoveHeldExecution_FullMethodName
+	resp, err := unary(ctx, method, s.client.RemoveHeldExecution, statepb.RemoveHeldExecutionRequest_builder{Hold: wireHold(hold)}.Build())
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
@@ -259,15 +259,15 @@ func (s *Storage) RemoveHeldExecution(ctx context.Context, hold sandboxtypes.Hol
 }
 
 func (s *Storage) BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID string, opts sandboxtypes.RemoveOpts) (sandboxtypes.StateTransition, bool, error) {
-	const method = scheduling.StateService_BeginRemoving_FullMethodName
+	const method = statepb.StateService_BeginRemoving_FullMethodName
 	action, ok := wireActions[opts.Action]
 	if !ok {
 		return sandboxtypes.StateTransition{}, false, fmt.Errorf("%s: unknown action %q", method, opts.Action.Name)
 	}
-	resp, err := unary(ctx, method, s.client.BeginRemoving, scheduling.BeginRemovingRequest_builder{
+	resp, err := unary(ctx, method, s.client.BeginRemoving, statepb.BeginRemovingRequest_builder{
 		TeamId:    teamID.String(),
 		SandboxId: sandboxID,
-		Options: scheduling.RemoveOptions_builder{
+		Options: statepb.RemoveOptions_builder{
 			Action:             action,
 			Eviction:           opts.Eviction,
 			Reason:             string(opts.Reason),
@@ -294,17 +294,17 @@ func (s *Storage) BeginRemoving(ctx context.Context, teamID uuid.UUID, sandboxID
 }
 
 func (s *Storage) FinishTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string, action sandboxtypes.StateAction, outcome sandboxtypes.TransitionOutcome) error {
-	const method = scheduling.StateService_FinishTransition_FullMethodName
+	const method = statepb.StateService_FinishTransition_FullMethodName
 	wireAction, ok := wireActions[action]
 	if !ok {
 		return fmt.Errorf("%s: unknown action %q", method, action.Name)
 	}
-	resp, err := unary(ctx, method, s.client.FinishTransition, scheduling.FinishTransitionRequest_builder{
+	resp, err := unary(ctx, method, s.client.FinishTransition, statepb.FinishTransitionRequest_builder{
 		TeamId:       teamID.String(),
 		SandboxId:    sandboxID,
 		TransitionId: transitionID,
 		Action:       wireAction,
-		Result: scheduling.TransitionResult_builder{
+		Result: statepb.TransitionResult_builder{
 			Failed:       outcome.Failed,
 			Error:        outcome.Error,
 			SkipRestore:  outcome.SkipRestore,
@@ -320,14 +320,14 @@ func (s *Storage) FinishTransition(ctx context.Context, teamID uuid.UUID, sandbo
 }
 
 func (s *Storage) RestoreRunning(ctx context.Context, transition sandboxtypes.StateTransition, opts sandboxtypes.RestoreOpts) (sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_RestoreRunning_FullMethodName
+	const method = statepb.StateService_RestoreRunning_FullMethodName
 	wire, err := encodeTransition(method, transition)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	resp, err := unary(ctx, method, s.client.RestoreRunning, scheduling.RestoreRunningRequest_builder{
+	resp, err := unary(ctx, method, s.client.RestoreRunning, statepb.RestoreRunningRequest_builder{
 		Transition: wire,
-		Options: scheduling.RestoreOptions_builder{
+		Options: statepb.RestoreOptions_builder{
 			RetryAfter:  durationpb.New(opts.RetryAfter),
 			HoldOnly:    opts.HoldOnly,
 			EnvdRefusal: opts.EnvdRefusal,
@@ -344,14 +344,14 @@ func (s *Storage) RestoreRunning(ctx context.Context, transition sandboxtypes.St
 }
 
 func (s *Storage) RestoreCheckpointed(ctx context.Context, transition sandboxtypes.StateTransition, placement *orchestrator.SandboxNetworkPlacement) (sandboxtypes.Sandbox, error) {
-	const method = scheduling.StateService_RestoreCheckpointed_FullMethodName
+	const method = statepb.StateService_RestoreCheckpointed_FullMethodName
 	wire, err := encodeTransition(method, transition)
 	if err != nil {
 		return sandboxtypes.Sandbox{}, err
 	}
-	req := scheduling.RestoreCheckpointedRequest_builder{Transition: wire}.Build()
+	req := statepb.RestoreCheckpointedRequest_builder{Transition: wire}.Build()
 	if placement != nil {
-		req.SetPlacement(scheduling.NetworkPlacement_builder{
+		req.SetPlacement(statepb.NetworkPlacement_builder{
 			ExecutionId:    placement.GetExecutionId(),
 			NetworkMode:    placement.GetNetworkMode(),
 			RouterId:       placement.GetRouterId(),
@@ -371,10 +371,10 @@ func (s *Storage) RestoreCheckpointed(ctx context.Context, transition sandboxtyp
 }
 
 func (s *Storage) WaitForTransition(ctx context.Context, teamID uuid.UUID, sandboxID string, transitionID string) (string, error) {
-	const method = scheduling.StateService_WaitForTransition_FullMethodName
+	const method = statepb.StateService_WaitForTransition_FullMethodName
 	for {
 		// The ID the server returned keeps the outcome of a transition that ends between two polls.
-		resp, err := longPoll(ctx, method, s.client.WaitForTransition, scheduling.WaitForTransitionRequest_builder{
+		resp, err := longPoll(ctx, method, s.client.WaitForTransition, statepb.WaitForTransitionRequest_builder{
 			TeamId: teamID.String(), SandboxId: sandboxID, TransitionId: transitionID,
 		}.Build())
 		if err != nil {
@@ -383,15 +383,15 @@ func (s *Storage) WaitForTransition(ctx context.Context, teamID uuid.UUID, sandb
 		transitionID = resp.GetTransitionId()
 
 		switch resp.GetOutcome() {
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING:
+		case statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_WAITING:
 			continue
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED:
+		case statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FINISHED:
 			return transitionID, nil
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED:
+		case statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_RESTORED:
 			return transitionID, &sandboxtypes.RestoredTransitionError{Refusal: sandboxtypes.RefusalFromClass(resp.GetRefusalClass())}
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED:
+		case statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_FAILED:
 			return transitionID, &sandboxtypes.TransitionFailedError{Message: resp.GetFailure()}
-		case scheduling.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND:
+		case statepb.WaitForTransitionOutcome_WAIT_FOR_TRANSITION_OUTCOME_NOT_FOUND:
 			return transitionID, sandboxtypes.ErrNotFound
 		default:
 			return transitionID, unknownOutcome(method, resp.GetOutcome())
@@ -399,12 +399,12 @@ func (s *Storage) WaitForTransition(ctx context.Context, teamID uuid.UUID, sandb
 	}
 }
 
-func encodeTransition(method string, transition sandboxtypes.StateTransition) (*scheduling.StateTransition, error) {
+func encodeTransition(method string, transition sandboxtypes.StateTransition) (*statepb.StateTransition, error) {
 	record, err := encodeRecord(method, transition.Sandbox)
 	if err != nil {
 		return nil, err
 	}
-	wire := scheduling.StateTransition_builder{Record: record, Id: transition.ID, InFlightId: transition.InFlightID}.Build()
+	wire := statepb.StateTransition_builder{Record: record, Id: transition.ID, InFlightId: transition.InFlightID}.Build()
 	if transition.OriginalEndTime != nil {
 		wire.SetOriginalEndTime(timestamppb.New(*transition.OriginalEndTime))
 	}
@@ -412,7 +412,7 @@ func encodeTransition(method string, transition sandboxtypes.StateTransition) (*
 	return wire, nil
 }
 
-func decodeTransition(method string, wire *scheduling.StateTransition) (sandboxtypes.StateTransition, error) {
+func decodeTransition(method string, wire *statepb.StateTransition) (sandboxtypes.StateTransition, error) {
 	sbx, err := decodeRecord(method, wire.GetRecord())
 	if err != nil {
 		return sandboxtypes.StateTransition{}, err
