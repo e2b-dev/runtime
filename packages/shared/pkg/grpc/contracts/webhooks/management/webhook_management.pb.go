@@ -131,8 +131,9 @@ func (x WebhookDeliveryErrorClass) Number() protoreflect.EnumNumber {
 type WebhookManagementErrorReason int32
 
 const (
-	WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED           WebhookManagementErrorReason = 0
-	WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED WebhookManagementErrorReason = 1
+	WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED              WebhookManagementErrorReason = 0
+	WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED    WebhookManagementErrorReason = 1
+	WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE WebhookManagementErrorReason = 2
 )
 
 // Enum value maps for WebhookManagementErrorReason.
@@ -140,10 +141,12 @@ var (
 	WebhookManagementErrorReason_name = map[int32]string{
 		0: "WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED",
 		1: "WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED",
+		2: "WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE",
 	}
 	WebhookManagementErrorReason_value = map[string]int32{
-		"WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED":           0,
-		"WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED": 1,
+		"WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED":              0,
+		"WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED":    1,
+		"WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE": 2,
 	}
 )
 
@@ -169,6 +172,106 @@ func (x WebhookManagementErrorReason) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
+type RetireProjectWebhooksRequest struct {
+	state                protoimpl.MessageState `protogen:"opaque.v1"`
+	xxx_hidden_ProjectId string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *RetireProjectWebhooksRequest) Reset() {
+	*x = RetireProjectWebhooksRequest{}
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireProjectWebhooksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireProjectWebhooksRequest) ProtoMessage() {}
+
+func (x *RetireProjectWebhooksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *RetireProjectWebhooksRequest) GetProjectId() string {
+	if x != nil {
+		return x.xxx_hidden_ProjectId
+	}
+	return ""
+}
+
+func (x *RetireProjectWebhooksRequest) SetProjectId(v string) {
+	x.xxx_hidden_ProjectId = v
+}
+
+type RetireProjectWebhooksRequest_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+	ProjectId string
+}
+
+func (b0 RetireProjectWebhooksRequest_builder) Build() *RetireProjectWebhooksRequest {
+	m0 := &RetireProjectWebhooksRequest{}
+	b, x := &b0, m0
+	_, _ = b, x
+	x.xxx_hidden_ProjectId = b.ProjectId
+	return m0
+}
+
+type RetireProjectWebhooksResponse struct {
+	state         protoimpl.MessageState `protogen:"opaque.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetireProjectWebhooksResponse) Reset() {
+	*x = RetireProjectWebhooksResponse{}
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireProjectWebhooksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireProjectWebhooksResponse) ProtoMessage() {}
+
+func (x *RetireProjectWebhooksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+type RetireProjectWebhooksResponse_builder struct {
+	_ [0]func() // Prevents comparability and use of unkeyed literals for the builder.
+
+}
+
+func (b0 RetireProjectWebhooksResponse_builder) Build() *RetireProjectWebhooksResponse {
+	m0 := &RetireProjectWebhooksResponse{}
+	b, x := &b0, m0
+	_, _ = b, x
+	return m0
+}
+
 type Webhook struct {
 	state                protoimpl.MessageState `protogen:"opaque.v1"`
 	xxx_hidden_WebhookId string                 `protobuf:"bytes,1,opt,name=webhook_id,json=webhookId"`
@@ -184,7 +287,7 @@ type Webhook struct {
 
 func (x *Webhook) Reset() {
 	*x = Webhook{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[0]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -196,7 +299,7 @@ func (x *Webhook) String() string {
 func (*Webhook) ProtoMessage() {}
 
 func (x *Webhook) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[0]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -338,7 +441,7 @@ type CreateWebhookRequest struct {
 
 func (x *CreateWebhookRequest) Reset() {
 	*x = CreateWebhookRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[1]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -350,7 +453,7 @@ func (x *CreateWebhookRequest) String() string {
 func (*CreateWebhookRequest) ProtoMessage() {}
 
 func (x *CreateWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[1]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -512,7 +615,7 @@ type CreateWebhookResponse struct {
 
 func (x *CreateWebhookResponse) Reset() {
 	*x = CreateWebhookResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[2]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -524,7 +627,7 @@ func (x *CreateWebhookResponse) String() string {
 func (*CreateWebhookResponse) ProtoMessage() {}
 
 func (x *CreateWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[2]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,7 +683,7 @@ type ListWebhooksRequest struct {
 
 func (x *ListWebhooksRequest) Reset() {
 	*x = ListWebhooksRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[3]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +695,7 @@ func (x *ListWebhooksRequest) String() string {
 func (*ListWebhooksRequest) ProtoMessage() {}
 
 func (x *ListWebhooksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[3]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +740,7 @@ type ListWebhooksResponse struct {
 
 func (x *ListWebhooksResponse) Reset() {
 	*x = ListWebhooksResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[4]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -649,7 +752,7 @@ func (x *ListWebhooksResponse) String() string {
 func (*ListWebhooksResponse) ProtoMessage() {}
 
 func (x *ListWebhooksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[4]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -697,7 +800,7 @@ type GetWebhookRequest struct {
 
 func (x *GetWebhookRequest) Reset() {
 	*x = GetWebhookRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[5]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -709,7 +812,7 @@ func (x *GetWebhookRequest) String() string {
 func (*GetWebhookRequest) ProtoMessage() {}
 
 func (x *GetWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[5]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -767,7 +870,7 @@ type GetWebhookResponse struct {
 
 func (x *GetWebhookResponse) Reset() {
 	*x = GetWebhookResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[6]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -779,7 +882,7 @@ func (x *GetWebhookResponse) String() string {
 func (*GetWebhookResponse) ProtoMessage() {}
 
 func (x *GetWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[6]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -837,7 +940,7 @@ type WebhookEventsUpdate struct {
 
 func (x *WebhookEventsUpdate) Reset() {
 	*x = WebhookEventsUpdate{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[7]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -849,7 +952,7 @@ func (x *WebhookEventsUpdate) String() string {
 func (*WebhookEventsUpdate) ProtoMessage() {}
 
 func (x *WebhookEventsUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[7]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -905,7 +1008,7 @@ type UpdateWebhookRequest struct {
 
 func (x *UpdateWebhookRequest) Reset() {
 	*x = UpdateWebhookRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[8]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -917,7 +1020,7 @@ func (x *UpdateWebhookRequest) String() string {
 func (*UpdateWebhookRequest) ProtoMessage() {}
 
 func (x *UpdateWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[8]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1160,7 +1263,7 @@ type UpdateWebhookResponse struct {
 
 func (x *UpdateWebhookResponse) Reset() {
 	*x = UpdateWebhookResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[9]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1275,7 @@ func (x *UpdateWebhookResponse) String() string {
 func (*UpdateWebhookResponse) ProtoMessage() {}
 
 func (x *UpdateWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[9]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1232,7 +1335,7 @@ type DeleteWebhookRequest struct {
 
 func (x *DeleteWebhookRequest) Reset() {
 	*x = DeleteWebhookRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[10]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1244,7 +1347,7 @@ func (x *DeleteWebhookRequest) String() string {
 func (*DeleteWebhookRequest) ProtoMessage() {}
 
 func (x *DeleteWebhookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[10]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1334,7 +1437,7 @@ type DeleteWebhookResponse struct {
 
 func (x *DeleteWebhookResponse) Reset() {
 	*x = DeleteWebhookResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[11]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1346,7 +1449,7 @@ func (x *DeleteWebhookResponse) String() string {
 func (*DeleteWebhookResponse) ProtoMessage() {}
 
 func (x *DeleteWebhookResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[11]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1389,7 +1492,7 @@ type ListWebhookDeliveriesRequest struct {
 
 func (x *ListWebhookDeliveriesRequest) Reset() {
 	*x = ListWebhookDeliveriesRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[12]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1401,7 +1504,7 @@ func (x *ListWebhookDeliveriesRequest) String() string {
 func (*ListWebhookDeliveriesRequest) ProtoMessage() {}
 
 func (x *ListWebhookDeliveriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[12]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1628,7 +1731,7 @@ type ListWebhookDeliveriesResponse struct {
 
 func (x *ListWebhookDeliveriesResponse) Reset() {
 	*x = ListWebhookDeliveriesResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[13]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1640,7 +1743,7 @@ func (x *ListWebhookDeliveriesResponse) String() string {
 func (*ListWebhookDeliveriesResponse) ProtoMessage() {}
 
 func (x *ListWebhookDeliveriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[13]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1724,7 +1827,7 @@ type WebhookDeliveryGroup struct {
 
 func (x *WebhookDeliveryGroup) Reset() {
 	*x = WebhookDeliveryGroup{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[14]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1736,7 +1839,7 @@ func (x *WebhookDeliveryGroup) String() string {
 func (*WebhookDeliveryGroup) ProtoMessage() {}
 
 func (x *WebhookDeliveryGroup) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[14]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1840,7 +1943,7 @@ type WebhookDelivery struct {
 
 func (x *WebhookDelivery) Reset() {
 	*x = WebhookDelivery{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[15]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1852,7 +1955,7 @@ func (x *WebhookDelivery) String() string {
 func (*WebhookDelivery) ProtoMessage() {}
 
 func (x *WebhookDelivery) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[15]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2213,7 +2316,7 @@ type GetWebhookDeliveryStatsRequest struct {
 
 func (x *GetWebhookDeliveryStatsRequest) Reset() {
 	*x = GetWebhookDeliveryStatsRequest{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[16]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2225,7 +2328,7 @@ func (x *GetWebhookDeliveryStatsRequest) String() string {
 func (*GetWebhookDeliveryStatsRequest) ProtoMessage() {}
 
 func (x *GetWebhookDeliveryStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[16]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2366,7 +2469,7 @@ type GetWebhookDeliveryStatsResponse struct {
 
 func (x *GetWebhookDeliveryStatsResponse) Reset() {
 	*x = GetWebhookDeliveryStatsResponse{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[17]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2378,7 +2481,7 @@ func (x *GetWebhookDeliveryStatsResponse) String() string {
 func (*GetWebhookDeliveryStatsResponse) ProtoMessage() {}
 
 func (x *GetWebhookDeliveryStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[17]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2437,7 +2540,7 @@ type WebhookDeliveryStats struct {
 
 func (x *WebhookDeliveryStats) Reset() {
 	*x = WebhookDeliveryStats{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[18]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2449,7 +2552,7 @@ func (x *WebhookDeliveryStats) String() string {
 func (*WebhookDeliveryStats) ProtoMessage() {}
 
 func (x *WebhookDeliveryStats) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[18]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2549,7 +2652,7 @@ type WebhookDeliveryStatsBucket struct {
 
 func (x *WebhookDeliveryStatsBucket) Reset() {
 	*x = WebhookDeliveryStatsBucket{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[19]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2561,7 +2664,7 @@ func (x *WebhookDeliveryStatsBucket) String() string {
 func (*WebhookDeliveryStatsBucket) ProtoMessage() {}
 
 func (x *WebhookDeliveryStatsBucket) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[19]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2669,7 +2772,7 @@ type WebhookDeliveryDurationStats struct {
 
 func (x *WebhookDeliveryDurationStats) Reset() {
 	*x = WebhookDeliveryDurationStats{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[20]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2681,7 +2784,7 @@ func (x *WebhookDeliveryDurationStats) String() string {
 func (*WebhookDeliveryDurationStats) ProtoMessage() {}
 
 func (x *WebhookDeliveryDurationStats) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[20]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2752,7 +2855,7 @@ type WebhookManagementErrorDetail struct {
 
 func (x *WebhookManagementErrorDetail) Reset() {
 	*x = WebhookManagementErrorDetail{}
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[21]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2764,7 +2867,7 @@ func (x *WebhookManagementErrorDetail) String() string {
 func (*WebhookManagementErrorDetail) ProtoMessage() {}
 
 func (x *WebhookManagementErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[21]
+	mi := &file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2804,7 +2907,11 @@ var File_e2b_webhooks_management_v1_webhook_management_proto protoreflect.FileDe
 
 const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	"\n" +
-	"3e2b/webhooks/management/v1/webhook_management.proto\x12\x1ae2b.webhooks.management.v1\x1a\x1bbuf/validate/validate.proto\x1a-e2b/validate/v1/predefined_string_rules.proto\x1a0e2b/validate/v1/predefined_timestamp_rules.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe8\x01\n" +
+	"3e2b/webhooks/management/v1/webhook_management.proto\x12\x1ae2b.webhooks.management.v1\x1a\x1bbuf/validate/validate.proto\x1a-e2b/validate/v1/predefined_string_rules.proto\x1a0e2b/validate/v1/predefined_timestamp_rules.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"G\n" +
+	"\x1cRetireProjectWebhooksRequest\x12'\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tprojectId\"\x1f\n" +
+	"\x1dRetireProjectWebhooksResponse\"\xe8\x01\n" +
 	"\aWebhook\x12'\n" +
 	"\n" +
 	"webhook_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\twebhookId\x12!\n" +
@@ -2814,11 +2921,11 @@ const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x10\n" +
 	"\x03url\x18\x05 \x01(\tR\x03url\x12\x18\n" +
 	"\aenabled\x18\x06 \x01(\bR\aenabled\x12\x16\n" +
-	"\x06events\x18\a \x03(\tR\x06events\"\xcc\x02\n" +
+	"\x06events\x18\a \x03(\tR\x06events\"\xf2\x02\n" +
 	"\x14CreateWebhookRequest\x12!\n" +
-	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12,\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12R\n" +
 	"\n" +
-	"cluster_id\x18\x02 \x01(\tB\r\xbaH\x05r\x03\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12\x12\n" +
+	"cluster_id\x18\x02 \x01(\tB3\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1b\n" +
 	"\x03url\x18\x04 \x01(\tB\t\xbaH\x06r\x04\x80\xb5\x18\x01R\x03url\x12f\n" +
 	"\x06events\x18\x05 \x03(\tBN\xbaHK\xba\x01H\n" +
@@ -2838,11 +2945,11 @@ const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	"\x12GetWebhookResponse\x12=\n" +
 	"\awebhook\x18\x01 \x01(\v2#.e2b.webhooks.management.v1.WebhookR\awebhook\"-\n" +
 	"\x13WebhookEventsUpdate\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\tR\x06values\"\xc1\x03\n" +
+	"\x06values\x18\x01 \x03(\tR\x06values\"\xe7\x03\n" +
 	"\x14UpdateWebhookRequest\x12!\n" +
-	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12,\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12R\n" +
 	"\n" +
-	"cluster_id\x18\x02 \x01(\tB\r\xbaH\x05r\x03\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12'\n" +
+	"cluster_id\x18\x02 \x01(\tB3\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12'\n" +
 	"\n" +
 	"webhook_id\x18\x03 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\twebhookId\x12\x19\n" +
 	"\x04name\x18\x04 \x01(\tB\x05\xaa\x01\x02\b\x01R\x04name\x12 \n" +
@@ -2852,11 +2959,11 @@ const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	"\aenabled\x18\a \x01(\bB\x05\xaa\x01\x02\b\x01R\aenabled\x120\n" +
 	"\x10signature_secret\x18\b \x01(\tB\x05\xaa\x01\x02\b\x01R\x0fsignatureSecret\"V\n" +
 	"\x15UpdateWebhookResponse\x12=\n" +
-	"\awebhook\x18\x01 \x01(\v2#.e2b.webhooks.management.v1.WebhookR\awebhook\"\x90\x01\n" +
+	"\awebhook\x18\x01 \x01(\v2#.e2b.webhooks.management.v1.WebhookR\awebhook\"\xb6\x01\n" +
 	"\x14DeleteWebhookRequest\x12!\n" +
-	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12,\n" +
+	"\ateam_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06teamId\x12R\n" +
 	"\n" +
-	"cluster_id\x18\x02 \x01(\tB\r\xbaH\x05r\x03\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12'\n" +
+	"cluster_id\x18\x02 \x01(\tB3\xbaH+r)Z$00000000-0000-0000-0000-000000000000\xb0\x01\x01\xaa\x01\x02\b\x01R\tclusterId\x12'\n" +
 	"\n" +
 	"webhook_id\x18\x03 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\twebhookId\"\x17\n" +
 	"\x15DeleteWebhookResponse\"\xe3\x03\n" +
@@ -2956,11 +3063,13 @@ const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	",WEBHOOK_DELIVERY_ERROR_CLASS_TRANSPORT_ERROR\x10\x04\x12.\n" +
 	"*WEBHOOK_DELIVERY_ERROR_CLASS_REQUEST_ERROR\x10\x05\x120\n" +
 	",WEBHOOK_DELIVERY_ERROR_CLASS_SIGNATURE_ERROR\x10\x06\x12)\n" +
-	"%WEBHOOK_DELIVERY_ERROR_CLASS_CANCELED\x10\a*\x8a\x01\n" +
+	"%WEBHOOK_DELIVERY_ERROR_CLASS_CANCELED\x10\a*\xc8\x01\n" +
 	"\x1cWebhookManagementErrorReason\x12/\n" +
 	"+WEBHOOK_MANAGEMENT_ERROR_REASON_UNSPECIFIED\x10\x00\x129\n" +
-	"5WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED\x10\x012\x80\a\n" +
-	"\x18WebhookManagementService\x12t\n" +
+	"5WEBHOOK_MANAGEMENT_ERROR_REASON_WEBHOOK_LIMIT_REACHED\x10\x01\x12<\n" +
+	"8WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE\x10\x022\x8f\b\n" +
+	"\x18WebhookManagementService\x12\x8c\x01\n" +
+	"\x15RetireProjectWebhooks\x128.e2b.webhooks.management.v1.RetireProjectWebhooksRequest\x1a9.e2b.webhooks.management.v1.RetireProjectWebhooksResponse\x12t\n" +
 	"\rCreateWebhook\x120.e2b.webhooks.management.v1.CreateWebhookRequest\x1a1.e2b.webhooks.management.v1.CreateWebhookResponse\x12q\n" +
 	"\fListWebhooks\x12/.e2b.webhooks.management.v1.ListWebhooksRequest\x1a0.e2b.webhooks.management.v1.ListWebhooksResponse\x12k\n" +
 	"\n" +
@@ -2971,74 +3080,78 @@ const file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc = "" +
 	"\x17GetWebhookDeliveryStats\x12:.e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest\x1a;.e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponseB\x05\x92\x03\x02\b\x02b\beditionsp\xe9\a"
 
 var file_e2b_webhooks_management_v1_webhook_management_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_e2b_webhooks_management_v1_webhook_management_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_e2b_webhooks_management_v1_webhook_management_proto_goTypes = []any{
 	(WebhookDeliveryStatus)(0),              // 0: e2b.webhooks.management.v1.WebhookDeliveryStatus
 	(WebhookDeliveryErrorClass)(0),          // 1: e2b.webhooks.management.v1.WebhookDeliveryErrorClass
 	(WebhookManagementErrorReason)(0),       // 2: e2b.webhooks.management.v1.WebhookManagementErrorReason
-	(*Webhook)(nil),                         // 3: e2b.webhooks.management.v1.Webhook
-	(*CreateWebhookRequest)(nil),            // 4: e2b.webhooks.management.v1.CreateWebhookRequest
-	(*CreateWebhookResponse)(nil),           // 5: e2b.webhooks.management.v1.CreateWebhookResponse
-	(*ListWebhooksRequest)(nil),             // 6: e2b.webhooks.management.v1.ListWebhooksRequest
-	(*ListWebhooksResponse)(nil),            // 7: e2b.webhooks.management.v1.ListWebhooksResponse
-	(*GetWebhookRequest)(nil),               // 8: e2b.webhooks.management.v1.GetWebhookRequest
-	(*GetWebhookResponse)(nil),              // 9: e2b.webhooks.management.v1.GetWebhookResponse
-	(*WebhookEventsUpdate)(nil),             // 10: e2b.webhooks.management.v1.WebhookEventsUpdate
-	(*UpdateWebhookRequest)(nil),            // 11: e2b.webhooks.management.v1.UpdateWebhookRequest
-	(*UpdateWebhookResponse)(nil),           // 12: e2b.webhooks.management.v1.UpdateWebhookResponse
-	(*DeleteWebhookRequest)(nil),            // 13: e2b.webhooks.management.v1.DeleteWebhookRequest
-	(*DeleteWebhookResponse)(nil),           // 14: e2b.webhooks.management.v1.DeleteWebhookResponse
-	(*ListWebhookDeliveriesRequest)(nil),    // 15: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest
-	(*ListWebhookDeliveriesResponse)(nil),   // 16: e2b.webhooks.management.v1.ListWebhookDeliveriesResponse
-	(*WebhookDeliveryGroup)(nil),            // 17: e2b.webhooks.management.v1.WebhookDeliveryGroup
-	(*WebhookDelivery)(nil),                 // 18: e2b.webhooks.management.v1.WebhookDelivery
-	(*GetWebhookDeliveryStatsRequest)(nil),  // 19: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest
-	(*GetWebhookDeliveryStatsResponse)(nil), // 20: e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse
-	(*WebhookDeliveryStats)(nil),            // 21: e2b.webhooks.management.v1.WebhookDeliveryStats
-	(*WebhookDeliveryStatsBucket)(nil),      // 22: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket
-	(*WebhookDeliveryDurationStats)(nil),    // 23: e2b.webhooks.management.v1.WebhookDeliveryDurationStats
-	(*WebhookManagementErrorDetail)(nil),    // 24: e2b.webhooks.management.v1.WebhookManagementErrorDetail
-	(*timestamppb.Timestamp)(nil),           // 25: google.protobuf.Timestamp
+	(*RetireProjectWebhooksRequest)(nil),    // 3: e2b.webhooks.management.v1.RetireProjectWebhooksRequest
+	(*RetireProjectWebhooksResponse)(nil),   // 4: e2b.webhooks.management.v1.RetireProjectWebhooksResponse
+	(*Webhook)(nil),                         // 5: e2b.webhooks.management.v1.Webhook
+	(*CreateWebhookRequest)(nil),            // 6: e2b.webhooks.management.v1.CreateWebhookRequest
+	(*CreateWebhookResponse)(nil),           // 7: e2b.webhooks.management.v1.CreateWebhookResponse
+	(*ListWebhooksRequest)(nil),             // 8: e2b.webhooks.management.v1.ListWebhooksRequest
+	(*ListWebhooksResponse)(nil),            // 9: e2b.webhooks.management.v1.ListWebhooksResponse
+	(*GetWebhookRequest)(nil),               // 10: e2b.webhooks.management.v1.GetWebhookRequest
+	(*GetWebhookResponse)(nil),              // 11: e2b.webhooks.management.v1.GetWebhookResponse
+	(*WebhookEventsUpdate)(nil),             // 12: e2b.webhooks.management.v1.WebhookEventsUpdate
+	(*UpdateWebhookRequest)(nil),            // 13: e2b.webhooks.management.v1.UpdateWebhookRequest
+	(*UpdateWebhookResponse)(nil),           // 14: e2b.webhooks.management.v1.UpdateWebhookResponse
+	(*DeleteWebhookRequest)(nil),            // 15: e2b.webhooks.management.v1.DeleteWebhookRequest
+	(*DeleteWebhookResponse)(nil),           // 16: e2b.webhooks.management.v1.DeleteWebhookResponse
+	(*ListWebhookDeliveriesRequest)(nil),    // 17: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest
+	(*ListWebhookDeliveriesResponse)(nil),   // 18: e2b.webhooks.management.v1.ListWebhookDeliveriesResponse
+	(*WebhookDeliveryGroup)(nil),            // 19: e2b.webhooks.management.v1.WebhookDeliveryGroup
+	(*WebhookDelivery)(nil),                 // 20: e2b.webhooks.management.v1.WebhookDelivery
+	(*GetWebhookDeliveryStatsRequest)(nil),  // 21: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest
+	(*GetWebhookDeliveryStatsResponse)(nil), // 22: e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse
+	(*WebhookDeliveryStats)(nil),            // 23: e2b.webhooks.management.v1.WebhookDeliveryStats
+	(*WebhookDeliveryStatsBucket)(nil),      // 24: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket
+	(*WebhookDeliveryDurationStats)(nil),    // 25: e2b.webhooks.management.v1.WebhookDeliveryDurationStats
+	(*WebhookManagementErrorDetail)(nil),    // 26: e2b.webhooks.management.v1.WebhookManagementErrorDetail
+	(*timestamppb.Timestamp)(nil),           // 27: google.protobuf.Timestamp
 }
 var file_e2b_webhooks_management_v1_webhook_management_proto_depIdxs = []int32{
-	25, // 0: e2b.webhooks.management.v1.Webhook.created_at:type_name -> google.protobuf.Timestamp
-	3,  // 1: e2b.webhooks.management.v1.CreateWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
-	3,  // 2: e2b.webhooks.management.v1.ListWebhooksResponse.webhooks:type_name -> e2b.webhooks.management.v1.Webhook
-	3,  // 3: e2b.webhooks.management.v1.GetWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
-	10, // 4: e2b.webhooks.management.v1.UpdateWebhookRequest.events:type_name -> e2b.webhooks.management.v1.WebhookEventsUpdate
-	3,  // 5: e2b.webhooks.management.v1.UpdateWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
-	25, // 6: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest.start:type_name -> google.protobuf.Timestamp
-	25, // 7: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest.end:type_name -> google.protobuf.Timestamp
+	27, // 0: e2b.webhooks.management.v1.Webhook.created_at:type_name -> google.protobuf.Timestamp
+	5,  // 1: e2b.webhooks.management.v1.CreateWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
+	5,  // 2: e2b.webhooks.management.v1.ListWebhooksResponse.webhooks:type_name -> e2b.webhooks.management.v1.Webhook
+	5,  // 3: e2b.webhooks.management.v1.GetWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
+	12, // 4: e2b.webhooks.management.v1.UpdateWebhookRequest.events:type_name -> e2b.webhooks.management.v1.WebhookEventsUpdate
+	5,  // 5: e2b.webhooks.management.v1.UpdateWebhookResponse.webhook:type_name -> e2b.webhooks.management.v1.Webhook
+	27, // 6: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest.start:type_name -> google.protobuf.Timestamp
+	27, // 7: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest.end:type_name -> google.protobuf.Timestamp
 	0,  // 8: e2b.webhooks.management.v1.ListWebhookDeliveriesRequest.delivery_statuses:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStatus
-	17, // 9: e2b.webhooks.management.v1.ListWebhookDeliveriesResponse.groups:type_name -> e2b.webhooks.management.v1.WebhookDeliveryGroup
-	18, // 10: e2b.webhooks.management.v1.WebhookDeliveryGroup.attempts:type_name -> e2b.webhooks.management.v1.WebhookDelivery
+	19, // 9: e2b.webhooks.management.v1.ListWebhookDeliveriesResponse.groups:type_name -> e2b.webhooks.management.v1.WebhookDeliveryGroup
+	20, // 10: e2b.webhooks.management.v1.WebhookDeliveryGroup.attempts:type_name -> e2b.webhooks.management.v1.WebhookDelivery
 	0,  // 11: e2b.webhooks.management.v1.WebhookDelivery.status:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStatus
 	1,  // 12: e2b.webhooks.management.v1.WebhookDelivery.error_class:type_name -> e2b.webhooks.management.v1.WebhookDeliveryErrorClass
-	25, // 13: e2b.webhooks.management.v1.WebhookDelivery.timestamp:type_name -> google.protobuf.Timestamp
-	25, // 14: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest.start:type_name -> google.protobuf.Timestamp
-	25, // 15: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest.end:type_name -> google.protobuf.Timestamp
-	21, // 16: e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse.stats:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStats
-	22, // 17: e2b.webhooks.management.v1.WebhookDeliveryStats.buckets:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStatsBucket
-	23, // 18: e2b.webhooks.management.v1.WebhookDeliveryStats.duration_ms:type_name -> e2b.webhooks.management.v1.WebhookDeliveryDurationStats
-	25, // 19: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket.timestamp:type_name -> google.protobuf.Timestamp
-	23, // 20: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket.duration_ms:type_name -> e2b.webhooks.management.v1.WebhookDeliveryDurationStats
+	27, // 13: e2b.webhooks.management.v1.WebhookDelivery.timestamp:type_name -> google.protobuf.Timestamp
+	27, // 14: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest.start:type_name -> google.protobuf.Timestamp
+	27, // 15: e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest.end:type_name -> google.protobuf.Timestamp
+	23, // 16: e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse.stats:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStats
+	24, // 17: e2b.webhooks.management.v1.WebhookDeliveryStats.buckets:type_name -> e2b.webhooks.management.v1.WebhookDeliveryStatsBucket
+	25, // 18: e2b.webhooks.management.v1.WebhookDeliveryStats.duration_ms:type_name -> e2b.webhooks.management.v1.WebhookDeliveryDurationStats
+	27, // 19: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket.timestamp:type_name -> google.protobuf.Timestamp
+	25, // 20: e2b.webhooks.management.v1.WebhookDeliveryStatsBucket.duration_ms:type_name -> e2b.webhooks.management.v1.WebhookDeliveryDurationStats
 	2,  // 21: e2b.webhooks.management.v1.WebhookManagementErrorDetail.reason:type_name -> e2b.webhooks.management.v1.WebhookManagementErrorReason
-	4,  // 22: e2b.webhooks.management.v1.WebhookManagementService.CreateWebhook:input_type -> e2b.webhooks.management.v1.CreateWebhookRequest
-	6,  // 23: e2b.webhooks.management.v1.WebhookManagementService.ListWebhooks:input_type -> e2b.webhooks.management.v1.ListWebhooksRequest
-	8,  // 24: e2b.webhooks.management.v1.WebhookManagementService.GetWebhook:input_type -> e2b.webhooks.management.v1.GetWebhookRequest
-	11, // 25: e2b.webhooks.management.v1.WebhookManagementService.UpdateWebhook:input_type -> e2b.webhooks.management.v1.UpdateWebhookRequest
-	13, // 26: e2b.webhooks.management.v1.WebhookManagementService.DeleteWebhook:input_type -> e2b.webhooks.management.v1.DeleteWebhookRequest
-	15, // 27: e2b.webhooks.management.v1.WebhookManagementService.ListWebhookDeliveries:input_type -> e2b.webhooks.management.v1.ListWebhookDeliveriesRequest
-	19, // 28: e2b.webhooks.management.v1.WebhookManagementService.GetWebhookDeliveryStats:input_type -> e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest
-	5,  // 29: e2b.webhooks.management.v1.WebhookManagementService.CreateWebhook:output_type -> e2b.webhooks.management.v1.CreateWebhookResponse
-	7,  // 30: e2b.webhooks.management.v1.WebhookManagementService.ListWebhooks:output_type -> e2b.webhooks.management.v1.ListWebhooksResponse
-	9,  // 31: e2b.webhooks.management.v1.WebhookManagementService.GetWebhook:output_type -> e2b.webhooks.management.v1.GetWebhookResponse
-	12, // 32: e2b.webhooks.management.v1.WebhookManagementService.UpdateWebhook:output_type -> e2b.webhooks.management.v1.UpdateWebhookResponse
-	14, // 33: e2b.webhooks.management.v1.WebhookManagementService.DeleteWebhook:output_type -> e2b.webhooks.management.v1.DeleteWebhookResponse
-	16, // 34: e2b.webhooks.management.v1.WebhookManagementService.ListWebhookDeliveries:output_type -> e2b.webhooks.management.v1.ListWebhookDeliveriesResponse
-	20, // 35: e2b.webhooks.management.v1.WebhookManagementService.GetWebhookDeliveryStats:output_type -> e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse
-	29, // [29:36] is the sub-list for method output_type
-	22, // [22:29] is the sub-list for method input_type
+	3,  // 22: e2b.webhooks.management.v1.WebhookManagementService.RetireProjectWebhooks:input_type -> e2b.webhooks.management.v1.RetireProjectWebhooksRequest
+	6,  // 23: e2b.webhooks.management.v1.WebhookManagementService.CreateWebhook:input_type -> e2b.webhooks.management.v1.CreateWebhookRequest
+	8,  // 24: e2b.webhooks.management.v1.WebhookManagementService.ListWebhooks:input_type -> e2b.webhooks.management.v1.ListWebhooksRequest
+	10, // 25: e2b.webhooks.management.v1.WebhookManagementService.GetWebhook:input_type -> e2b.webhooks.management.v1.GetWebhookRequest
+	13, // 26: e2b.webhooks.management.v1.WebhookManagementService.UpdateWebhook:input_type -> e2b.webhooks.management.v1.UpdateWebhookRequest
+	15, // 27: e2b.webhooks.management.v1.WebhookManagementService.DeleteWebhook:input_type -> e2b.webhooks.management.v1.DeleteWebhookRequest
+	17, // 28: e2b.webhooks.management.v1.WebhookManagementService.ListWebhookDeliveries:input_type -> e2b.webhooks.management.v1.ListWebhookDeliveriesRequest
+	21, // 29: e2b.webhooks.management.v1.WebhookManagementService.GetWebhookDeliveryStats:input_type -> e2b.webhooks.management.v1.GetWebhookDeliveryStatsRequest
+	4,  // 30: e2b.webhooks.management.v1.WebhookManagementService.RetireProjectWebhooks:output_type -> e2b.webhooks.management.v1.RetireProjectWebhooksResponse
+	7,  // 31: e2b.webhooks.management.v1.WebhookManagementService.CreateWebhook:output_type -> e2b.webhooks.management.v1.CreateWebhookResponse
+	9,  // 32: e2b.webhooks.management.v1.WebhookManagementService.ListWebhooks:output_type -> e2b.webhooks.management.v1.ListWebhooksResponse
+	11, // 33: e2b.webhooks.management.v1.WebhookManagementService.GetWebhook:output_type -> e2b.webhooks.management.v1.GetWebhookResponse
+	14, // 34: e2b.webhooks.management.v1.WebhookManagementService.UpdateWebhook:output_type -> e2b.webhooks.management.v1.UpdateWebhookResponse
+	16, // 35: e2b.webhooks.management.v1.WebhookManagementService.DeleteWebhook:output_type -> e2b.webhooks.management.v1.DeleteWebhookResponse
+	18, // 36: e2b.webhooks.management.v1.WebhookManagementService.ListWebhookDeliveries:output_type -> e2b.webhooks.management.v1.ListWebhookDeliveriesResponse
+	22, // 37: e2b.webhooks.management.v1.WebhookManagementService.GetWebhookDeliveryStats:output_type -> e2b.webhooks.management.v1.GetWebhookDeliveryStatsResponse
+	30, // [30:38] is the sub-list for method output_type
+	22, // [22:30] is the sub-list for method input_type
 	22, // [22:22] is the sub-list for extension type_name
 	22, // [22:22] is the sub-list for extension extendee
 	0,  // [0:22] is the sub-list for field type_name
@@ -3055,7 +3168,7 @@ func file_e2b_webhooks_management_v1_webhook_management_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc), len(file_e2b_webhooks_management_v1_webhook_management_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   22,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

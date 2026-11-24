@@ -3,6 +3,7 @@
 package template
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -667,4 +668,56 @@ func TestStorageTemplate_FootprintRacesProvisionalDrop(t *testing.T) {
 	wg.Wait()
 
 	assert.Nil(t, tmpl.memfileHeader.Load())
+}
+
+// A caller whose context ends while the template's files are still being
+// fetched stops waiting with the context's error, and the fetch goes on for
+// the template's other users: the file set afterwards is served to them.
+func TestStorageTemplate_FileWaitsStopWhenTheCallerIsCancelled(t *testing.T) {
+	t.Parallel()
+	tmpl := &storageTemplate{
+		memfile: utils.NewSetOnce[block.ReadonlyDevice](),
+		rootfs:  utils.NewSetOnce[block.ReadonlyDevice](),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := tmpl.Memfile(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = tmpl.Rootfs(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	memDev, rootfsDev := blockmocks.NewMockReadonlyDevice(t), blockmocks.NewMockReadonlyDevice(t)
+	require.NoError(t, tmpl.memfile.SetValue(memDev))
+	require.NoError(t, tmpl.rootfs.SetValue(rootfsDev))
+
+	got, err := tmpl.Memfile(t.Context())
+	require.NoError(t, err)
+	assert.Same(t, memDev, got)
+	got, err = tmpl.Rootfs(t.Context())
+	require.NoError(t, err)
+	assert.Same(t, rootfsDev, got)
+}
+
+// A file that is already there wins over a context that is already done, so
+// the callers that run once the resume has waited for the files (the
+// prefetch goroutine, the post-construction lookup, Pause) see no change.
+func TestStorageTemplate_FetchedFilesWinOverADoneContext(t *testing.T) {
+	t.Parallel()
+	tmpl := &storageTemplate{
+		memfile: utils.NewSetOnce[block.ReadonlyDevice](),
+		rootfs:  utils.NewSetOnce[block.ReadonlyDevice](),
+	}
+	memDev, rootfsDev := blockmocks.NewMockReadonlyDevice(t), blockmocks.NewMockReadonlyDevice(t)
+	require.NoError(t, tmpl.memfile.SetValue(memDev))
+	require.NoError(t, tmpl.rootfs.SetValue(rootfsDev))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	got, err := tmpl.Memfile(ctx)
+	require.NoError(t, err)
+	assert.Same(t, memDev, got)
+	got, err = tmpl.Rootfs(ctx)
+	require.NoError(t, err)
+	assert.Same(t, rootfsDev, got)
 }

@@ -71,8 +71,8 @@ func (c *MaskTemplate) Memfile(ctx context.Context) (block.ReadonlyDevice, error
 	return c.template.Memfile(ctx)
 }
 
-func (c *MaskTemplate) Rootfs() (block.ReadonlyDevice, error) {
-	return c.template.Rootfs()
+func (c *MaskTemplate) Rootfs(ctx context.Context) (block.ReadonlyDevice, error) {
+	return c.template.Rootfs(ctx)
 }
 
 func (c *MaskTemplate) Snapfile() (File, error) {

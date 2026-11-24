@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	WebhookManagementService_RetireProjectWebhooks_FullMethodName   = "/e2b.webhooks.management.v1.WebhookManagementService/RetireProjectWebhooks"
 	WebhookManagementService_CreateWebhook_FullMethodName           = "/e2b.webhooks.management.v1.WebhookManagementService/CreateWebhook"
 	WebhookManagementService_ListWebhooks_FullMethodName            = "/e2b.webhooks.management.v1.WebhookManagementService/ListWebhooks"
 	WebhookManagementService_GetWebhook_FullMethodName              = "/e2b.webhooks.management.v1.WebhookManagementService/GetWebhook"
@@ -41,6 +42,8 @@ const (
 // A successful mutation means the webhook record was persisted. Propagation to
 // the team's cluster happens asynchronously.
 type WebhookManagementServiceClient interface {
+	// The caller owns project liveness. Repeated cleanup of its subscriptions is safe.
+	RetireProjectWebhooks(ctx context.Context, in *RetireProjectWebhooksRequest, opts ...grpc.CallOption) (*RetireProjectWebhooksResponse, error)
 	CreateWebhook(ctx context.Context, in *CreateWebhookRequest, opts ...grpc.CallOption) (*CreateWebhookResponse, error)
 	ListWebhooks(ctx context.Context, in *ListWebhooksRequest, opts ...grpc.CallOption) (*ListWebhooksResponse, error)
 	GetWebhook(ctx context.Context, in *GetWebhookRequest, opts ...grpc.CallOption) (*GetWebhookResponse, error)
@@ -56,6 +59,16 @@ type webhookManagementServiceClient struct {
 
 func NewWebhookManagementServiceClient(cc grpc.ClientConnInterface) WebhookManagementServiceClient {
 	return &webhookManagementServiceClient{cc}
+}
+
+func (c *webhookManagementServiceClient) RetireProjectWebhooks(ctx context.Context, in *RetireProjectWebhooksRequest, opts ...grpc.CallOption) (*RetireProjectWebhooksResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireProjectWebhooksResponse)
+	err := c.cc.Invoke(ctx, WebhookManagementService_RetireProjectWebhooks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *webhookManagementServiceClient) CreateWebhook(ctx context.Context, in *CreateWebhookRequest, opts ...grpc.CallOption) (*CreateWebhookResponse, error) {
@@ -141,6 +154,8 @@ func (c *webhookManagementServiceClient) GetWebhookDeliveryStats(ctx context.Con
 // A successful mutation means the webhook record was persisted. Propagation to
 // the team's cluster happens asynchronously.
 type WebhookManagementServiceServer interface {
+	// The caller owns project liveness. Repeated cleanup of its subscriptions is safe.
+	RetireProjectWebhooks(context.Context, *RetireProjectWebhooksRequest) (*RetireProjectWebhooksResponse, error)
 	CreateWebhook(context.Context, *CreateWebhookRequest) (*CreateWebhookResponse, error)
 	ListWebhooks(context.Context, *ListWebhooksRequest) (*ListWebhooksResponse, error)
 	GetWebhook(context.Context, *GetWebhookRequest) (*GetWebhookResponse, error)
@@ -158,6 +173,9 @@ type WebhookManagementServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedWebhookManagementServiceServer struct{}
 
+func (UnimplementedWebhookManagementServiceServer) RetireProjectWebhooks(context.Context, *RetireProjectWebhooksRequest) (*RetireProjectWebhooksResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireProjectWebhooks not implemented")
+}
 func (UnimplementedWebhookManagementServiceServer) CreateWebhook(context.Context, *CreateWebhookRequest) (*CreateWebhookResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateWebhook not implemented")
 }
@@ -199,6 +217,24 @@ func RegisterWebhookManagementServiceServer(s grpc.ServiceRegistrar, srv Webhook
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&WebhookManagementService_ServiceDesc, srv)
+}
+
+func _WebhookManagementService_RetireProjectWebhooks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireProjectWebhooksRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WebhookManagementServiceServer).RetireProjectWebhooks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WebhookManagementService_RetireProjectWebhooks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WebhookManagementServiceServer).RetireProjectWebhooks(ctx, req.(*RetireProjectWebhooksRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _WebhookManagementService_CreateWebhook_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -334,6 +370,10 @@ var WebhookManagementService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "e2b.webhooks.management.v1.WebhookManagementService",
 	HandlerType: (*WebhookManagementServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RetireProjectWebhooks",
+			Handler:    _WebhookManagementService_RetireProjectWebhooks_Handler,
+		},
 		{
 			MethodName: "CreateWebhook",
 			Handler:    _WebhookManagementService_CreateWebhook_Handler,

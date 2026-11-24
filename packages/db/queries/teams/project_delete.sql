@@ -6,6 +6,11 @@ FROM public.teams
 WHERE id = sqlc.arg(project_id)::uuid
 FOR UPDATE;
 
+-- name: LockProjectForWebhookWrite :one
+SELECT cluster_id FROM public.teams
+WHERE id = sqlc.arg(project_id)::uuid AND deleted_at IS NULL
+FOR SHARE;
+
 -- The row stays for history. Blocking it is what stops workloads, and the
 -- cluster assignment goes so the project no longer holds a cluster. Name and
 -- email are scrubbed, and the slug is released for reuse: it becomes

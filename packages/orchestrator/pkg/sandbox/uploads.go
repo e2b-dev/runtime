@@ -242,7 +242,7 @@ func (u *Uploads) find(ctx context.Context, buildID uuid.UUID, t build.DiffType)
 	case build.Memfile:
 		dev, err = tpl.Memfile(ctx)
 	case build.Rootfs:
-		dev, err = tpl.Rootfs()
+		dev, err = tpl.Rootfs(ctx)
 	default:
 		err = fmt.Errorf("unsupported file type: %s", t)
 	}

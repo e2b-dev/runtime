@@ -66,7 +66,7 @@ func (f *pinTestTemplate) snapfileExists() bool {
 }
 
 func (f *pinTestTemplate) Memfile(context.Context) (block.ReadonlyDevice, error) { return nil, nil }
-func (f *pinTestTemplate) Rootfs() (block.ReadonlyDevice, error)                 { return nil, nil }
+func (f *pinTestTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error)  { return nil, nil }
 func (f *pinTestTemplate) Snapfile() (File, error)                               { return nil, nil }
 func (f *pinTestTemplate) Metadata() (metadata.Template, error)                  { return metadata.Template{}, nil }
 func (f *pinTestTemplate) UpdateMetadata(metadata.Template) error                { return nil }

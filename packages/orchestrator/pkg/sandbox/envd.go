@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -344,7 +345,7 @@ func (s *Sandbox) newEnvdInitRequest(address, envdVersion string) *envdInitReque
 		sandbox: s.LoggerMetadata(),
 		body: envd.PostInitJSONBody{
 			LifecycleID:    s.LifecycleID,
-			EnvVars:        s.Config.Envd.Vars,
+			EnvVars:        s.initEnvVars(),
 			HyperloopIP:    s.config.NetworkConfig.OrchestratorInSandboxIPAddress,
 			AccessToken:    utils.DerefOrDefault(s.Config.Envd.AccessToken, ""),
 			DefaultUser:    utils.DerefOrDefault(s.Config.Envd.DefaultUser, ""),
@@ -556,6 +557,86 @@ func (s *Sandbox) postEnvd(ctx context.Context, timeout time.Duration, path stri
 	}
 
 	return nil
+}
+
+// envdInternalEnvVars are the variables envd sets itself. GET /envs returns them beside the
+// user's, and a replacement envd sets its own, so they are not sent back on /init.
+var envdInternalEnvVars = [...]string{"E2B_SANDBOX", "E2B_SANDBOX_ID", "E2B_TEMPLATE_ID", "E2B_EVENTS_ADDRESS"}
+
+// userEnvVars returns a copy of vars without the variables envd sets itself.
+func userEnvVars(vars map[string]string) map[string]string {
+	out := maps.Clone(vars)
+	for _, key := range envdInternalEnvVars {
+		delete(out, key)
+	}
+
+	return out
+}
+
+// ErrEnvdEnvVarsConflict means a start configured with environment variables found different
+// ones in the running envd. Which set a live upgrade should keep is undecided, so it declines.
+var ErrEnvdEnvVarsConflict = errors.New("configured env vars differ from the running envd's")
+
+// initEnvVars is the environment an /init sends: the ones the start was configured with, or
+// else the variables CaptureEnvdEnvVars read.
+func (s *Sandbox) initEnvVars() map[string]string {
+	if len(s.Config.Envd.Vars) > 0 {
+		return s.Config.Envd.Vars
+	}
+	if captured := s.capturedEnvVars.Load(); captured != nil {
+		return *captured
+	}
+
+	return nil
+}
+
+// CaptureEnvdEnvVars reads the running envd's default environment (GET /envs) and keeps its
+// user variables for every later /init, returning how many /init will send.
+//
+// A memory resume's config carries no variables, because the guest holds them in memory. A
+// live upgrade replaces envd with a process that starts without them, so the post-upgrade
+// /init has to send them back. A start configured with variables sends its own, which must
+// match the running envd's: if they differ it returns ErrEnvdEnvVarsConflict. On an error
+// nothing is kept, and the caller must not upgrade.
+func (s *Sandbox) CaptureEnvdEnvVars(ctx context.Context, timeout time.Duration) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(WithEnvdSandbox(ctx, s), http.MethodGet, s.envdServerURL()+"/envs", nil)
+	if err != nil {
+		return 0, fmt.Errorf("build env vars request: %w", err)
+	}
+	if s.Config.Envd.AccessToken != nil {
+		req.Header.Set("X-Access-Token", *s.Config.Envd.AccessToken)
+	}
+
+	resp, err := sandboxHttpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("get env vars: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("get env vars returned %d: %s", resp.StatusCode, envdErrorBody(resp.Body))
+	}
+
+	var vars map[string]string
+	if err := decodeEnvdResult(resp.Body, &vars); err != nil {
+		return 0, fmt.Errorf("decode env vars: %w", err)
+	}
+	if vars == nil {
+		return 0, errors.New("get env vars returned null")
+	}
+	vars = userEnvVars(vars)
+	// envd keeps its own value for those names whatever /init sends, so a start configured
+	// with one is no conflict.
+	if configured := userEnvVars(s.Config.Envd.Vars); len(configured) > 0 && !maps.Equal(configured, vars) {
+		return 0, ErrEnvdEnvVarsConflict
+	}
+
+	s.capturedEnvVars.Store(&vars)
+
+	return len(vars), nil
 }
 
 // CallEnvdUpgrade triggers envd's POST /upgrade — the orchestrator-driven

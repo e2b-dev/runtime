@@ -13,6 +13,7 @@ cache:
         addresses: dns+memcached:11211
 
 query_frontend:
+  query_end_cutoff: 0s
   search:
     duration_slo: 5s
     throughput_bytes_slo: 1.073741824e+09
@@ -51,12 +52,10 @@ distributor:
         http:
           endpoint: "tempo:4318"
 
-ingester:
-  max_block_duration: 5m # cut the headblock when this much time passes. this is being set for demo purposes and should probably be left alone normally
-
-compactor:
-  compaction:
-    block_retention: 720h # overall Tempo trace retention. set for demo purposes
+live_store:
+  max_block_duration: 5m
+  wal:
+    path: /var/tempo/wal
 
 metrics_generator:
   registry:
@@ -68,12 +67,6 @@ metrics_generator:
     remote_write:
       - url: http://mimir:9009/api/v1/push
         send_exemplars: true
-  traces_storage:
-    path: /var/tempo/generator/traces
-  processor:
-    local_blocks:
-      filter_server_spans: false
-      flush_to_storage: true
 
 storage:
   trace:
@@ -85,10 +78,12 @@ storage:
 
 overrides:
   defaults:
+    compaction:
+      block_retention: 720h
     cost_attribution:
       dimensions:
         service.name: "" # unscoped matches both resource and span attributes
         span.http.target: "service_route" # span scoped attribute, also remapped to custom label in metrics.
     metrics_generator:
-      processors: [service-graphs, span-metrics, local-blocks] # enables metrics generator
+      processors: [service-graphs, span-metrics]
       generate_native_histograms: both

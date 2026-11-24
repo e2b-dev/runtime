@@ -29,13 +29,8 @@ var (
 // ErrAdvisoryLockBusy reports that a non-blocking lock attempt found a holder.
 var ErrAdvisoryLockBusy = errors.New("database advisory lock is held")
 
-// ErrCommitOutcomeUnknown marks a COMMIT that was sent but not answered with a
-// rollback or an ordinary ERROR outside SQLSTATE class 08. A lost reply, a
-// closed connection, a FATAL error and a connection exception all carry it,
-// because the server may have applied the transaction first. It wraps the
-// original error and is never replayed, whatever SQLSTATE that error carries.
-// A COMMIT pgx reports as never sent does not carry it, unless pgx cannot
-// tell, as with "conn closed".
+// ErrCommitOutcomeUnknown marks a COMMIT that PostgreSQL may have applied.
+// The original error is preserved and the transaction is never replayed.
 var ErrCommitOutcomeUnknown = errors.New("transaction commit outcome is unknown")
 
 // AdvisoryLock is a PostgreSQL session lock held on one pool connection. One
@@ -273,15 +268,9 @@ func runInTxReturn1[T any](
 	return value, nil
 }
 
-// isKnownCommitAbort reports whether a failed COMMIT certainly did not apply:
-// it was never sent, the server rolled it back, or the server answered with an
-// ordinary ERROR. pgx also marks "conn closed" safe to retry when the
-// connection died while it read the reply, so that error counts as unknown. A
-// FATAL error or a connection exception, which a pooler can report after its
-// server connection died during the COMMIT, counts as unknown too, as does a
-// localized severity sent without the unlocalized field.
+// A pooler can report a FATAL or connection exception after PostgreSQL commits.
 func isKnownCommitAbort(err error) bool {
-	if (pgconn.SafeToRetry(err) && !errors.Is(err, pgconn.ErrConnClosed)) || errors.Is(err, pgx.ErrTxCommitRollback) {
+	if pgconn.SafeToRetry(err) || errors.Is(err, pgx.ErrTxCommitRollback) {
 		return true
 	}
 	var pgErr *pgconn.PgError

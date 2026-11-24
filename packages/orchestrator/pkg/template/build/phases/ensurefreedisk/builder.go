@@ -154,7 +154,7 @@ func (b *EnsureFreeDiskBuilder) Build(
 		return phases.LayerResult{}, fmt.Errorf("get source template: %w", err)
 	}
 
-	sourceRootfs, err := sourceTemplate.Rootfs()
+	sourceRootfs, err := sourceTemplate.Rootfs(ctx)
 	if err != nil {
 		return phases.LayerResult{}, fmt.Errorf("get source rootfs: %w", err)
 	}

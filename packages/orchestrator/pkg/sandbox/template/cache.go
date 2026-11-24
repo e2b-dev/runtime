@@ -334,8 +334,8 @@ func (c *Cache) onEvicted(ctx context.Context, item *ttlcache.Item[string, Templ
 	c.extendMu.Unlock()
 
 	// Closed outside the lock on purpose. closeTemplate waits on the template's
-	// memfile, rootfs and snapfile futures, each a bare SetOnce.Wait with no
-	// context and no deadline, and extendMu is the lock every sandbox create and
+	// memfile, rootfs and snapfile futures under a context it cannot cancel, so
+	// with no deadline, and extendMu is the lock every sandbox create and
 	// resume takes. Holding it across that wait would turn an eviction that lands
 	// while a fetch or a dedup swap is still in flight into a node-wide
 	// create/resume stall, clearable only by restarting the process.
@@ -497,8 +497,9 @@ func (c *Cache) release(ctx context.Context, e *pinnedEntry, tok uint64) {
 	noteGoneLocked(e.tmpl)
 	c.extendMu.Unlock()
 
-	// Off this goroutine: closeTemplate waits on the template's futures with no
-	// deadline, and the last release usually runs on a sandbox's lifecycle path.
+	// Off this goroutine: closeTemplate joins the template's fetches under a
+	// context it cannot cancel, so with no deadline, and the last release
+	// usually runs on a sandbox's lifecycle path.
 	//
 	// An eviction callback for this instance may be queued behind us — Invalidate
 	// deletes the cache entry before retiring the pin — and will find nothing

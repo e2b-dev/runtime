@@ -251,7 +251,7 @@ func NewRedisClient(ctx context.Context, config RedisConfig) (redis.UniversalCli
 		}
 		clusterOpts.TLSConfig = tlsConfig
 
-		redisClient = redis.NewClusterClient(clusterOpts)
+		redisClient = newRedisClusterClient(clusterOpts)
 	case config.RedisURL != "":
 		opts, err := newRedisOptions(ctx, config, poolSize, minIdleConns)
 		if err != nil {

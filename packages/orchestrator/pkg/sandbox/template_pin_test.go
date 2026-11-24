@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	blockmocks "github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block/mocks"
@@ -83,7 +84,7 @@ func TestUpload_PublishReturnsItsPin(t *testing.T) {
 	dev.EXPECT().SwapHeader(final).Run(func(*headers.Header) {
 		assert.Equal(t, int64(1), cache.pins.Load(), "the swap runs under the pin")
 	}).Once()
-	tpl.EXPECT().Rootfs().Return(dev, nil)
+	tpl.EXPECT().Rootfs(mock.Anything).Return(dev, nil)
 	cache.put(id.String(), tpl)
 
 	u := &Upload{buildID: id, uploads: c}

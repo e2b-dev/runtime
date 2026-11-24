@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,9 +27,11 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	sharedauth "github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	webhookevents "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/events"
 	webhookmanagement "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management/clienttests"
 )
 
 // The backend is another service, so these cover what this side owns: that the
@@ -219,6 +222,18 @@ func newWebhooksRequest(t *testing.T, method, target, body string) (*gin.Context
 	return ginCtx, recorder, teamID
 }
 
+func liveWebhookRequest(t *testing.T, store *APIStore, method, path, body string) (*gin.Context, *httptest.ResponseRecorder, uuid.UUID) {
+	t.Helper()
+
+	db := testutils.SetupDatabase(t)
+	store.sqlcDB = db.SqlcClient
+	project := testutils.CreateTestTeam(t, db)
+	c, w, _ := newWebhooksRequest(t, method, path, body)
+	sharedauth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: project}})
+
+	return c, w, project
+}
+
 func sampleWebhook(teamID uuid.UUID) *webhookmanagement.Webhook {
 	return webhookmanagement.Webhook_builder{
 		WebhookId: uuid.NewString(),
@@ -236,7 +251,7 @@ func TestPostEventsWebhooksSendsTheCallersTeam(t *testing.T) {
 
 	backend := &fakeWebhooksBackend{}
 	store := startWebhooksBackend(t, backend)
-	ginCtx, recorder, teamID := newWebhooksRequest(t, http.MethodPost, "/events/webhooks",
+	ginCtx, recorder, teamID := liveWebhookRequest(t, store, http.MethodPost, "/events/webhooks",
 		`{"name":"alerts","url":"https://example.com/hook","events":["sandbox.lifecycle.created"]}`)
 	backend.webhook = sampleWebhook(teamID)
 
@@ -254,6 +269,68 @@ func TestPostEventsWebhooksSendsTheCallersTeam(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
 	assert.Equal(t, "alerts", created.Name)
 	assert.Equal(t, teamID.String(), created.TeamId)
+}
+
+func TestWebhookCreateAndProjectDeletionUseTheSameRow(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	project, cluster := testutils.CreateTestTeam(t, db), uuid.New()
+	require.NoError(t, db.SqlcClient.TestsRawSQL(t.Context(), `UPDATE teams SET cluster_id=$2 WHERE id=$1`, project, cluster))
+	store, _ := newManagementStore(t, db)
+	backend := clienttests.NewMockWebhookManagementServiceClient(t)
+	store.webhookManagement = backend
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	started, ack := make(chan struct{}), make(chan struct{})
+	backend.EXPECT().CreateWebhook(mock.Anything, mock.MatchedBy(func(req *webhookmanagement.CreateWebhookRequest) bool {
+		return req.GetTeamId() == project.String() && req.GetClusterId() == cluster.String()
+	})).RunAndReturn(func(_ context.Context, _ *webhookmanagement.CreateWebhookRequest, _ ...grpc.CallOption) (*webhookmanagement.CreateWebhookResponse, error) {
+		close(started)
+		select {
+		case <-ack:
+			return webhookmanagement.CreateWebhookResponse_builder{Webhook: sampleWebhook(project)}.Build(), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}).Once()
+	newRequest := func() (*gin.Context, *httptest.ResponseRecorder) {
+		c, recorder, _ := newWebhooksRequest(t, http.MethodPost, "/events/webhooks",
+			`{"name":"alerts","url":"https://example.com/hook","events":["sandbox.lifecycle.created"]}`)
+		sharedauth.SetTeamInfoForTest(t, c, &types.Team{Team: &dbtypes.Team{ID: project}})
+
+		return c, recorder
+	}
+	c, first := newRequest()
+	created := make(chan struct{})
+	go func() {
+		store.PostEventsWebhooks(c)
+		close(created)
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		require.Fail(t, "create did not reach the webhook backend")
+	}
+	deleted := make(chan error, 1)
+	go func() {
+		_, err := store.deleteProject(ctx, project)
+		deleted <- err
+	}()
+	require.Eventually(t, func() bool {
+		var waiting bool
+
+		return db.SqlcClient.Pool().QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_stat_activity
+			WHERE datname=current_database() AND wait_event_type='Lock' AND cardinality(pg_blocking_pids(pid))>0)`).Scan(&waiting) == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond)
+	close(ack)
+	<-created
+	require.Equal(t, http.StatusCreated, first.Code)
+	require.NoError(t, <-deleted)
+
+	c, late := newRequest()
+	store.PostEventsWebhooks(c)
+	require.Equal(t, http.StatusNotFound, late.Code)
 }
 
 func TestGetEventsWebhooksProjectsTheContractAnswer(t *testing.T) {
@@ -282,7 +359,9 @@ func TestDeleteEventsWebhooksWebhookIDAnswersOK(t *testing.T) {
 
 	backend := &fakeWebhooksBackend{}
 	store := startWebhooksBackend(t, backend)
-	ginCtx, recorder, teamID := newWebhooksRequest(t, http.MethodDelete, "/events/webhooks/x", "")
+	ginCtx, recorder, teamID := liveWebhookRequest(t, store, http.MethodDelete, "/events/webhooks/x", "")
+	cluster := uuid.New()
+	require.NoError(t, store.sqlcDB.TestsRawSQL(t.Context(), `UPDATE teams SET cluster_id=$2 WHERE id=$1`, teamID, cluster))
 	webhookID := uuid.New()
 
 	store.DeleteEventsWebhooksWebhookID(ginCtx, webhookID)
@@ -290,6 +369,7 @@ func TestDeleteEventsWebhooksWebhookIDAnswersOK(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	require.Len(t, backend.deleteRequests, 1)
 	assert.Equal(t, teamID.String(), backend.deleteRequests[0].GetTeamId())
+	assert.Equal(t, cluster.String(), backend.deleteRequests[0].GetClusterId())
 	assert.Equal(t, webhookID.String(), backend.deleteRequests[0].GetWebhookId())
 }
 
@@ -317,7 +397,9 @@ func TestPatchEventsWebhooksWebhookIDDistinguishesOmittedFromEmptyEvents(t *test
 
 			backend := &fakeWebhooksBackend{}
 			store := startWebhooksBackend(t, backend)
-			ginCtx, recorder, teamID := newWebhooksRequest(t, http.MethodPatch, "/events/webhooks/x", tc.body)
+			ginCtx, recorder, teamID := liveWebhookRequest(t, store, http.MethodPatch, "/events/webhooks/x", tc.body)
+			cluster := uuid.New()
+			require.NoError(t, store.sqlcDB.TestsRawSQL(t.Context(), `UPDATE teams SET cluster_id=$2 WHERE id=$1`, teamID, cluster))
 			backend.webhook = sampleWebhook(teamID)
 
 			store.PatchEventsWebhooksWebhookID(ginCtx, uuid.New())
@@ -329,6 +411,7 @@ func TestPatchEventsWebhooksWebhookIDDistinguishesOmittedFromEmptyEvents(t *test
 			// repeated field reads back as nil whether it was sent empty or
 			// not sent at all, which is why the contract wraps it.
 			sent := backend.updateRequests[0]
+			assert.Equal(t, cluster.String(), sent.GetClusterId())
 			assert.Equal(t, tc.hasEvents, sent.HasEvents())
 			assert.Equal(t, tc.wantValues, sent.GetEvents().GetValues())
 		})
@@ -347,12 +430,30 @@ func TestWebhookBackendFailuresMapToStatuses(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	unavailable, err := status.New(codes.Unavailable, "placement unavailable").WithDetails(webhookmanagement.WebhookManagementErrorDetail_builder{
+		Reason: webhookmanagement.WebhookManagementErrorReason_WEBHOOK_MANAGEMENT_ERROR_REASON_CLAIM_LOOKUP_UNAVAILABLE,
+	}.Build())
+	require.NoError(t, err)
+
 	for _, tc := range []struct {
 		name     string
 		err      error
 		wantCode int
 		wantBody string
+		retry    bool
 	}{
+		{
+			name: "claim lookup failed before registration", err: unavailable.Err(),
+			wantCode: http.StatusServiceUnavailable, wantBody: "Failed to create webhook", retry: true,
+		},
+		{
+			name: "unknown registration outcome", err: status.Error(codes.Unavailable, "lost response"),
+			wantCode: http.StatusServiceUnavailable, wantBody: "Failed to create webhook",
+		},
+		{
+			name: "project placement conflict", err: status.Error(codes.FailedPrecondition, "remote claim mismatch"),
+			wantCode: http.StatusConflict, wantBody: "Webhook project placement does not match",
+		},
 		{
 			name: "not found", err: status.Error(codes.NotFound, "webhook not found"),
 			wantCode: http.StatusNotFound, wantBody: "Webhook not found",
@@ -383,12 +484,13 @@ func TestWebhookBackendFailuresMapToStatuses(t *testing.T) {
 
 			backend := &fakeWebhooksBackend{err: tc.err}
 			store := startWebhooksBackend(t, backend)
-			ginCtx, recorder, _ := newWebhooksRequest(t, http.MethodPost, "/events/webhooks",
+			ginCtx, recorder, _ := liveWebhookRequest(t, store, http.MethodPost, "/events/webhooks",
 				`{"name":"alerts","url":"https://example.com/hook","events":["sandbox.lifecycle.created"]}`)
 
 			store.PostEventsWebhooks(ginCtx)
 
 			assert.Equal(t, tc.wantCode, recorder.Code)
+			assert.Equal(t, tc.retry, recorder.Header().Get("Should-Retry") == "true")
 			assert.Contains(t, recorder.Body.String(), tc.wantBody)
 			assert.NotContains(t, recorder.Body.String(), "pg: connection refused")
 		})
@@ -491,7 +593,7 @@ func TestWebhookValidationRejectionsRenderTheirViolations(t *testing.T) {
 
 	backend := &fakeWebhooksBackend{err: rejected.Err()}
 	store := startWebhooksBackend(t, backend)
-	ginCtx, recorder, _ := newWebhooksRequest(t, http.MethodPost, "/events/webhooks",
+	ginCtx, recorder, _ := liveWebhookRequest(t, store, http.MethodPost, "/events/webhooks",
 		`{"name":"alerts","url":"https://example.com/hook","events":[]}`)
 
 	store.PostEventsWebhooks(ginCtx)

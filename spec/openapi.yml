@@ -9655,8 +9655,12 @@ paths:
           $ref: "#/components/responses/404"
         "401":
           $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
     get:
       description: List registered webhooks.
       tags: [webhooks]
@@ -9744,8 +9748,12 @@ paths:
           $ref: "#/components/responses/404"
         "401":
           $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
     delete:
       description: Delete a registered webhook.
@@ -9767,8 +9775,12 @@ paths:
           $ref: "#/components/responses/404"
         "401":
           $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
         "500":
           $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
 
   /events/webhooks/{webhookID}/deliveries:
     get:

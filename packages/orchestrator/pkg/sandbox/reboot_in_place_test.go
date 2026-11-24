@@ -171,6 +171,8 @@ func (f *rebootFixture) start(ctx context.Context, from *Sandbox, endAt time.Tim
 	next.Runtime = from.Runtime
 	next.slotRelease = newHandover(h.releaseSlot)
 	next.cleanup.Add(ctx, next.slotRelease.run)
+	next.planeRelease = newHandover(h.releasePlane)
+	next.cleanup.Add(ctx, next.planeRelease.run)
 	next.rootfsRelease = newHandover(h.releaseRootfs)
 	next.cleanup.Add(ctx, next.rootfsRelease.run)
 

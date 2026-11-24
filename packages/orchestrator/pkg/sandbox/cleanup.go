@@ -165,8 +165,12 @@ func (h *handover) set(release func(ctx context.Context) error) {
 	h.release = release
 }
 
-// run releases the resource unless it was taken or already released.
+// run releases the resource unless it was taken or already released. A nil
+// handover holds nothing.
 func (h *handover) run(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
 	h.mu.Lock()
 	if h.taken || h.released || h.release == nil {
 		h.mu.Unlock()
@@ -181,8 +185,12 @@ func (h *handover) run(ctx context.Context) error {
 }
 
 // take moves the release to the caller. False means there is nothing to take:
-// the resource was released, taken before, or never acquired.
+// the resource was released, taken before, or never acquired, or the handover
+// is nil.
 func (h *handover) take() (func(ctx context.Context) error, bool) {
+	if h == nil {
+		return nil, false
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

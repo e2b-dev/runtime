@@ -67,6 +67,26 @@ type MemoryBackend interface {
 	ServeStats() userfaultfd.ServeSnapshot
 }
 
+// Handler is what the resume path needs from a memory backend beyond
+// MemoryBackend: the switches it flips before the VM starts and the memfd
+// sizing the memory hotplug path drives. The in-process Uffd provides all
+// of it; a data plane that serves memory from another process must too.
+//
+// Start runs under the sandbox's execution context, which is never
+// cancelled by a failed resume, and a resume that fails waits for it before
+// closing the plane: it must not block on an external party such as a
+// handshake that only a running VM would complete. The in-process Uffd
+// opens its listener and returns; a plane's handler must do the same and
+// finish its handshake on its own goroutine.
+type Handler interface {
+	MemoryBackend
+	SetSyncWP(v bool)
+	SetInstallDedup(on bool)
+	SetMemfdUnusedTail(n int64)
+	ExtendMemfd(n int64) error
+	SealMemfd()
+}
+
 // BalloonModeLabeler is implemented by backends whose serve metrics carry the
 // balloon's free-page mechanism once it has been read from Firecracker.
 type BalloonModeLabeler interface {

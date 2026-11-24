@@ -528,15 +528,21 @@ func (t *storageTemplate) generation() uint64 {
 	return 0
 }
 
+// Memfile waits for the template's memfile under ctx. A caller whose context
+// ends stops waiting with ctx's error; the fetch itself goes on for the other
+// users of the template. A memfile that is already there wins over a context
+// that is already done.
 func (t *storageTemplate) Memfile(ctx context.Context) (block.ReadonlyDevice, error) {
-	_, span := tracer.Start(ctx, "storage-template-memfile")
+	ctx, span := tracer.Start(ctx, "storage-template-memfile")
 	defer span.End()
 
-	return t.memfile.Wait()
+	return t.memfile.WaitWithContext(ctx)
 }
 
-func (t *storageTemplate) Rootfs() (block.ReadonlyDevice, error) {
-	return t.rootfs.Wait()
+// Rootfs waits for the template's root disk under ctx, with the same rules as
+// Memfile.
+func (t *storageTemplate) Rootfs(ctx context.Context) (block.ReadonlyDevice, error) {
+	return t.rootfs.WaitWithContext(ctx)
 }
 
 func (t *storageTemplate) Snapfile() (File, error) {

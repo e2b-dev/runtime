@@ -114,7 +114,7 @@ func putHeader(t *testing.T, cache *fakeCache, buildID uuid.UUID, fileType build
 	case build.Memfile:
 		tpl.EXPECT().Memfile(mock.Anything).Return(dev, nil).Maybe()
 	case build.Rootfs:
-		tpl.EXPECT().Rootfs().Return(dev, nil).Maybe()
+		tpl.EXPECT().Rootfs(mock.Anything).Return(dev, nil).Maybe()
 	}
 
 	cache.put(buildID.String(), tpl)
@@ -234,7 +234,7 @@ func TestUploads_Wait_NoFuture_ReadsFromCache(t *testing.T) {
 	tpl := templatemocks.NewMockTemplate(t)
 	dev := blockmocks.NewMockReadonlyDevice(t)
 	dev.EXPECT().Header().Return(want)
-	tpl.EXPECT().Rootfs().Return(dev, nil)
+	tpl.EXPECT().Rootfs(mock.Anything).Return(dev, nil)
 	cache.put(id.String(), tpl)
 
 	got, _, err := c.Wait(t.Context(), id, build.Rootfs)

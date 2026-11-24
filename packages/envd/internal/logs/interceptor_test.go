@@ -70,6 +70,8 @@ type testServer struct {
 	watch func(context.Context, *connect.ServerStream[filesystem.WatchDirResponse]) error
 	input func(context.Context, *connect.ClientStream[process.StreamInputRequest]) error
 	stat  func(context.Context) error
+
+	opts []logs.Option
 }
 
 func (s *testServer) WatchDir(ctx context.Context, req *connect.Request[filesystem.WatchDirRequest], stream *connect.ServerStream[filesystem.WatchDirResponse]) error {
@@ -78,7 +80,7 @@ func (s *testServer) WatchDir(ctx context.Context, req *connect.Request[filesyst
 	return logs.LogServerStreamWithoutEvents(ctx, s.logger, req, stream,
 		func(ctx context.Context, _ *connect.Request[filesystem.WatchDirRequest], stream *connect.ServerStream[filesystem.WatchDirResponse]) error {
 			return s.watch(ctx, stream)
-		})
+		}, s.opts...)
 }
 
 func (s *testServer) StreamInput(ctx context.Context, stream *connect.ClientStream[process.StreamInputRequest]) (*connect.Response[process.StreamInputResponse], error) {
@@ -91,7 +93,7 @@ func (s *testServer) StreamInput(ctx context.Context, stream *connect.ClientStre
 			}
 
 			return connect.NewResponse(&process.StreamInputResponse{}), nil
-		})
+		}, s.opts...)
 }
 
 func (s *testServer) Stat(ctx context.Context, _ *connect.Request[filesystem.StatRequest]) (*connect.Response[filesystem.StatResponse], error) {
@@ -117,7 +119,7 @@ func newTestServer(t *testing.T, s *testServer) (*logBuffer, filesystemconnect.F
 			return next(ctx, req)
 		}
 	})
-	interceptors := connect.WithInterceptors(unaryDone, logs.NewUnaryLogInterceptor(&logger))
+	interceptors := connect.WithInterceptors(unaryDone, logs.NewUnaryLogInterceptor(&logger, s.opts...))
 
 	mux := http.NewServeMux()
 	mux.Handle(filesystemconnect.NewFilesystemHandler(s, interceptors))
@@ -359,6 +361,83 @@ func TestUnaryEndLevel(t *testing.T) {
 			s.wait(t)
 
 			assert.Equal(t, tt.wantLevel, buf.line(t, "Filesystem stat")["level"])
+		})
+	}
+}
+
+func TestWithRedactSetsLoggedMessages(t *testing.T) {
+	t.Parallel()
+
+	const redacted = "redacted"
+	opts := []logs.Option{logs.WithRedact(func(any) any { return redacted })}
+
+	tests := []struct {
+		name   string
+		server *testServer
+		call   func(*testing.T, filesystemconnect.FilesystemClient, processconnect.ProcessClient)
+		line   string
+		fields []string
+	}{
+		{
+			name:   "unary",
+			server: &testServer{stat: func(context.Context) error { return nil }},
+			call: func(t *testing.T, fs filesystemconnect.FilesystemClient, _ processconnect.ProcessClient) {
+				t.Helper()
+
+				_, err := fs.Stat(t.Context(), connect.NewRequest(&filesystem.StatRequest{}))
+				require.NoError(t, err)
+			},
+			line:   "Filesystem stat",
+			fields: []string{"request", "response"},
+		},
+		{
+			name: "server stream",
+			server: &testServer{watch: func(_ context.Context, stream *connect.ServerStream[filesystem.WatchDirResponse]) error {
+				return stream.Send(&filesystem.WatchDirResponse{})
+			}},
+			call: func(t *testing.T, fs filesystemconnect.FilesystemClient, _ processconnect.ProcessClient) {
+				t.Helper()
+
+				stream, err := fs.WatchDir(t.Context(), connect.NewRequest(&filesystem.WatchDirRequest{}))
+				require.NoError(t, err)
+				require.True(t, stream.Receive(), "first message: %v", stream.Err())
+			},
+			line:   "(server stream start)",
+			fields: []string{"request"},
+		},
+		{
+			name: "client stream",
+			server: &testServer{input: func(_ context.Context, stream *connect.ClientStream[process.StreamInputRequest]) error {
+				for stream.Receive() {
+				}
+
+				return stream.Err()
+			}},
+			call: func(t *testing.T, _ filesystemconnect.FilesystemClient, proc processconnect.ProcessClient) {
+				t.Helper()
+
+				_, err := proc.StreamInput(t.Context()).CloseAndReceive()
+				require.NoError(t, err)
+			},
+			line:   "(client stream end)",
+			fields: []string{"response"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.server.opts = opts
+			buf, fs, proc := newTestServer(t, tt.server)
+
+			tt.call(t, fs, proc)
+			tt.server.wait(t)
+
+			logged := buf.line(t, tt.line)
+			for _, field := range tt.fields {
+				assert.Equal(t, redacted, logged[field], field)
+			}
 		})
 	}
 }

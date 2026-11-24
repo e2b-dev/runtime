@@ -36,7 +36,9 @@ func (capacityOnlyTemplate) Memfile(context.Context) (block.ReadonlyDevice, erro
 	panic("resource initialization")
 }
 
-func (capacityOnlyTemplate) Rootfs() (block.ReadonlyDevice, error) { panic("resource initialization") }
+func (capacityOnlyTemplate) Rootfs(context.Context) (block.ReadonlyDevice, error) {
+	panic("resource initialization")
+}
 
 func (capacityOnlyTemplate) Snapfile() (sbxtemplate.File, error)    { panic("resource initialization") }
 func (capacityOnlyTemplate) UpdateMetadata(metadata.Template) error { return nil }
