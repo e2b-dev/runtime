@@ -20,7 +20,8 @@ setup_file() {
   cd "$BATS_TEST_DIRNAME/.." || return 1
   export CFG_DIR="$BATS_FILE_TMPDIR"
   python3 compose/scripts/dev/vector-testconfig.py > "$CFG_DIR/vector.toml"
-  VECTOR_IMAGE="$(sed -n 's/.*\(timberio\/vector:[^ ]*\).*/\1/p' Makefile | head -1)"
+  python3 compose/scripts/dev/vector-testconfig.py --http > "$CFG_DIR/vector-http.toml"
+  VECTOR_IMAGE="$(docker compose --project-directory compose config --format json | jq -er '.services.vector.image')"
   export VECTOR_IMAGE
   [ -n "$VECTOR_IMAGE" ]
 }
@@ -73,6 +74,31 @@ demoted() {
   [ "$(demoted "$row" sandboxID)" = "false" ]
   [ "$(demoted "$row" message)" = "false" ]
   [ "$(printf '%s' "$row" | jq -r '.raw | fromjson | .teamID')" = "0b8a3ded-4489-4722-afd1-1d82e64ec2d5" ]
+}
+
+@test "an HTTP request with two NDJSON lines produces two log rows" {
+  cat "$BATS_TEST_DIRNAME/fixtures/vector/envd.json" \
+      "$BATS_TEST_DIRNAME/fixtures/vector/orchestrator-dotted-keys.json" > "$BATS_TEST_TMPDIR/request.ndjson"
+  local script
+  script="$(cat <<'SH'
+    vector --config /cfg/vector-http.toml --quiet &
+    pid=$!
+    trap "kill $pid 2>/dev/null || true" EXIT
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+      wget -qO /dev/null http://127.0.0.1:44313/health && break
+      kill -0 "$pid"
+      sleep 1
+    done
+    wget -qO /dev/null --header="Content-Type: application/x-ndjson" \
+      --post-data="$(cat)" http://127.0.0.1:30006/
+    kill -TERM "$pid"
+    wait "$pid"
+SH
+)"
+  run --separate-stderr docker run --rm -i -v "$CFG_DIR:/cfg:ro" --entrypoint sh "$VECTOR_IMAGE" -ec "$script" \
+    < "$BATS_TEST_TMPDIR/request.ndjson"
+  [ "$status" -eq 0 ] || { echo "vector exited $status: ${stderr:-}"; return 1; }
+  [ "$(printf '%s\n' "$output" | jq -csr 'map(.sandbox_id) | sort')" = '["bnikj0253lrqkzi65evyj","sbx-dotted-1"]' ]
 }
 
 @test "a template-manager build line without a sandbox is kept as sandbox unknown with its build id" {

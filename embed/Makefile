@@ -47,9 +47,11 @@ terraform-validate:
 
 # Vector parses the config and compiles its VRL without connecting to sinks.
 # Catches a broken remap or a misspelled sink option before a host does.
+VECTOR_IMAGE := $(shell sed -n 's/^    image: \(timberio\/vector:[^ ]*\)$$/\1/p' compose/compose.yaml)
 vector-validate:
+	@test -n "$(VECTOR_IMAGE)" || { echo "vector-validate: compose/compose.yaml pins no timberio/vector image" >&2; exit 1; }
 	docker run --rm -v "$(CURDIR)/compose/config/vector/vector.toml:/etc/vector/vector.toml:ro" \
-	  timberio/vector:0.51.1-alpine validate --no-environment /etc/vector/vector.toml
+	  $(VECTOR_IMAGE) validate --no-environment /etc/vector/vector.toml
 
 # The collector parses the config and builds every pipeline without starting
 # them, so a pipeline naming a component the config does not define fails

@@ -7,7 +7,8 @@ address = "0.0.0.0:44313"
 [sources.http_server]
 type = "http_server"
 address = "0.0.0.0:30006"
-encoding = "ndjson"
+decoding.codec = "json"
+framing.method = "newline_delimited"
 path_key = "_path"
 
 [transforms.add_source_http_server]

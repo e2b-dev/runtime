@@ -110,7 +110,7 @@ services:
 
   vector:
     logging: *logging
-    image: timberio/vector:0.51.1-alpine
+    image: timberio/vector:0.62.0-alpine
     restart: unless-stopped
     depends_on:
       clickhouse:
@@ -122,7 +122,7 @@ services:
       # service hash change with the inline config so `up` recreates the
       # container (compose does not hash `configs:` content). Kept in step by
       # tests/config-hashes.bats.
-      VECTOR_CONFIG_SHA256: a4ca48367c4ae06f81fa08d9f8cbcace70f25a631f00496a44d96282e469b7a3
+      VECTOR_CONFIG_SHA256: 9ddca77ae94b51a7555164d39a00af9e5fdfe4b31d274746764235905e8abde8
     ports:
       - "127.0.0.1:30006:30006"
     configs:
@@ -729,7 +729,8 @@ configs:
       [sources.http_server]
       type = "http_server"
       address = "0.0.0.0:30006"
-      encoding = "ndjson"
+      decoding.codec = "json"
+      framing.method = "newline_delimited"
       path_key = "_path"
 
       [transforms.add_source_http_server]
