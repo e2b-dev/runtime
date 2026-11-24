@@ -2533,6 +2533,67 @@ components:
           items:
             $ref: "#/components/schemas/AdminTemplateAlias"
 
+    AdminTemplateAliasResolveRequest:
+      required:
+        - namespace
+        - names
+      properties:
+        namespace:
+          type: string
+          minLength: 1
+          description: Namespace to resolve each name in, next to the alias without a namespace
+        names:
+          type: array
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          description: Aliases to resolve, matched exactly
+          items:
+            type: string
+            minLength: 1
+
+    AdminResolvedTemplate:
+      required:
+        - templateID
+        - public
+      properties:
+        templateID:
+          type: string
+          description: Identifier of the template that holds the alias
+        public:
+          type: boolean
+          description: Whether the template is public
+
+    AdminTemplateAliasResolution:
+      required:
+        - name
+        - naked
+        - namespaced
+      properties:
+        name:
+          type: string
+          description: The name as given
+        naked:
+          allOf:
+            - $ref: "#/components/schemas/AdminResolvedTemplate"
+          nullable: true
+          description: The template holding the name as an alias without a namespace, null when none does
+        namespaced:
+          allOf:
+            - $ref: "#/components/schemas/AdminResolvedTemplate"
+          nullable: true
+          description: The template holding the name in the requested namespace, null when none does
+
+    AdminTemplateAliasResolveResponse:
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          description: One entry per requested name, in request order
+          items:
+            $ref: "#/components/schemas/AdminTemplateAliasResolution"
+
     AdminTemplateAliasCreateRequest:
       required:
         - templateID
@@ -8660,6 +8721,38 @@ paths:
           $ref: "#/components/responses/404"
         "409":
           $ref: "#/components/responses/409"
+        "500":
+          $ref: "#/components/responses/500"
+
+  /unstable/admin/templates/aliases/resolve:
+    post:
+      summary: Resolve template names as admin
+      description: >
+        For each name, reports the template that holds it as an alias without a namespace and the
+        template that holds it in `namespace`, each with whether the template is public. A name no
+        template holds in that place answers null there. Deleted templates are left out. Names are
+        matched exactly and answered in the order given.
+      tags: [admin]
+      security:
+        - AdminApiKeyAuth: []
+        - AdminJWTAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTemplateAliasResolveRequest"
+      responses:
+        "200":
+          description: Successfully resolved the names
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTemplateAliasResolveResponse"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
         "500":
           $ref: "#/components/responses/500"
 

@@ -405,6 +405,7 @@ func TestAdminTemplateAndNodeRoutesAreAdminOnly(t *testing.T) {
 	}{
 		{http.MethodGet, "/unstable/admin/templates/aliases"},
 		{http.MethodPost, "/unstable/admin/templates/aliases"},
+		{http.MethodPost, "/unstable/admin/templates/aliases/resolve"},
 		{http.MethodDelete, "/unstable/admin/templates/aliases/{aliasID}"},
 		{http.MethodPost, "/unstable/admin/templates/defaults"},
 		{http.MethodPatch, "/unstable/admin/templates/defaults/{templateID}"},
