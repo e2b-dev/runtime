@@ -509,6 +509,37 @@ func TestRedisCache_DeleteByPrefix(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestRedisCache_DeleteByPrefixDuringColdFill(t *testing.T) {
+	t.Parallel()
+	client := redis_utils.SetupContainerInstance(t)
+	reader := newTestRedisCache(t, client)
+	invalidator := newTestRedisCache(t, client)
+	ctx := t.Context()
+	key := "{template}:default"
+	evicted := make(chan struct{})
+
+	_, err := reader.GetOrSet(ctx, key, func(context.Context, string) (testValue, error) {
+		go func() {
+			invalidator.DeleteByPrefix(ctx, "{template}:")
+			close(evicted)
+		}()
+		// Let eviction finish if it can; otherwise let the pending read finish first.
+		select {
+		case <-evicted:
+		case <-time.After(250 * time.Millisecond):
+		}
+
+		return testValue{Name: "before"}, nil
+	})
+	require.NoError(t, err)
+	<-evicted
+
+	current := testValue{Name: "after"}
+	got, err := reader.GetOrSet(ctx, key, func(context.Context, string) (testValue, error) { return current, nil })
+	require.NoError(t, err)
+	assert.Equal(t, current, got)
+}
+
 func TestRedisCache_DeleteByPrefix_NoMatches(t *testing.T) {
 	t.Parallel()
 	redisClient := redis_utils.SetupContainerInstance(t)

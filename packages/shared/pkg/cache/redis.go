@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bsm/redislock"
@@ -219,17 +220,7 @@ func (rc *RedisCache[V]) Delete(ctx context.Context, key string) {
 // gone: a failed DEL is returned so the caller can retry instead of reporting a
 // stale entry as evicted.
 func (rc *RedisCache[V]) TryDelete(ctx context.Context, key string) error {
-	// Wait past a wedged writer's lock auto-expiry (LockTTL) so lock
-	// acquisition can only fail on Redis/lock-service errors or ctx expiry,
-	// not on writer contention.
-	lock, err := rc.acquireLock(ctx, key, redislock.LinearBackoff(rc.config.LockRetryInterval), rc.config.LockTTL+acquireLockTimeout)
-	if err != nil {
-		logger.L().Warn(ctx, "RedisCache - Delete: failed to acquire lock, deleting best-effort; a concurrent writer may repopulate stale data",
-			zap.String("key", key),
-			zap.Error(err))
-		// Continue without the lock to remove the stale data
-		// In that case it's just a best effort, the data may get repopulated with stale data
-	}
+	lock := rc.lockForDelete(ctx, key)
 	defer rc.releaseLock(ctx, lock, key)
 
 	ctx, cancel := context.WithTimeout(ctx, rc.config.RedisTimeout)
@@ -242,21 +233,39 @@ func (rc *RedisCache[V]) TryDelete(ctx context.Context, key string) error {
 	return nil
 }
 
-// DeleteByPrefix removes all keys matching the given prefix from Redis.
-// Uses SCAN (not KEYS) to avoid blocking Redis on large keyspaces.
-// Keys are collected first, then deleted after SCAN completes so that
-// the keyspace is not mutated during cursor iteration.
-// Returns the list of deleted cache keys (without the Redis prefix).
-func (rc *RedisCache[V]) DeleteByPrefix(ctx context.Context, prefix string) []string {
-	redisPattern := fmt.Sprintf("%s:%s*", rc.config.RedisPrefix, prefix)
+func (rc *RedisCache[V]) lockForDelete(ctx context.Context, key string) redis_utils.Lock {
+	// A stalled writer's lock must expire before the wait does.
+	lock, err := rc.acquireLock(ctx, key, redislock.LinearBackoff(rc.config.LockRetryInterval), rc.config.LockTTL+acquireLockTimeout)
+	if err != nil {
+		logger.L().Warn(ctx, "RedisCache - Delete: failed to acquire lock, deleting best-effort; a concurrent writer may repopulate stale data",
+			zap.String("key", key),
+			zap.Error(err))
+	}
 
-	// Phase 1: collect all matching keys without mutating the keyspace.
-	allKeys := rc.collectKeys(ctx, prefix)
+	return lock
+}
+
+// DeleteByPrefix removes matching entries and returns their cache keys.
+// On Redis Cluster the full prefix must contain a fixed hash tag so both scans reach the owning primary.
+// With locking enabled it waits for fills under the same lookup prefix,
+// subject to the same best-effort fallback as Delete.
+func (rc *RedisCache[V]) DeleteByPrefix(ctx context.Context, prefix string) []string {
+	// Scan locks first: a cold fill has no data key until it writes the entry.
+	if rc.config.LockTTL != RedisLockOff {
+		lockNamespace := redis_utils.GetLockKey(rc.RedisKey(""))
+		for _, lockKey := range rc.collectKeys(ctx, lockNamespace+prefix+"*") {
+			key := strings.TrimPrefix(lockKey, lockNamespace)
+			lock := rc.lockForDelete(ctx, key)
+			rc.releaseLock(ctx, lock, key)
+		}
+	}
+
+	redisPattern := rc.RedisKey(prefix) + "*"
+	allKeys := rc.collectKeys(ctx, redisPattern)
 	if len(allKeys) == 0 {
 		return nil
 	}
 
-	// Phase 2: delete all collected keys.
 	pipeCtx, cancel := context.WithTimeout(ctx, rc.config.RedisTimeout)
 	defer cancel()
 	pipe := rc.config.RedisClient.Pipeline()
@@ -280,16 +289,16 @@ func (rc *RedisCache[V]) DeleteByPrefix(ctx context.Context, prefix string) []st
 	return deleted
 }
 
-func (rc *RedisCache[V]) collectKeys(ctx context.Context, prefix string) []string {
+func (rc *RedisCache[V]) collectKeys(ctx context.Context, pattern string) []string {
 	var allKeys []string
 	var cursor uint64
 	for {
 		scanCtx, cancel := context.WithTimeout(ctx, rc.config.RedisTimeout)
-		keys, nextCursor, err := rc.config.RedisClient.Scan(scanCtx, cursor, fmt.Sprintf("%s:%s*", rc.config.RedisPrefix, prefix), redisScanCount).Result()
+		keys, nextCursor, err := rc.config.RedisClient.Scan(scanCtx, cursor, pattern, redisScanCount).Result()
 		cancel()
 		if err != nil {
 			logger.L().Warn(ctx, "RedisCache: SCAN error",
-				zap.String("pattern", fmt.Sprintf("%s:%s*", rc.config.RedisPrefix, prefix)),
+				zap.String("pattern", pattern),
 				zap.Error(err))
 
 			break
