@@ -14,6 +14,7 @@ import (
 
 	grpcshared "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
+	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -32,6 +33,13 @@ func NewNodeClient(tel *telemetry.Client, address string, creds credentials.Tran
 	}
 
 	return &NodeClient{conn: conn, info: infogrpc.NewInfoServiceClient(conn)}, nil
+}
+
+// Dialer returns a DialFunc that connects to each discovered node's address with creds.
+func Dialer(tel *telemetry.Client, creds credentials.TransportCredentials) DialFunc {
+	return func(item servicediscovery.Instance) (*NodeClient, error) {
+		return NewNodeClient(tel, item.Address(), creds)
+	}
 }
 
 func dialOptions(tel *telemetry.Client, creds credentials.TransportCredentials) []grpc.DialOption {

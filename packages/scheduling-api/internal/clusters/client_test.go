@@ -1,6 +1,8 @@
 package clusters
 
 import (
+	"net"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +14,7 @@ import (
 
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls/servicetest"
+	"github.com/e2b-dev/infra/packages/shared/pkg/servicediscovery"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -35,6 +38,26 @@ func TestServiceInfoRoundTripsThroughTheCallerCredentials(t *testing.T) {
 	assert.True(t, proto.Equal(want, got), "got %v", got)
 	assert.Positive(t, creds.Handshakes())
 	assert.Equal(t, connectivity.Ready, client.State())
+}
+
+func TestDialerConnectsToTheInstanceAddressWithTheGivenCredentials(t *testing.T) {
+	t.Parallel()
+
+	host, port, err := net.SplitHostPort(serveInfo(t, &infogrpc.ServiceInfoResponse{NodeId: "node-1"}))
+	require.NoError(t, err)
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	require.NoError(t, err)
+	creds := servicetest.NewCredentials()
+
+	client, err := Dialer(telemetry.NewNoopClient(), creds)(servicediscovery.Instance{IPAddress: host, Port: uint16(portNumber)})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.ServiceInfo(callContext(t))
+	require.NoError(t, err)
+
+	assert.Equal(t, "node-1", got.GetNodeId())
+	assert.Positive(t, creds.Handshakes())
 }
 
 func TestNewNodeClientDoesNotDialUntilTheFirstCall(t *testing.T) {
