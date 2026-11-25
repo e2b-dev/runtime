@@ -2,6 +2,8 @@ package featureflags
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,6 +70,34 @@ func (g *gatedSource) Close() error {
 // offlineConfig sends nothing: no events, no diagnostics, no SDK log lines.
 func offlineConfig(source *gatedSource) ldclient.Config {
 	return ldclient.Config{DataSource: source, Events: ldcomponents.NoEvents(), DiagnosticOptOut: true, Logging: ldcomponents.NoLogging()}
+}
+
+func TestConnectRejectsInvalidSDKKey(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(server.Close)
+
+			cfg := ldclient.Config{
+				ServiceEndpoints: ldcomponents.RelayProxyEndpoints(server.URL),
+				Events:           ldcomponents.NoEvents(),
+				DiagnosticOptOut: true,
+				Logging:          ldcomponents.NoLogging(),
+			}
+			client, err := connect("test-key", cfg, time.Second, "test-environment", "orchestrator", WithStartOnInitTimeout())
+			if client != nil {
+				t.Cleanup(func() { _ = client.ld.Close() })
+			}
+			require.ErrorIs(t, err, ldclient.ErrInitializationFailed)
+			assert.Nil(t, client)
+		})
+	}
 }
 
 func TestConnectFailures(t *testing.T) {

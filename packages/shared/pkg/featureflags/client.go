@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -138,6 +139,13 @@ func connect(sdkKey string, cfg ldclient.Config, wait time.Duration, deploymentE
 
 	ldClient, err := ldclient.MakeCustomClient(sdkKey, cfg, wait)
 	if err != nil {
+		if ldClient != nil && errors.Is(err, ldclient.ErrInitializationTimeout) {
+			lastError := ldClient.GetDataSourceStatusProvider().GetStatus().LastError
+			if lastError.Kind == interfaces.DataSourceErrorKindErrorResponse &&
+				(lastError.StatusCode == http.StatusUnauthorized || lastError.StatusCode == http.StatusForbidden) {
+				err = ldclient.ErrInitializationFailed
+			}
+		}
 		if !o.startOnInitTimeout || !errors.Is(err, ldclient.ErrInitializationTimeout) {
 			if ldClient != nil {
 				_ = ldClient.Close()
