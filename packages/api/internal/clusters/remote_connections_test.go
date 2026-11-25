@@ -18,22 +18,18 @@ import (
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/clusters/edge"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	edgeapi "github.com/e2b-dev/infra/packages/shared/pkg/http/edge"
-	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -70,58 +66,13 @@ func echoRoutingEndpoint(t *testing.T) string {
 
 // newTestRemoteConnections pools connections to an echoRoutingEndpoint for the
 // given cluster.
-func newTestRemoteConnections(t *testing.T, flags *featureflags.Client, clusterID uuid.UUID) *remoteConnections {
+func newTestRemoteConnections(t *testing.T, flags *featureflags.Client, clusterID uuid.UUID) *edge.Connections {
 	t.Helper()
 
-	endpoint := echoRoutingEndpoint(t)
-	connections := newRemoteConnections(telemetry.NewNoopClient(), flags, clusterID, endpoint, false, insecure.NewCredentials())
+	connections := newRemoteConnections(telemetry.NewNoopClient(), flags, clusterID, echoRoutingEndpoint(t), false)
+	t.Cleanup(func() { _ = connections.Close() })
 
 	return connections
-}
-
-// Every instance of a remote cluster shares the pool, which grows with the
-// cell so no connection carries more than its share of instances, and each
-// call still carries its own instance's routing header.
-func TestRemoteConnections_PoolGrowsWithTheCell(t *testing.T) {
-	t.Parallel()
-
-	connections := newTestRemoteConnections(t, nil, uuid.New())
-
-	const instances = 300
-	perConnection := map[*grpc.ClientConn]int{}
-	for i := range instances {
-		id := fmt.Sprintf("svc-%d", i)
-		client, err := connections.client(t.Context(), &instanceAuthorization{secret: "shh", serviceInstanceID: id})
-		require.NoError(t, err)
-
-		info, err := client.Info.ServiceInfo(t.Context(), &emptypb.Empty{})
-		require.NoError(t, err)
-		assert.Equal(t, id, info.GetServiceId(), "the call must be routed to its own instance")
-
-		perConnection[client.Connection]++
-	}
-
-	assert.Len(t, perConnection, (instances+featureflags.RemoteClusterInstancesPerConnectionFlag.Fallback()-1)/featureflags.RemoteClusterInstancesPerConnectionFlag.Fallback())
-	for _, n := range perConnection {
-		assert.LessOrEqual(t, n, featureflags.RemoteClusterInstancesPerConnectionFlag.Fallback())
-	}
-}
-
-// A small cell still spreads across the minimum pool.
-func TestRemoteConnections_SmallCellUsesTheMinimumPool(t *testing.T) {
-	t.Parallel()
-
-	connections := newTestRemoteConnections(t, nil, uuid.New())
-
-	distinct := map[*grpc.ClientConn]struct{}{}
-	for i := range 2 * featureflags.RemoteClusterMinConnectionsFlag.Fallback() {
-		client, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: fmt.Sprintf("svc-%d", i)})
-		require.NoError(t, err)
-
-		distinct[client.Connection] = struct{}{}
-	}
-
-	assert.Len(t, distinct, featureflags.RemoteClusterMinConnectionsFlag.Fallback())
 }
 
 // Closing one instance must retire only that instance: its calls fail and it
@@ -135,7 +86,7 @@ func TestRemoteConnections_ClosingAnInstanceLeavesTheConnectionOpen(t *testing.T
 	// Put two instances on each connection of the minimum pool.
 	clients := make([]*GRPCClient, 0, 2*featureflags.RemoteClusterMinConnectionsFlag.Fallback())
 	for i := range 2 * featureflags.RemoteClusterMinConnectionsFlag.Fallback() {
-		client, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: fmt.Sprintf("svc-%d", i)})
+		client, err := remoteInstanceClient(t.Context(), connections, edge.Authorization{ServiceInstanceID: fmt.Sprintf("svc-%d", i)})
 		require.NoError(t, err)
 
 		clients = append(clients, client)
@@ -157,7 +108,7 @@ func TestRemoteConnections_ClosingAnInstanceLeavesTheConnectionOpen(t *testing.T
 
 	// Every other connection still carries two instances, so the freed slot is
 	// the least used.
-	next, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: "svc-next"})
+	next, err := remoteInstanceClient(t.Context(), connections, edge.Authorization{ServiceInstanceID: "svc-next"})
 	require.NoError(t, err)
 	assert.Same(t, closed.Connection, next.Connection, "the freed slot is reused")
 }
@@ -185,28 +136,13 @@ func TestRemoteConnections_FlagsSizeThePoolPerCluster(t *testing.T) {
 
 	perConnection := map[*grpc.ClientConn]int{}
 	for i := range 5 {
-		client, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: fmt.Sprintf("svc-%d", i)})
+		client, err := remoteInstanceClient(t.Context(), connections, edge.Authorization{ServiceInstanceID: fmt.Sprintf("svc-%d", i)})
 		require.NoError(t, err)
 
 		perConnection[client.Connection]++
 	}
 
 	assert.ElementsMatch(t, []int{2, 2, 1}, slices.Collect(maps.Values(perConnection)))
-}
-
-func TestRemoteConnections_CloseShutsDownEveryConnection(t *testing.T) {
-	t.Parallel()
-
-	connections := newTestRemoteConnections(t, nil, uuid.New())
-
-	client, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: "svc-a"})
-	require.NoError(t, err)
-
-	require.NoError(t, connections.Close())
-	assert.Equal(t, connectivity.Shutdown, client.State())
-
-	_, err = connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: "svc-b"})
-	assert.Error(t, err, "a closed cluster hands out no new clients")
 }
 
 // edgeServer stands in for a remote cluster's edge: discovery and the gRPC
@@ -321,49 +257,4 @@ func TestRemoteCluster_SyncRoundsShareThePool(t *testing.T) {
 		require.NoError(t, cluster.SyncInstances(t.Context()))
 	}
 	assert.Equal(t, afterFirstRound, edge.connections(), "later rounds must not open new connections")
-}
-
-// A shared connection that loses the edge logs its move into
-// TRANSIENT_FAILURE once, naming the cluster and which connection it is.
-//
-//nolint:paralleltest // ReplaceGlobals mutates process state
-func TestRemoteConnections_LogTransientFailure(t *testing.T) {
-	core, logs := observer.New(zapcore.InfoLevel)
-	t.Cleanup(logger.ReplaceGlobals(t.Context(), logger.NewTracedLoggerFromCore(core)))
-
-	var lc net.ListenConfig
-	lis, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
-	infogrpc.RegisterInfoServiceServer(server, echoRoutingServer{})
-	go func() { _ = server.Serve(lis) }()
-
-	clusterID := uuid.New()
-	connections := newRemoteConnections(telemetry.NewNoopClient(), nil, clusterID, lis.Addr().String(), false, insecure.NewCredentials())
-	t.Cleanup(func() { _ = connections.Close() })
-
-	client, err := connections.client(t.Context(), &instanceAuthorization{serviceInstanceID: "svc-a"})
-	require.NoError(t, err)
-	_, err = client.Info.ServiceInfo(t.Context(), &emptypb.Empty{})
-	require.NoError(t, err)
-
-	server.Stop()
-
-	var failure []observer.LoggedEntry
-	require.Eventually(t, func() bool {
-		// A call reconnects the idle connection, which then fails to dial.
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		defer cancel()
-		_, _ = client.Info.ServiceInfo(ctx, &emptypb.Empty{})
-
-		failure = logs.FilterMessage("Remote cluster connection changed state").
-			FilterField(zap.Stringer("to", connectivity.TransientFailure)).All()
-
-		return len(failure) > 0
-	}, 10*time.Second, 50*time.Millisecond)
-
-	fields := failure[0].ContextMap()
-	assert.Equal(t, zapcore.WarnLevel, failure[0].Level)
-	assert.Equal(t, clusterID.String(), fields["cluster.id"])
-	assert.EqualValues(t, 0, fields["connection_index"])
 }

@@ -2069,3 +2069,13 @@ func GetExtraCompatibleNodeModels(ctx context.Context, ff *Client, contexts ...l
 
 	return extra
 }
+
+// GetRemoteClusterConnectionLimits reads RemoteClusterMinConnectionsFlag and
+// RemoteClusterInstancesPerConnectionFlag, or their fallbacks without a client.
+func GetRemoteClusterConnectionLimits(ctx context.Context, ff *Client, contexts ...ldcontext.Context) (minConnections, instancesPerConnection int) {
+	if ff == nil {
+		return RemoteClusterMinConnectionsFlag.Fallback(), RemoteClusterInstancesPerConnectionFlag.Fallback()
+	}
+
+	return ff.IntFlag(ctx, RemoteClusterMinConnectionsFlag, contexts...), ff.IntFlag(ctx, RemoteClusterInstancesPerConnectionFlag, contexts...)
+}

@@ -14,10 +14,10 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
+	"github.com/e2b-dev/infra/packages/shared/pkg/clusters/edge"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	infogrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
@@ -56,7 +56,7 @@ type Cluster struct {
 
 	// connections are shared by a remote cluster's instances; nil for the
 	// local cluster, whose instances each hold their own.
-	connections *remoteConnections
+	connections *edge.Connections
 }
 
 var (
@@ -174,8 +174,8 @@ func newLocalCluster(
 // instance. The discovery ID is that instance's service id: the edge API
 // reports it per run, which is what the proxy keys on — the machine would send
 // the call to whatever is on it now.
-func remoteInstanceAuthorization(secret string, tls bool, sd servicediscovery.Instance) *instanceAuthorization {
-	return &instanceAuthorization{secret: secret, tls: tls, serviceInstanceID: sd.WorkloadID}
+func remoteInstanceAuthorization(secret string, tls bool, sd servicediscovery.Instance) edge.Authorization {
+	return edge.Authorization{Token: secret, TLS: tls, ServiceInstanceID: sd.WorkloadID}
 }
 
 func newRemoteCluster(tel *telemetry.Client, featureFlags *featureflags.Client, cluster Record) (*Cluster, error) {
@@ -209,11 +209,11 @@ func newRemoteCluster(tel *telemetry.Client, featureFlags *featureflags.Client, 
 	}
 
 	instances := smap.New[*Instance]()
-	connections := newRemoteConnections(tel, featureFlags, clusterID, endpoint, endpointTLS, insecure.NewCredentials())
+	connections := newRemoteConnections(tel, featureFlags, clusterID, endpoint, endpointTLS)
 	instanceCreation := func(ctx context.Context, item servicediscovery.Instance) (*Instance, error) {
 		// A remote cluster is reached through an endpoint acting as a gRPC proxy,
 		// which handles auth and routing for us.
-		client, err := connections.client(ctx, remoteInstanceAuthorization(secret, endpointTLS, item))
+		client, err := remoteInstanceClient(ctx, connections, remoteInstanceAuthorization(secret, endpointTLS, item))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create cluster instance client: %w", err)
 		}

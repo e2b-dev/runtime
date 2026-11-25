@@ -113,9 +113,9 @@ func TestRemoteInstanceAuthorization_RoutesOnTheProcess(t *testing.T) {
 
 	auth := remoteInstanceAuthorization("shh", true, servicediscovery.Instance{WorkloadID: "svc-aaa", NodeID: "remote-node-1"})
 
-	assert.Equal(t, "svc-aaa", auth.serviceInstanceID)
-	assert.Equal(t, "shh", auth.secret)
-	assert.True(t, auth.tls)
+	assert.Equal(t, "svc-aaa", auth.ServiceInstanceID)
+	assert.Equal(t, "shh", auth.Token)
+	assert.True(t, auth.TLS)
 }
 
 // Cluster.Start's mode decides whether discovery runs immediately or waits for

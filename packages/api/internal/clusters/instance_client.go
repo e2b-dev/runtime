@@ -1,7 +1,6 @@
 package clusters
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
@@ -11,24 +10,9 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	grpcshared "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
-
-type instanceAuthorization struct {
-	secret            string
-	serviceInstanceID string
-	tls               bool
-}
-
-func (a instanceAuthorization) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
-	return map[string]string{consts.EdgeRpcAuthHeader: a.secret, consts.EdgeRpcServiceInstanceIDHeader: a.serviceInstanceID}, nil
-}
-
-func (a instanceAuthorization) RequireTransportSecurity() bool {
-	return a.tls
-}
 
 func createClient(tel *telemetry.Client, endpoint string, endpointTLS bool, plaintext credentials.TransportCredentials) (*GRPCClient, error) {
 	conn, err := grpc.NewClient(endpoint, dialOptions(tel, endpoint, endpointTLS, plaintext)...)
