@@ -60,8 +60,8 @@ inputs:
     description: |
       Directory whose Makefile starts the orchestrator (run-debug target).
       Lets callers run the suite against a compatible orchestrator build
-      from a different directory. Requires the same input on the
-      start-services action.
+      from a different directory: build-packages compiles it in place of
+      packages/orchestrator, and start-services runs it.
     required: false
     default: "packages/orchestrator"
   base-template:
@@ -108,15 +108,11 @@ runs:
       shell: bash
       run: make -C packages/api/integration check-tests-allowlist check-shard-partition
 
+    # start-services rebuilds this orchestrator inside its health-check timeout.
     - name: Build Packages
       uses: ./.github/actions/build-packages
-
-    # Warm the alternate orchestrator build so the run-debug rebuild inside
-    # start-services finishes within the health-check timeout.
-    - name: Build alternate orchestrator
-      if: inputs.orchestrator-make-path != 'packages/orchestrator'
-      shell: bash
-      run: make -C "${{ inputs.orchestrator-make-path }}" build-debug
+      with:
+        orchestrator-make-path: ${{ inputs.orchestrator-make-path }}
 
     - name: Initialize Host
       uses: ./.github/actions/host-init

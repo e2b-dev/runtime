@@ -1,6 +1,15 @@
 name: "Build Packages"
 description: "Compiles and builds Go services."
 
+inputs:
+  orchestrator-make-path:
+    description: |
+      Directory whose Makefile builds the orchestrator (build-debug target).
+      A caller that starts a compatible orchestrator from a different
+      directory passes that directory here.
+    required: false
+    default: "packages/orchestrator"
+
 runs:
   using: "composite"
   steps:
@@ -125,8 +134,10 @@ runs:
     # slow builds (api, orchestrator) are mostly serial link steps that leave
     # the box idle. Output is buffered per package so logs stay readable.
     - name: Build Packages
+      env:
+        ORCHESTRATOR_MAKE_PATH: ${{ inputs.orchestrator-make-path }}
       run: |
-        packages=(packages/api/integration packages/clickhouse packages/orchestrator packages/api packages/envd packages/client-proxy)
+        packages=(packages/api/integration packages/clickhouse "$ORCHESTRATOR_MAKE_PATH" packages/api packages/envd packages/client-proxy)
 
         pids=()
         for package in "${packages[@]}"; do
