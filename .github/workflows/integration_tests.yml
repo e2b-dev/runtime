@@ -44,7 +44,7 @@ jobs:
         #     go test -parallel=4 (Firecracker boots + compression), so the
         #     only way to cut wall time is more hosts. The full-suite
         #     uncompressed config is split into package shards - the
-        #     TestTemplateBuild* tests (real FC builds) in two halves by name
+        #     TestTemplateBuild* tests (real FC builds) in three shards by name
         #     prefix, api/sandboxes plus the light packages on their own
         #     runner, everything else on the last one. The compressed
         #     allow-list runs are split at the package level: the templates
@@ -63,6 +63,7 @@ jobs:
             || '[
                   {"name": "uncompressed-templates-1", "shard": "templates-builds-1", "compress_enabled": "false", "compress_type": "", "compress_level": "", "compress_workers": "", "dedup_mode": "default", "disable_memfd": "true"},
                   {"name": "uncompressed-templates-2", "shard": "templates-builds-2", "compress_enabled": "false", "compress_type": "", "compress_level": "", "compress_workers": "", "dedup_mode": "default", "disable_memfd": "true"},
+                  {"name": "uncompressed-templates-3", "shard": "templates-builds-3", "compress_enabled": "false", "compress_type": "", "compress_level": "", "compress_workers": "", "dedup_mode": "default", "disable_memfd": "true"},
                   {"name": "uncompressed-sandboxes", "shard": "sandboxes", "compress_enabled": "false", "compress_type": "", "compress_level": "", "compress_workers": "", "dedup_mode": "default", "disable_memfd": "true"},
                   {"name": "uncompressed-rest", "shard": "rest", "compress_enabled": "false", "compress_type": "", "compress_level": "", "compress_workers": "", "dedup_mode": "default", "disable_memfd": "true"},
                   {"name": "zstd1-templates", "shard": "templates", "compress_enabled": "true", "compress_type": "zstd", "compress_level": "1", "compress_workers": "8", "dedup_mode": "best_effort", "disable_memfd": "false"},

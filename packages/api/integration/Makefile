@@ -12,15 +12,17 @@ TEST_PARALLELISM ?= 4
 # go faster is more hosts. Shards are sized by measured test time:
 #
 #   - The ^TestTemplateBuild tests (real Firecracker builds) are split into
-#     two halves by name prefix, sized by the templates package's summed
-#     --- PASS durations (tests and subtests) under zstd: ~280s vs ~290s
-#     with SELinux in shard 1 (from ~230s vs ~340s before it moved, measured
-#     in October 2026). Shard 2 also runs the envd build tests beside the
-#     templates package, so its host carries up to eight builds at once
-#     while shard 1 carries four, and its times swing with the builder's
-#     layer cache. New TestTemplateBuild* tests fall into shard 2 unless
-#     they match the shard 1 prefix; rebalance by moving a prefix when the
-#     shards' test steps drift apart (check-shard-partition guards the
+#     three shards by name prefix, sized by each shard's measured test step.
+#     With two shards, shard 2's test step took 92-128s and shard 1's
+#     70-102s (November 2026); moving the FromTemplate* tests and ENV into
+#     shard 3 put shard 1 at 71-95s, shard 2 at 71-85s and shard 3 at
+#     70-83s. Shard 2 also runs the envd build tests (~150-175s summed)
+#     beside the templates package, so it still carries the most summed
+#     test time, its host carries up to eight builds at once while shards
+#     1 and 3 carry four, and its times swing with the builder's layer
+#     cache. New TestTemplateBuild* tests fall into shard 2 unless they
+#     match the shard 1 or shard 3 prefix; rebalance by moving a prefix when
+#     the shards' test steps drift apart (check-shard-partition guards the
 #     edit).
 #   - api/sandboxes gets its own runner, topped up with the light packages
 #     (proxies, api/metrics, api/volumes). Their creates compete with the
@@ -37,7 +39,8 @@ TEST_PARALLELISM ?= 4
 #     last runner; its -skip only bites in the templates and envd
 #     packages, and check-shard-partition proves no other package has a
 #     test it would drop.
-TEMPLATE_BUILDS_SHARD1_RE := ^TestTemplateBuild(ENV|COPY|RUN|W|Cache|Fuse|Unsupported|SELinux)
+TEMPLATE_BUILDS_SHARD1_RE := ^TestTemplateBuild(COPY|RUN|W|Cache|Fuse|Unsupported|SELinux)
+TEMPLATE_BUILDS_SHARD3_RE := ^TestTemplateBuild(FromTemplate|ENV)
 # Tests outside the TestTemplateBuild* family that build a template too: the
 # tag, delete and assignment flows in api/templates and envd's CA-cert and
 # process tests. In the rest shard each cost 65-190 s (September 2026) and
@@ -67,7 +70,11 @@ TEST_RUN_FLAGS := -run '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDING_TESTS_1
 TESTS_ONLY_OK := no
 else ifeq ($(TEST_SHARD),templates-builds-2)
 TEST_PACKAGES := ./internal/tests/api/templates/... ./internal/tests/envd/...
-TEST_RUN_FLAGS := -run '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_2_RE)' -skip '$(TEMPLATE_BUILDS_SHARD1_RE)'
+TEST_RUN_FLAGS := -run '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_2_RE)' -skip '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDS_SHARD3_RE)'
+TESTS_ONLY_OK := no
+else ifeq ($(TEST_SHARD),templates-builds-3)
+TEST_PACKAGES := ./internal/tests/api/templates/...
+TEST_RUN_FLAGS := -run '$(TEMPLATE_BUILDS_SHARD3_RE)'
 TESTS_ONLY_OK := no
 else ifeq ($(TEST_SHARD),sandboxes)
 TEST_PACKAGES := $(SANDBOXES_SHARD_PACKAGES)
@@ -175,12 +182,12 @@ test/%:
 		-- -count=1 -parallel=$(TEST_PARALLELISM) -timeout=20m "$$@"
 
 # The name-split shards must partition the templates and envd packages: every
-# top-level test in exactly one of templates-builds-1, templates-builds-2 and
-# rest, read from the sources so no test binary is compiled. Shard 1 runs the
-# templates package only, so an envd test its -run matches would run nowhere;
-# the rest shard's -skip applies to every package it runs, so a test outside
-# templates and envd that matches it would be dropped too. Guards a regex
-# edit that would run a build twice or lose a test.
+# top-level test in exactly one of templates-builds-1, -2, -3 and rest, read
+# from the sources so no test binary is compiled. Shards 1 and 3 run the
+# templates package only, so an envd test their -run matches would run
+# nowhere; the rest shard's -skip applies to every package it runs, so a test
+# outside templates and envd that matches it would be dropped too. Guards a
+# regex edit that would run a build twice or lose a test.
 .PHONY: check-shard-partition
 check-shard-partition:
 	@set -e; \
@@ -190,17 +197,18 @@ check-shard-partition:
 	if [ -z "$$templates" ] || [ -z "$$envd" ]; then echo "no tests found under internal/tests/api/templates or internal/tests/envd; check the paths" >&2; exit 1; fi; \
 	all=$$(printf '%s\n%s\n' "$$templates" "$$envd" | sort -u); \
 	s1=$$(printf '%s\n' "$$templates" | grep -E '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDING_TESTS_1_RE)' || true); \
-	s2=$$(printf '%s\n' "$$all" | grep -E '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_2_RE)' | grep -E -v '$(TEMPLATE_BUILDS_SHARD1_RE)' || true); \
+	s2=$$(printf '%s\n' "$$all" | grep -E '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_2_RE)' | grep -E -v '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDS_SHARD3_RE)' || true); \
+	s3=$$(printf '%s\n' "$$templates" | grep -E '$(TEMPLATE_BUILDS_SHARD3_RE)' || true); \
 	rest=$$(printf '%s\n' "$$all" | grep -E -v '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_1_RE)|$(TEMPLATE_BUILDING_TESTS_2_RE)' || true); \
-	if [ -z "$$s1" ] || [ -z "$$s2" ] || [ -z "$$rest" ]; then echo "a shard selects no test; check the shard regexes" >&2; exit 1; fi; \
-	stranded=$$(printf '%s\n' "$$envd" | grep -E '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDING_TESTS_1_RE)' || true); \
-	if [ -n "$$stranded" ]; then echo "envd tests match the shard-1 selection, which never runs envd:" >&2; printf '%s\n' "$$stranded" >&2; exit 1; fi; \
-	dupes=$$(printf '%s\n%s\n%s\n' "$$s1" "$$s2" "$$rest" | grep . | sort | uniq -d); \
+	if [ -z "$$s1" ] || [ -z "$$s2" ] || [ -z "$$s3" ] || [ -z "$$rest" ]; then echo "a shard selects no test; check the shard regexes" >&2; exit 1; fi; \
+	stranded=$$(printf '%s\n' "$$envd" | grep -E '$(TEMPLATE_BUILDS_SHARD1_RE)|$(TEMPLATE_BUILDING_TESTS_1_RE)|$(TEMPLATE_BUILDS_SHARD3_RE)' || true); \
+	if [ -n "$$stranded" ]; then echo "envd tests match the shard-1 or shard-3 selection, which never runs envd:" >&2; printf '%s\n' "$$stranded" >&2; exit 1; fi; \
+	dupes=$$(printf '%s\n%s\n%s\n%s\n' "$$s1" "$$s2" "$$s3" "$$rest" | grep . | sort | uniq -d); \
 	if [ -n "$$dupes" ]; then echo "tests selected by more than one shard:" >&2; printf '%s\n' "$$dupes" >&2; exit 1; fi; \
-	union=$$(printf '%s\n%s\n%s\n' "$$s1" "$$s2" "$$rest" | grep . | sort -u); \
+	union=$$(printf '%s\n%s\n%s\n%s\n' "$$s1" "$$s2" "$$s3" "$$rest" | grep . | sort -u); \
 	missing=$$(printf '%s\n%s\n' "$$all" "$$union" | sort | uniq -u); \
 	if [ -n "$$missing" ]; then echo "tests no shard selects:" >&2; printf '%s\n' "$$missing" >&2; exit 1; fi; \
 	set --; for p in $(SANDBOXES_SHARD_PACKAGES); do p=$${p#./}; set -- "$$@" ! -path "$${p%/...}/*"; done; \
 	skipped=$$(names internal/tests ! -path 'internal/tests/api/templates/*' ! -path 'internal/tests/envd/*' "$$@" | grep -E '^TestTemplateBuild|$(TEMPLATE_BUILDING_TESTS_1_RE)|$(TEMPLATE_BUILDING_TESTS_2_RE)' || true); \
 	if [ -n "$$skipped" ]; then echo "tests outside templates and envd match the rest shard's -skip and would run nowhere:" >&2; printf '%s\n' "$$skipped" >&2; exit 1; fi; \
-	echo "shards partition $$(printf '%s\n' "$$all" | grep -c .) templates and envd tests ($$(printf '%s\n' "$$s1" | grep -c .) / $$(printf '%s\n' "$$s2" | grep -c .) / $$(printf '%s\n' "$$rest" | grep -c .)); no other package matches the rest -skip"
+	echo "shards partition $$(printf '%s\n' "$$all" | grep -c .) templates and envd tests ($$(printf '%s\n' "$$s1" | grep -c .) / $$(printf '%s\n' "$$s2" | grep -c .) / $$(printf '%s\n' "$$s3" | grep -c .) / $$(printf '%s\n' "$$rest" | grep -c .)); no other package matches the rest -skip"
