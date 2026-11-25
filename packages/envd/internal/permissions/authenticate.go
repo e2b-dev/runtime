@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os/user"
 
 	"connectrpc.com/authn"
@@ -11,7 +12,7 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/execcontext"
 )
 
-func AuthenticateUsername(_ context.Context, req authn.Request) (any, error) {
+func AuthenticateUsername(_ context.Context, req *http.Request) (any, error) {
 	username, _, ok := req.BasicAuth()
 	if !ok {
 		// When no username is provided, ignore the authentication method (not all endpoints require it)

@@ -7,7 +7,7 @@ replace github.com/e2b-dev/infra/packages/shared v0.0.0 => ../shared
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 require (
-	connectrpc.com/authn v0.1.0
+	connectrpc.com/authn v0.2.0
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/cors v0.1.0
 	github.com/awnumar/memguard v0.23.0
