@@ -759,6 +759,12 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
   guest forwards nothing until the host's first `/init`. The orchestrator sends the sandbox's
   ingress `expose_localhost_ports` on every `/init` to an envd at or above the version that
   applies it; an older envd is sent nothing and keeps forwarding until its template is rebuilt.
+  The api takes it from the create request's `network.exposeLocalhostPorts` and stores it with the
+  sandbox, so a resume keeps it, and placement sends off only to orchestrators that know the field.
+  It refuses an explicit off for a template whose envd predates the field, and a project default
+  of off does not apply to such a template.
+  Behind the `sandbox-localhost-forwarding-control` flag it accepts off; with the flag off it
+  refuses off. A new sandbox that asked nothing sends on either way.
   **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and
   the orchestrator gate features on the envd version recorded in each template build — the

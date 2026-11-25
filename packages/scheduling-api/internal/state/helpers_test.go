@@ -173,9 +173,10 @@ func fullRecord(teamID uuid.UUID, sandboxID string) sandboxtypes.Sandbox {
 				EgressProxyTLS:      &sandboxconfig.SandboxEgressProxyTLSConfig{Enabled: true, ServerName: "proxy.test", CACert: "cert"},
 			},
 			Ingress: &sandboxconfig.SandboxNetworkIngressConfig{
-				AllowPublicAccess: &yes,
-				MaskRequestHost:   str("masked.test"),
-				HTTPSPorts:        []uint32{443, 8443},
+				AllowPublicAccess:    &yes,
+				MaskRequestHost:      str("masked.test"),
+				HTTPSPorts:           []uint32{443, 8443},
+				ExposeLocalhostPorts: &yes,
 			},
 		},
 		VolumeMounts: []*sandboxconfig.SandboxVolumeMountConfig{{ID: "volume", Type: "type", Name: "name", Path: "/mnt"}},

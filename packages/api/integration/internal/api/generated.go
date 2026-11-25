@@ -2333,6 +2333,9 @@ type SandboxNetworkConfig struct {
 	// EgressProxy SOCKS5 proxy for sandbox egress. Outbound TCP is tunneled through the proxy after allow/deny filtering; the sandbox is unaware. Domain-matched flows use remote DNS (ATYP=domain).
 	EgressProxy *SandboxEgressProxyConfig `json:"egressProxy,omitempty"`
 
+	// ExposeLocalhostPorts Whether services listening only on loopback (127.0.0.1, localhost, ::1) inside the sandbox are reachable through sandbox URLs. Services listening on all interfaces are reachable either way. When omitted or null on create, the project's default applies, which is true unless the project changed it. A sandbox keeps the value it was created with through pause and resume. Setting it to false needs a template built with a recent envd: for an older template the create is refused until the template is rebuilt, and a project default of false does not apply, so its sandboxes keep exposing them.
+	ExposeLocalhostPorts *bool `json:"exposeLocalhostPorts,omitempty"`
+
 	// HttpsPorts Sandbox ports that serve HTTPS rather than plaintext HTTP. Affects how the proxy reaches the service inside the sandbox; the public URL is HTTPS either way. Certificates are not verified, so self-signed ones work. The envd port (49983) cannot be listed.
 	HttpsPorts *[]uint32 `json:"httpsPorts,omitempty"`
 

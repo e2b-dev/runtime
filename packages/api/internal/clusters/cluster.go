@@ -82,6 +82,11 @@ var TemplateMemoryMaximumMinVersion = semver.New(0, 30, 202611091759, "", "")
 // the API counts the size it asked for.
 var SandboxMemoryResizeMinVersion = semver.New(0, 30, 202611161749, "", "")
 
+// LocalhostForwardingOffMinVersion is the first orchestrator release that sends a
+// sandbox's expose_localhost_ports to envd. An older one drops the field, and envd keeps
+// forwarding services bound to loopback while the API reports them private.
+var LocalhostForwardingOffMinVersion = semver.New(0, 30, 202611241616, "", "")
+
 // TemplateBuilderMinVersion is the oldest builder that honours every sizing
 // field a build sets, or nil when it sets none.
 func TemplateBuilderMinVersion(maxVCpu, maxMemoryMB *int64) *semver.Version {

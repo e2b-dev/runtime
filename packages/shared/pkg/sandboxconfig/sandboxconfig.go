@@ -36,6 +36,8 @@ type SandboxNetworkIngressConfig struct {
 	AllowPublicAccess *bool    `json:"allowPublicAccess,omitempty"`
 	MaskRequestHost   *string  `json:"maskRequestHost,omitempty"`
 	HTTPSPorts        []uint32 `json:"httpsPorts,omitempty"`
+	// ExposeLocalhostPorts is nil when the create did not set it, which forwards.
+	ExposeLocalhostPorts *bool `json:"exposeLocalhostPorts,omitempty"`
 }
 
 type SandboxNetworkConfig struct {

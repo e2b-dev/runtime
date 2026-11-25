@@ -713,6 +713,18 @@ components:
             Whether sandbox URLs accept traffic without the sandbox's traffic access token.
             When omitted or null on create, the project's default applies, which is true
             unless the project changed it.
+        exposeLocalhostPorts:
+          type: boolean
+          nullable: true
+          description: >-
+            Whether services listening only on loopback (127.0.0.1, localhost, ::1) inside
+            the sandbox are reachable through sandbox URLs. Services listening on all
+            interfaces are reachable either way. When omitted or null on create, the
+            project's default applies, which is true unless the project changed it. A
+            sandbox keeps the value it was created with through pause and resume. Setting
+            it to false needs a template built with a recent envd: for an older template the
+            create is refused until the template is rebuilt, and a project default of false
+            does not apply, so its sandboxes keep exposing them.
         allowOut:
           type: array
           description: List of allowed destinations for egress traffic. Each entry can be a CIDR block (e.g. "8.8.8.8/32"), a bare IP address (e.g. "8.8.8.8"), or a domain name (e.g. "example.com", "*.example.com"). Allowed entries always take precedence over denied entries. When allowOut contains a domain, the servers in dnsServers (8.8.8.8 by default) are also allowed.

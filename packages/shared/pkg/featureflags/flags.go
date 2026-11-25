@@ -545,6 +545,14 @@ var (
 
 	BYOPProxyEnabledFlag = NewBoolFlag("byop-proxy-enabled", true)
 
+	// LocalhostForwardingControlFlag lets a create turn off envd's forwarding of services
+	// bound to loopback; while it is off such a create is refused. Turn it on only once
+	// every api replica and scheduling-api keep the field in stored sandboxes, or a resume
+	// forwards again, and every orchestrator honours it, or a create from a template
+	// snapshotted with off cannot turn it back on. Placement sends off only to
+	// orchestrators that honour it. Evaluated per team.
+	LocalhostForwardingControlFlag = NewBoolFlag("sandbox-localhost-forwarding-control", false)
+
 	// SandboxFirewallNonDNSUDPFlag selects what the slot firewall does with
 	// guest UDP to ports other than 53: "off" leaves it alone, "count" counts
 	// it, "drop" counts and drops it. Read at every chain build.

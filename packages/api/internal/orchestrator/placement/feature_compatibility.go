@@ -72,6 +72,17 @@ var featureGates = []featureGate{
 			return req.GetSandbox().GetMemoryMb() > 0
 		},
 	},
+	{
+		// An older orchestrator drops expose_localhost_ports, so envd keeps forwarding
+		// services bound to loopback while the API returns 201. Only an explicit off
+		// is gated; GetExposeLocalhostPorts is false for an absent field too.
+		feature: Feature{name: "expose-localhost-ports-off", minVersion: clusters.LocalhostForwardingOffMinVersion},
+		requested: func(req *orchestrator.SandboxCreateRequest) bool {
+			ingress := req.GetSandbox().GetNetwork().GetIngress()
+
+			return ingress != nil && ingress.ExposeLocalhostPorts != nil && !ingress.GetExposeLocalhostPorts()
+		},
+	},
 }
 
 // EgressUpdateFeatures reports the capabilities a live network update needs

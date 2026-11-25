@@ -365,6 +365,16 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 	} else {
 		network = sandboxNetworkConfig(nil, teamInfo.ProjectSettings.SandboxSettings)
 	}
+	if apiErr := gateLocalhostForwarding(network, a.featureFlags.BoolFlag(ctx, featureflags.LocalhostForwardingControlFlag)); apiErr != nil {
+		telemetry.ReportEvent(ctx, "localhost forwarding off rejected by LocalhostForwardingControlFlag")
+
+		return nil, apiErr
+	}
+	if apiErr := requireEnvdForExposeLocalhostPortsOff(body.Network, sharedUtils.DerefOrDefault(build.EnvdVersion, "")); apiErr != nil {
+		telemetry.ReportEvent(ctx, "exposeLocalhostPorts false refused for a template whose envd predates it")
+
+		return nil, apiErr
+	}
 
 	sbxVolumeMounts, err := convertAPIVolumesToOrchestratorVolumes(
 		ctx, a.sqlcDB, a.featureFlags, teamInfo.ID, apiVolumeMounts, build,
@@ -457,9 +467,10 @@ func sandboxNetworkConfig(n *api.SandboxNetworkConfig, settings types.SandboxSet
 
 	return &types.SandboxNetworkConfig{
 		Ingress: &types.SandboxNetworkIngressConfig{
-			AllowPublicAccess: new(sharedUtils.DerefOrDefault(n.AllowPublicTraffic, projectAllowsPublicTraffic)),
-			MaskRequestHost:   n.MaskRequestHost,
-			HTTPSPorts:        sharedUtils.DerefOrDefault(n.HttpsPorts, nil),
+			AllowPublicAccess:    new(sharedUtils.DerefOrDefault(n.AllowPublicTraffic, projectAllowsPublicTraffic)),
+			MaskRequestHost:      n.MaskRequestHost,
+			HTTPSPorts:           sharedUtils.DerefOrDefault(n.HttpsPorts, nil),
+			ExposeLocalhostPorts: n.ExposeLocalhostPorts,
 		},
 		Egress: &types.SandboxNetworkEgressConfig{
 			AllowedAddresses: sharedUtils.DerefOrDefault(n.AllowOut, nil),
@@ -467,6 +478,56 @@ func sandboxNetworkConfig(n *api.SandboxNetworkConfig, settings types.SandboxSet
 			Rules:            apiRulesToDBRules(n.Rules),
 			DnsServers:       n.DnsServers,
 		},
+	}
+}
+
+// gateLocalhostForwarding refuses localhost forwarding off while the control is not enabled,
+// rather than store a request a node may not honor, and drops an explicit on, so nothing
+// new reaches the orchestrator.
+func gateLocalhostForwarding(network *types.SandboxNetworkConfig, enabled bool) *api.APIError {
+	if enabled || network == nil || network.Ingress == nil || network.Ingress.ExposeLocalhostPorts == nil {
+		return nil
+	}
+	if !*network.Ingress.ExposeLocalhostPorts {
+		return &api.APIError{
+			Code:      http.StatusBadRequest,
+			ClientMsg: "Setting network.exposeLocalhostPorts to false is not available yet.",
+			Retryable: apierrors.NoRetry,
+		}
+	}
+	network.Ingress.ExposeLocalhostPorts = nil
+
+	return nil
+}
+
+var errExposeLocalhostPortsOffNotSupported = errors.New("network.exposeLocalhostPorts false needs a newer envd")
+
+// requireEnvdForExposeLocalhostPortsOff refuses a create whose request itself asks for
+// exposeLocalhostPorts false on a template whose envd predates the field, since that envd
+// would keep the ports exposed. A project default of false is not refused: a sandbox from
+// such a template keeps exposing them, as before the field existed.
+func requireEnvdForExposeLocalhostPortsOff(requested *api.SandboxNetworkConfig, envdVersion string) *api.APIError {
+	if requested == nil || requested.ExposeLocalhostPorts == nil || *requested.ExposeLocalhostPorts {
+		return nil
+	}
+
+	err := checkEnvdVersionRequirement(envdVersion, sharedUtils.MinEnvdVersionForExposeLocalhostPorts, errExposeLocalhostPortsOffNotSupported)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errExposeLocalhostPortsOffNotSupported) || errors.Is(err, errNoEnvdVersion):
+		return &api.APIError{
+			Code:      http.StatusBadRequest,
+			Err:       err,
+			ClientMsg: err.Error(),
+			Retryable: apierrors.NoRetry,
+		}
+	default:
+		return &api.APIError{
+			Code:      http.StatusInternalServerError,
+			Err:       err,
+			ClientMsg: "internal error while checking the template's envd version",
+		}
 	}
 }
 

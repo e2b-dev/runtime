@@ -434,6 +434,25 @@ func TestRequiredFeatures_MemoryResize(t *testing.T) {
 	assert.Equal(t, []string{"memory-resize"}, requiredFeatures(req).FeatureNames())
 }
 
+func TestRequiredFeatures_LocalhostForwardingOff(t *testing.T) {
+	t.Parallel()
+
+	on, off := true, false
+	req := testSbxRequest("sbx-1")
+	req.Sandbox.Network = &orchestrator.SandboxNetworkConfig{}
+	assert.Empty(t, requiredFeatures(req).FeatureNames(), "no ingress asks for nothing")
+
+	req.Sandbox.Network.Ingress = &orchestrator.SandboxNetworkIngressConfig{}
+	assert.Empty(t, requiredFeatures(req).FeatureNames(), "an absent field forwards, as every orchestrator does")
+
+	req.Sandbox.Network.Ingress.ExposeLocalhostPorts = &on
+	assert.Empty(t, requiredFeatures(req).FeatureNames())
+
+	req.Sandbox.Network.Ingress.ExposeLocalhostPorts = &off
+	assert.Equal(t, []string{"expose-localhost-ports-off"}, requiredFeatures(req).FeatureNames())
+	assert.Equal(t, clusters.LocalhostForwardingOffMinVersion.String(), requiredFeatures(req).MinVersion())
+}
+
 // A record keeps the names of the gates its start needed; rebuilding the
 // requirement from them gives the same floor, and a name no gate carries is skipped.
 func TestRequireNamedRebuildsTheStartRequirement(t *testing.T) {

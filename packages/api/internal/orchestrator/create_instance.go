@@ -221,6 +221,15 @@ func ApplyValidatedEgressProxy(dst *types.SandboxNetworkEgressConfig, src *sandb
 	}
 }
 
+// askNewSandboxForwardingOn makes a new sandbox that asked nothing send forwarding on, so one
+// started from a snapshot template whose envd had it off forwards again, whichever team's
+// flag the template came from. A resume sends what its create stored instead.
+func askNewSandboxForwardingOn(ingress *orchestrator.SandboxNetworkIngressConfig) {
+	if ingress != nil && ingress.ExposeLocalhostPorts == nil {
+		ingress.ExposeLocalhostPorts = new(true)
+	}
+}
+
 // buildNetworkConfig constructs the orchestrator network configuration from the input parameters
 func buildNetworkConfig(network *types.SandboxNetworkConfig, allowInternetAccess *bool, trafficAccessToken *string) *orchestrator.SandboxNetworkConfig {
 	orchNetwork := &orchestrator.SandboxNetworkConfig{
@@ -244,6 +253,7 @@ func buildNetworkConfig(network *types.SandboxNetworkConfig, allowInternetAccess
 	if network != nil && network.Ingress != nil {
 		orchNetwork.Ingress.MaskRequestHost = network.Ingress.MaskRequestHost
 		orchNetwork.Ingress.HttpsPorts = network.Ingress.HTTPSPorts
+		orchNetwork.Ingress.ExposeLocalhostPorts = network.Ingress.ExposeLocalhostPorts
 	}
 
 	// Handle the case where internet access is explicitly disabled
@@ -463,6 +473,9 @@ func (o *Orchestrator) CreateSandbox(
 	}
 
 	sbxNetwork := buildNetworkConfig(network, sbxData.AllowInternetAccess, trafficAccessToken)
+	if !isResume {
+		askNewSandboxForwardingOn(sbxNetwork.GetIngress())
+	}
 
 	var orchAutoResume *orchestrator.SandboxAutoResumeConfig
 	if sbxData.AutoResume != nil {
