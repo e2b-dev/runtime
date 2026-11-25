@@ -13,7 +13,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.2
 	github.com/e2b-dev/infra/packages/shared v0.0.0
 	github.com/google/uuid v1.6.0
-	github.com/launchdarkly/go-sdk-common/v3 v3.3.0
+	github.com/launchdarkly/go-sdk-common/v3 v3.6.0
 	github.com/launchdarkly/go-server-sdk/v7 v7.13.0
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0
@@ -59,7 +59,7 @@ require (
 	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/launchdarkly/ccache v1.1.0 // indirect
 	github.com/launchdarkly/eventsource v1.10.0 // indirect
-	github.com/launchdarkly/go-jsonstream/v3 v3.1.0 // indirect
+	github.com/launchdarkly/go-jsonstream/v3 v3.1.2 // indirect
 	github.com/launchdarkly/go-sdk-events/v3 v3.5.0 // indirect
 	github.com/launchdarkly/go-semver v1.0.3 // indirect
 	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.0.1 // indirect
@@ -109,7 +109,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
-	golang.org/x/exp v0.0.0-20261109185158-a52e3aef5920 // indirect
 	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect

@@ -644,10 +644,10 @@ github.com/launchdarkly/ccache v1.1.0 h1:voD1M+ZJXR3MREOKtBwgTF9hYHl1jg+vFKS/+VA
 github.com/launchdarkly/ccache v1.1.0/go.mod h1:TlxzrlnzvYeXiLHmesMuvoZetu4Z97cV1SsdqqBJi1Q=
 github.com/launchdarkly/eventsource v1.10.0 h1:H9Tp6AfGu/G2qzBJC26iperrvwhzdbiA/gx7qE2nDFI=
 github.com/launchdarkly/eventsource v1.10.0/go.mod h1:J3oa50bPvJesZqNAJtb5btSIo5N6roDWhiAS3IpsKck=
-github.com/launchdarkly/go-jsonstream/v3 v3.1.0 h1:U/7/LplZO72XefBQ+FzHf6o4FwLHVqBE+4V58Ornu/E=
-github.com/launchdarkly/go-jsonstream/v3 v3.1.0/go.mod h1:2Pt4BR5AwWgsuVTCcIpB6Os04JFIKWfoA+7faKkZB5E=
-github.com/launchdarkly/go-sdk-common/v3 v3.3.0 h1:kkf78wcKX+DOXzNjG29i+py/P+XMIw8/mXS7eEWGQwU=
-github.com/launchdarkly/go-sdk-common/v3 v3.3.0/go.mod h1:mXFmDGEh4ydK3QilRhrAyKuf9v44VZQWnINyhqbbOd0=
+github.com/launchdarkly/go-jsonstream/v3 v3.1.2 h1:Od0QEKHesbKnD3GgAt+LkZzhcUiSP+yhrclrhsoox6w=
+github.com/launchdarkly/go-jsonstream/v3 v3.1.2/go.mod h1:ZBjhKq8mhArCtqotGRGnteY6eXpNm1GaOdUSZHh+ZjM=
+github.com/launchdarkly/go-sdk-common/v3 v3.6.0 h1:DxDfcNcRMxN2E8X7aWfOLcVvHgD2iUgFRYCcZtVcK3w=
+github.com/launchdarkly/go-sdk-common/v3 v3.6.0/go.mod h1:HUhSIcObNywBajTAiYT/U/llpHzGL7HMdVVBm7Nyy+E=
 github.com/launchdarkly/go-sdk-events/v3 v3.5.0 h1:Yav8Thm70dZbO8U1foYwZPf3w60n/lNBRaYeeNM/qg4=
 github.com/launchdarkly/go-sdk-events/v3 v3.5.0/go.mod h1:oepYWQ2RvvjfL2WxkE1uJJIuRsIMOP4WIVgUpXRPcNI=
 github.com/launchdarkly/go-semver v1.0.3 h1:agIy/RN3SqeQDIfKkl+oFslEdeIs7pgsJBs3CdCcGQM=

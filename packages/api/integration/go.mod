@@ -128,8 +128,8 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/launchdarkly/ccache v1.1.0 // indirect
 	github.com/launchdarkly/eventsource v1.10.0 // indirect
-	github.com/launchdarkly/go-jsonstream/v3 v3.1.0 // indirect
-	github.com/launchdarkly/go-sdk-common/v3 v3.3.0 // indirect
+	github.com/launchdarkly/go-jsonstream/v3 v3.1.2 // indirect
+	github.com/launchdarkly/go-sdk-common/v3 v3.6.0 // indirect
 	github.com/launchdarkly/go-sdk-events/v3 v3.5.0 // indirect
 	github.com/launchdarkly/go-semver v1.0.3 // indirect
 	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.0.1 // indirect

@@ -44,7 +44,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/inetaf/tcpproxy v0.0.0-20260515195445-c159a6051109
 	github.com/jellydator/ttlcache/v3 v3.4.1
-	github.com/launchdarkly/go-sdk-common/v3 v3.3.0
+	github.com/launchdarkly/go-sdk-common/v3 v3.6.0
 	github.com/launchdarkly/go-server-sdk/v7 v7.13.0
 	github.com/mdlayher/netlink v1.11.2
 	github.com/moby/go-archive v0.3.3
@@ -208,7 +208,7 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/launchdarkly/ccache v1.1.0 // indirect
 	github.com/launchdarkly/eventsource v1.10.0 // indirect
-	github.com/launchdarkly/go-jsonstream/v3 v3.1.0 // indirect
+	github.com/launchdarkly/go-jsonstream/v3 v3.1.2 // indirect
 	github.com/launchdarkly/go-sdk-events/v3 v3.5.0 // indirect
 	github.com/launchdarkly/go-semver v1.0.3 // indirect
 	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.0.1 // indirect
