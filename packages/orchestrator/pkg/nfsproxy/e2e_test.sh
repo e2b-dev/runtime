@@ -109,4 +109,16 @@ test ! -f "${tmpdir}/dir1/subdir/b.txt"
 rm -rf "${tmpdir}/dir1"
 test ! -d "${tmpdir}/dir1"
 
+# 13) advisory locking (flock) must resolve locally and NOT hang.
+# The proxy has no lock manager, so the volume must be mounted with nolock
+# (see packages/envd/internal/api/init.go). Without it the kernel sends the
+# lock to the proxy as an NLM request, gets port 0, and a hard mount retries
+# forever -- flock wedges in uninterruptible sleep. Guard against that
+# regression: a 10s timeout turns a hang into a loud failure instead of a
+# stuck suite. See github.com/e2b-dev/infra issue #3619.
+if ! timeout 10 flock "${tmpdir}/test.txt" -c true; then
+  echo "flock did not resolve within 10s under ${test_path} (missing nolock?)" >&2
+  exit 1
+fi
+
 echo "POSIX filesystem operations OK under ${test_path}"
