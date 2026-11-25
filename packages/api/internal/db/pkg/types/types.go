@@ -80,7 +80,8 @@ func TeamFromRow(row authqueries.GetTeamByTeamIDRow) Team {
 func ProjectSettingsFromRow(row authqueries.GetTeamByTeamIDRow) ProjectSettings {
 	return ProjectSettings{
 		SandboxSettings: SandboxSettings{
-			DefaultAllowPublicTraffic: row.SandboxDefaultAllowPublicTraffic,
+			DefaultAllowPublicTraffic:   row.SandboxDefaultAllowPublicTraffic,
+			DefaultExposeLocalhostPorts: row.SandboxDefaultExposeLocalhostPorts,
 		},
 	}
 }

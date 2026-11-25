@@ -30,5 +30,6 @@ type ProjectSettings struct {
 }
 
 type SandboxSettings struct {
-	DefaultAllowPublicTraffic *bool
+	DefaultAllowPublicTraffic   *bool
+	DefaultExposeLocalhostPorts *bool
 }

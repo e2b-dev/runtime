@@ -415,6 +415,7 @@ CREATE TABLE projection.project_settings (
     project_id uuid PRIMARY KEY REFERENCES public.teams (id) ON DELETE CASCADE,
     revision bigint NOT NULL CHECK (revision > 0),
     sandbox_default_allow_public_traffic boolean,
+    sandbox_default_expose_localhost_ports boolean,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );

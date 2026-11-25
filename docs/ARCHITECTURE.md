@@ -377,15 +377,19 @@ projection from the owning management service. This endpoint belongs to the API
 and accepts only service JWTs through `AdminJWTAuth`. It locks the team and checks
 that it has not been deleted before applying the projection. The shared `ProjectSettings` type
 contains `SandboxSettings`, with the optional ingress default under
-`sandboxSettings.defaultAllowPublicTraffic`. Storage uses `projection.project_settings`,
-with `revision` and nullable `sandbox_default_allow_public_traffic` in the same row.
+`sandboxSettings.defaultAllowPublicTraffic` and the optional localhost forwarding default under
+`sandboxSettings.defaultExposeLocalhostPorts`. Storage uses `projection.project_settings`,
+with `revision`, nullable `sandbox_default_allow_public_traffic` and nullable
+`sandbox_default_expose_localhost_ports` in the same row.
 The receiver applies both in one guarded upsert. Equal or older revisions cannot
 overwrite it. Clearing stores NULL at a newer revision, retaining the ordering fence.
 Cache invalidation follows commit and is retried on duplicate
 delivery after a cache failure. There is no rollout flag check on accepted delivery.
-Sandbox creation resolves an absent default to true and honors a saved default
-independently of rollout eligibility. New sandboxes can use an older value while
-delivery or cache refresh is pending.
+Sandbox creation resolves an absent default to true and honors a saved public-traffic
+default independently of rollout eligibility. A saved localhost forwarding default applies only
+while the `sandbox-localhost-forwarding-control` flag is on; while it is off, creates forward as
+before the default existed. New sandboxes can use an older value while delivery or
+cache refresh is pending.
 
 The owning management service also drives the project writes under
 `/unstable/management/projects/{projectID}`. Like the settings route, each accepts only service
@@ -914,12 +918,25 @@ A missing key, including a team cached before settings existed, keeps public tra
 With no `network` object, a public sandbox stores no network config and a private one stores only
 the ingress setting. Either way a private sandbox gets a traffic access token at create, and
 resume, auto-resume and fork keep the setting saved with the sandbox rather than reading the
-project default again.
+project default again. `network.exposeLocalhostPorts` resolves the same way against
+`DefaultExposeLocalhostPorts`: unset or null takes the project's default, a missing key forwards,
+and with no `network` object a project default stores only the ingress setting. The default is
+dropped, and nothing is stored, while the rollout flag is off and for a template whose envd
+predates the field or has no recorded version, since that envd keeps the ports exposed.
 
 V2 create idempotency keeps the former `allowPublicTraffic: true` fingerprint for an omitted
 flag on unconfigured projects, so retries across API versions still replay. Configured projects
 distinguish omission from an explicit boolean. The first configuration change can make an older
 key return 409 until its idempotency record expires; it does not alter the original sandbox.
+`network.exposeLocalhostPorts` takes the stricter rule: when the project has a saved default, an
+omitted field is fingerprinted with that default recorded beside the request, so a retry after
+the default changed answers 409 rather than creating a sandbox that exposes loopback services
+differently from the first attempt. The inherited default is kept apart from an explicit value,
+because the two can behave differently (the default is dropped where it cannot apply, an
+explicit off is refused there), so a retry that switches between them also answers 409.
+`allowPublicTraffic` keeps the looser rule, where a changed default does not answer 409, because
+its fingerprints predate this change; the localhost field is new, so no existing key relies on
+the looser rule, and a project without a saved default keeps its fingerprints.
 
 How that `/init` reaches envd depends on the envd expected to answer it. Behind the
 `envd-init-held-request` flag, and for an envd at or above 0.10.0, the orchestrator sends one

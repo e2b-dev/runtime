@@ -156,6 +156,7 @@ func TestProjectSettingsContract(t *testing.T) {
 		`{"revision":1,"settings":{"sandboxSettings":{}}}`,
 		`{"revision":1,"settings":{"sandboxSettings":{"defaultAllowPublicTraffic":false}}}`,
 		`{"revision":1,"settings":{"sandboxSettings":{"defaultAllowPublicTraffic":true}}}`,
+		`{"revision":1,"settings":{"sandboxSettings":{"defaultExposeLocalhostPorts":false}}}`,
 	} {
 		var value map[string]any
 		require.NoError(t, json.Unmarshal([]byte(body), &value))
@@ -169,6 +170,8 @@ func TestProjectSettingsContract(t *testing.T) {
 		`{"revision":1,"settings":{"sandboxSettings":null}}`,
 		`{"revision":1,"settings":{"sandboxSettings":{"defaultAllowPublicTraffic":null}}}`,
 		`{"revision":1,"settings":{"sandboxSettings":{"defaultAllowPublicTraffic":"false"}}}`,
+		`{"revision":1,"settings":{"sandboxSettings":{"defaultExposeLocalhostPorts":null}}}`,
+		`{"revision":1,"settings":{"sandboxSettings":{"defaultExposeLocalhostPorts":"false"}}}`,
 	} {
 		var value map[string]any
 		require.NoError(t, json.Unmarshal([]byte(body), &value))

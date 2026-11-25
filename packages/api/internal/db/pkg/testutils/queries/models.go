@@ -185,11 +185,12 @@ type ProjectionProjectMember struct {
 }
 
 type ProjectionProjectSetting struct {
-	ProjectID                        uuid.UUID
-	Revision                         int64
-	SandboxDefaultAllowPublicTraffic pgtype.Bool
-	CreatedAt                        time.Time
-	UpdatedAt                        time.Time
+	ProjectID                          uuid.UUID
+	Revision                           int64
+	SandboxDefaultAllowPublicTraffic   pgtype.Bool
+	CreatedAt                          time.Time
+	UpdatedAt                          time.Time
+	SandboxDefaultExposeLocalhostPorts pgtype.Bool
 }
 
 type Snapshot struct {

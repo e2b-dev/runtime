@@ -118,8 +118,17 @@ func (a *APIStore) PostV2Sandboxes(c *gin.Context, _ api.PostV2SandboxesParams) 
 		network.AllowPublicTraffic = new(true)
 		fingerprintBody.Network = &network
 	}
+	// A retry that leaves localhost forwarding to the project must not run under a default
+	// changed since the first attempt, nor match one that asks for the same value itself: an
+	// inherited default is dropped where it cannot apply, while an explicit off is refused there.
+	// The default is therefore recorded beside the request rather than written into it.
+	var fingerprintContent any = fingerprintBody
+	if d := auth.MustGetTeamInfo(c).ProjectSettings.SandboxSettings.DefaultExposeLocalhostPorts; d != nil &&
+		(body.Network == nil || body.Network.ExposeLocalhostPorts == nil) {
+		fingerprintContent = inheritedLocalhostFingerprint{Request: fingerprintBody, InheritedExposeLocalhostPorts: *d}
+	}
 
-	idempotency.Execute(c, fingerprintBody, func() *apierrors.APIError {
+	idempotency.Execute(c, fingerprintContent, func() *apierrors.APIError {
 		sbx, apiErr := a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
 		if apiErr != nil {
 			return apiErr
@@ -326,6 +335,9 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 
 	allowInternetAccess := body.AllowInternetAccess
 
+	localhostControl := a.featureFlags.BoolFlag(ctx, featureflags.LocalhostForwardingControlFlag)
+	settings := sandboxSettingsFor(teamInfo.ProjectSettings.SandboxSettings, localhostControl, sharedUtils.DerefOrDefault(build.EnvdVersion, ""))
+
 	var network *types.SandboxNetworkConfig
 	if n := body.Network; n != nil {
 		limits := a.networkRuleLimits(ctx, teamInfo.Team.ID)
@@ -336,7 +348,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 			return nil, err
 		}
 
-		network = sandboxNetworkConfig(n, teamInfo.ProjectSettings.SandboxSettings)
+		network = sandboxNetworkConfig(n, settings)
 
 		if ep := n.EgressProxy; ep != nil {
 			if !a.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
@@ -363,9 +375,9 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 			apiorch.ApplyValidatedEgressProxy(network.Egress, canonical)
 		}
 	} else {
-		network = sandboxNetworkConfig(nil, teamInfo.ProjectSettings.SandboxSettings)
+		network = sandboxNetworkConfig(nil, settings)
 	}
-	if apiErr := gateLocalhostForwarding(network, a.featureFlags.BoolFlag(ctx, featureflags.LocalhostForwardingControlFlag)); apiErr != nil {
+	if apiErr := gateLocalhostForwarding(network, localhostControl); apiErr != nil {
 		telemetry.ReportEvent(ctx, "localhost forwarding off rejected by LocalhostForwardingControlFlag")
 
 		return nil, apiErr
@@ -455,14 +467,21 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 // Persist private ingress so pause and resume retain it.
 func sandboxNetworkConfig(n *api.SandboxNetworkConfig, settings types.SandboxSettings) *types.SandboxNetworkConfig {
 	projectAllowsPublicTraffic := sharedUtils.DerefOrDefault(settings.DefaultAllowPublicTraffic, types.AllowPublicAccessDefault)
+	localhostForwarding := projectExposeLocalhostPorts(settings)
 	if n == nil {
-		if projectAllowsPublicTraffic {
+		if projectAllowsPublicTraffic && localhostForwarding == nil {
 			return nil
 		}
 
-		return &types.SandboxNetworkConfig{
-			Ingress: &types.SandboxNetworkIngressConfig{AllowPublicAccess: new(false)},
+		ingress := &types.SandboxNetworkIngressConfig{ExposeLocalhostPorts: localhostForwarding}
+		if !projectAllowsPublicTraffic {
+			ingress.AllowPublicAccess = new(false)
 		}
+
+		return &types.SandboxNetworkConfig{Ingress: ingress}
+	}
+	if n.ExposeLocalhostPorts != nil {
+		localhostForwarding = n.ExposeLocalhostPorts
 	}
 
 	return &types.SandboxNetworkConfig{
@@ -470,7 +489,7 @@ func sandboxNetworkConfig(n *api.SandboxNetworkConfig, settings types.SandboxSet
 			AllowPublicAccess:    new(sharedUtils.DerefOrDefault(n.AllowPublicTraffic, projectAllowsPublicTraffic)),
 			MaskRequestHost:      n.MaskRequestHost,
 			HTTPSPorts:           sharedUtils.DerefOrDefault(n.HttpsPorts, nil),
-			ExposeLocalhostPorts: n.ExposeLocalhostPorts,
+			ExposeLocalhostPorts: localhostForwarding,
 		},
 		Egress: &types.SandboxNetworkEgressConfig{
 			AllowedAddresses: sharedUtils.DerefOrDefault(n.AllowOut, nil),
@@ -500,12 +519,49 @@ func gateLocalhostForwarding(network *types.SandboxNetworkConfig, enabled bool) 
 	return nil
 }
 
+// sandboxSettingsFor drops the project's localhost forwarding default where it cannot
+// apply. While the control is off, creates behave as before the default existed and a
+// rollback of the flag leaves the project usable. For a template whose envd predates the
+// field, or has no recorded version, the ports stay exposed whatever is stored, so the
+// sandbox stores no setting: reads then report what it does, and placement is not limited
+// to orchestrators that honour an off it will never use. An explicit off is still refused,
+// by gateLocalhostForwarding and requireEnvdForExposeLocalhostPortsOff.
+func sandboxSettingsFor(settings types.SandboxSettings, localhostControl bool, envdVersion string) types.SandboxSettings {
+	if !localhostControl || !envdAppliesExposeLocalhostPorts(envdVersion) {
+		settings.DefaultExposeLocalhostPorts = nil
+	}
+
+	return settings
+}
+
+func envdAppliesExposeLocalhostPorts(envdVersion string) bool {
+	return checkEnvdVersionRequirement(envdVersion, sharedUtils.MinEnvdVersionForExposeLocalhostPorts, errExposeLocalhostPortsOffNotSupported) == nil
+}
+
+// projectExposeLocalhostPorts is a copy of the project's default, so the stored
+// sandbox config does not share the cached team's pointer; nil when it has none.
+func projectExposeLocalhostPorts(settings types.SandboxSettings) *bool {
+	if settings.DefaultExposeLocalhostPorts == nil {
+		return nil
+	}
+
+	return new(*settings.DefaultExposeLocalhostPorts)
+}
+
+// inheritedLocalhostFingerprint is the idempotency content of a create that leaves
+// exposeLocalhostPorts to a project with a saved default. Its shape differs from a request
+// body's, so it never matches a request that sets the field itself.
+type inheritedLocalhostFingerprint struct {
+	Request                       api.PostV2SandboxesJSONRequestBody `json:"request"`
+	InheritedExposeLocalhostPorts bool                               `json:"inheritedExposeLocalhostPorts"`
+}
+
 var errExposeLocalhostPortsOffNotSupported = errors.New("network.exposeLocalhostPorts false needs a newer envd")
 
 // requireEnvdForExposeLocalhostPortsOff refuses a create whose request itself asks for
 // exposeLocalhostPorts false on a template whose envd predates the field, since that envd
-// would keep the ports exposed. A project default of false is not refused: a sandbox from
-// such a template keeps exposing them, as before the field existed.
+// would keep the ports exposed. A project default of false is not refused: sandboxSettingsFor
+// drops it for such a template, whose sandboxes keep exposing them as before the field existed.
 func requireEnvdForExposeLocalhostPortsOff(requested *api.SandboxNetworkConfig, envdVersion string) *api.APIError {
 	if requested == nil || requested.ExposeLocalhostPorts == nil || *requested.ExposeLocalhostPorts {
 		return nil

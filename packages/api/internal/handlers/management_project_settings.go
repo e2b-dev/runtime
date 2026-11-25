@@ -63,9 +63,10 @@ func (a *APIStore) ManagementSetProjectSettings(c *gin.Context, projectID uuid.U
 	}
 
 	if err := txDB.ApplyProjectSettingsProjection(ctx, queries.ApplyProjectSettingsProjectionParams{
-		ProjectID:                        projectID,
-		Revision:                         body.Revision,
-		SandboxDefaultAllowPublicTraffic: body.Settings.SandboxSettings.DefaultAllowPublicTraffic,
+		ProjectID:                          projectID,
+		Revision:                           body.Revision,
+		SandboxDefaultAllowPublicTraffic:   body.Settings.SandboxSettings.DefaultAllowPublicTraffic,
+		SandboxDefaultExposeLocalhostPorts: body.Settings.SandboxSettings.DefaultExposeLocalhostPorts,
 	}); err != nil {
 		telemetry.ReportCriticalError(ctx, "apply project settings projection failed", err, telemetry.WithTeamID(projectID.String()))
 		a.sendAPIStoreError(c, http.StatusInternalServerError, "Error applying project settings")

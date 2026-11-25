@@ -44,7 +44,7 @@ func TestTeamKeepsTheCachedShape(t *testing.T) {
 			"MaxRamMb": 5, "DiskMb": 6, "EventsTTLDays": 7, "DefaultFreeDiskSizeMb": 8,
 			"MaxFreeDiskSizeMb": 9, "APITeamRPSList": 10, "APITeamRPSDelete": 11, "MaxSecrets": 12
 		},
-		"ProjectSettings": {"SandboxSettings": {"DefaultAllowPublicTraffic": false}}
+		"ProjectSettings": {"SandboxSettings": {"DefaultAllowPublicTraffic": false, "DefaultExposeLocalhostPorts": false}}
 	}`
 
 	var team *types.Team

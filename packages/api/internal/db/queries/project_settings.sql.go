@@ -12,27 +12,37 @@ import (
 )
 
 const applyProjectSettingsProjection = `-- name: ApplyProjectSettingsProjection :exec
-INSERT INTO projection.project_settings (project_id, revision, sandbox_default_allow_public_traffic)
+INSERT INTO projection.project_settings (
+    project_id, revision, sandbox_default_allow_public_traffic, sandbox_default_expose_localhost_ports
+)
 VALUES (
     $1::uuid,
     $2::bigint,
-    $3::boolean
+    $3::boolean,
+    $4::boolean
 )
 ON CONFLICT (project_id) DO UPDATE
 SET
     revision = EXCLUDED.revision,
     sandbox_default_allow_public_traffic = EXCLUDED.sandbox_default_allow_public_traffic,
+    sandbox_default_expose_localhost_ports = EXCLUDED.sandbox_default_expose_localhost_ports,
     updated_at = now()
 WHERE projection.project_settings.revision < EXCLUDED.revision
 `
 
 type ApplyProjectSettingsProjectionParams struct {
-	ProjectID                        uuid.UUID
-	Revision                         int64
-	SandboxDefaultAllowPublicTraffic *bool
+	ProjectID                          uuid.UUID
+	Revision                           int64
+	SandboxDefaultAllowPublicTraffic   *bool
+	SandboxDefaultExposeLocalhostPorts *bool
 }
 
 func (q *Queries) ApplyProjectSettingsProjection(ctx context.Context, arg ApplyProjectSettingsProjectionParams) error {
-	_, err := q.db.Exec(ctx, applyProjectSettingsProjection, arg.ProjectID, arg.Revision, arg.SandboxDefaultAllowPublicTraffic)
+	_, err := q.db.Exec(ctx, applyProjectSettingsProjection,
+		arg.ProjectID,
+		arg.Revision,
+		arg.SandboxDefaultAllowPublicTraffic,
+		arg.SandboxDefaultExposeLocalhostPorts,
+	)
 	return err
 }

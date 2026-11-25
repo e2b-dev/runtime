@@ -17,6 +17,7 @@ SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked
     t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
     t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
+    ps.sandbox_default_expose_localhost_ports,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
     COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
@@ -39,33 +40,34 @@ WHERE tak.api_key_hash = $1
 `
 
 type GetTeamByAPIKeyRow struct {
-	ID                               uuid.UUID
-	CreatedAt                        time.Time
-	IsBlocked                        bool
-	Name                             string
-	Email                            string
-	IsBanned                         bool
-	BlockedReason                    *string
-	ClusterID                        *uuid.UUID
-	SandboxSchedulingLabels          []string
-	SsoOrganizationID                *uuid.UUID
-	SsoAutoJoin                      bool
-	DeletedAt                        *time.Time
-	Slug                             string
-	SandboxDefaultAllowPublicTraffic *bool
-	MaxLengthHours                   int64
-	ConcurrentSandboxes              int64
-	ConcurrentTemplateBuilds         int64
-	MaxVcpu                          int64
-	MaxRamMb                         int64
-	DiskMb                           int64
-	EventsTtlDays                    int64
-	DefaultFreeDiskSizeMb            int64
-	MaxDiskSizeMb                    int64
-	MaxFreeDiskSizeMb                int64
-	ApiTeamRpsList                   int64
-	ApiTeamRpsDelete                 int64
-	MaxSecrets                       int64
+	ID                                 uuid.UUID
+	CreatedAt                          time.Time
+	IsBlocked                          bool
+	Name                               string
+	Email                              string
+	IsBanned                           bool
+	BlockedReason                      *string
+	ClusterID                          *uuid.UUID
+	SandboxSchedulingLabels            []string
+	SsoOrganizationID                  *uuid.UUID
+	SsoAutoJoin                        bool
+	DeletedAt                          *time.Time
+	Slug                               string
+	SandboxDefaultAllowPublicTraffic   *bool
+	SandboxDefaultExposeLocalhostPorts *bool
+	MaxLengthHours                     int64
+	ConcurrentSandboxes                int64
+	ConcurrentTemplateBuilds           int64
+	MaxVcpu                            int64
+	MaxRamMb                           int64
+	DiskMb                             int64
+	EventsTtlDays                      int64
+	DefaultFreeDiskSizeMb              int64
+	MaxDiskSizeMb                      int64
+	MaxFreeDiskSizeMb                  int64
+	ApiTeamRpsList                     int64
+	ApiTeamRpsDelete                   int64
+	MaxSecrets                         int64
 }
 
 // Each lookup resolves the team and its limits in one statement: the pushed
@@ -91,6 +93,7 @@ func (q *Queries) GetTeamByAPIKey(ctx context.Context, apiKeyHash string) (GetTe
 		&i.DeletedAt,
 		&i.Slug,
 		&i.SandboxDefaultAllowPublicTraffic,
+		&i.SandboxDefaultExposeLocalhostPorts,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
 		&i.ConcurrentTemplateBuilds,
@@ -114,6 +117,7 @@ SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked
     t.deleted_at, t.slug,
     ut.role,
     ps.sandbox_default_allow_public_traffic,
+    ps.sandbox_default_expose_localhost_ports,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
     COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
@@ -141,34 +145,35 @@ type GetTeamByTeamAndUserParams struct {
 }
 
 type GetTeamByTeamAndUserRow struct {
-	ID                               uuid.UUID
-	CreatedAt                        time.Time
-	IsBlocked                        bool
-	Name                             string
-	Email                            string
-	IsBanned                         bool
-	BlockedReason                    *string
-	ClusterID                        *uuid.UUID
-	SandboxSchedulingLabels          []string
-	SsoOrganizationID                *uuid.UUID
-	SsoAutoJoin                      bool
-	DeletedAt                        *time.Time
-	Slug                             string
-	Role                             string
-	SandboxDefaultAllowPublicTraffic *bool
-	MaxLengthHours                   int64
-	ConcurrentSandboxes              int64
-	ConcurrentTemplateBuilds         int64
-	MaxVcpu                          int64
-	MaxRamMb                         int64
-	DiskMb                           int64
-	EventsTtlDays                    int64
-	DefaultFreeDiskSizeMb            int64
-	MaxDiskSizeMb                    int64
-	MaxFreeDiskSizeMb                int64
-	ApiTeamRpsList                   int64
-	ApiTeamRpsDelete                 int64
-	MaxSecrets                       int64
+	ID                                 uuid.UUID
+	CreatedAt                          time.Time
+	IsBlocked                          bool
+	Name                               string
+	Email                              string
+	IsBanned                           bool
+	BlockedReason                      *string
+	ClusterID                          *uuid.UUID
+	SandboxSchedulingLabels            []string
+	SsoOrganizationID                  *uuid.UUID
+	SsoAutoJoin                        bool
+	DeletedAt                          *time.Time
+	Slug                               string
+	Role                               string
+	SandboxDefaultAllowPublicTraffic   *bool
+	SandboxDefaultExposeLocalhostPorts *bool
+	MaxLengthHours                     int64
+	ConcurrentSandboxes                int64
+	ConcurrentTemplateBuilds           int64
+	MaxVcpu                            int64
+	MaxRamMb                           int64
+	DiskMb                             int64
+	EventsTtlDays                      int64
+	DefaultFreeDiskSizeMb              int64
+	MaxDiskSizeMb                      int64
+	MaxFreeDiskSizeMb                  int64
+	ApiTeamRpsList                     int64
+	ApiTeamRpsDelete                   int64
+	MaxSecrets                         int64
 }
 
 func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAndUserParams) (GetTeamByTeamAndUserRow, error) {
@@ -190,6 +195,7 @@ func (q *Queries) GetTeamByTeamAndUser(ctx context.Context, arg GetTeamByTeamAnd
 		&i.Slug,
 		&i.Role,
 		&i.SandboxDefaultAllowPublicTraffic,
+		&i.SandboxDefaultExposeLocalhostPorts,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
 		&i.ConcurrentTemplateBuilds,
@@ -212,6 +218,7 @@ SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked
     t.cluster_id, t.sandbox_scheduling_labels, t.sso_organization_id, t.sso_auto_join,
     t.deleted_at, t.slug,
     ps.sandbox_default_allow_public_traffic,
+    ps.sandbox_default_expose_localhost_ports,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
     COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
@@ -233,33 +240,34 @@ WHERE t.id = $1
 `
 
 type GetTeamByTeamIDRow struct {
-	ID                               uuid.UUID
-	CreatedAt                        time.Time
-	IsBlocked                        bool
-	Name                             string
-	Email                            string
-	IsBanned                         bool
-	BlockedReason                    *string
-	ClusterID                        *uuid.UUID
-	SandboxSchedulingLabels          []string
-	SsoOrganizationID                *uuid.UUID
-	SsoAutoJoin                      bool
-	DeletedAt                        *time.Time
-	Slug                             string
-	SandboxDefaultAllowPublicTraffic *bool
-	MaxLengthHours                   int64
-	ConcurrentSandboxes              int64
-	ConcurrentTemplateBuilds         int64
-	MaxVcpu                          int64
-	MaxRamMb                         int64
-	DiskMb                           int64
-	EventsTtlDays                    int64
-	DefaultFreeDiskSizeMb            int64
-	MaxDiskSizeMb                    int64
-	MaxFreeDiskSizeMb                int64
-	ApiTeamRpsList                   int64
-	ApiTeamRpsDelete                 int64
-	MaxSecrets                       int64
+	ID                                 uuid.UUID
+	CreatedAt                          time.Time
+	IsBlocked                          bool
+	Name                               string
+	Email                              string
+	IsBanned                           bool
+	BlockedReason                      *string
+	ClusterID                          *uuid.UUID
+	SandboxSchedulingLabels            []string
+	SsoOrganizationID                  *uuid.UUID
+	SsoAutoJoin                        bool
+	DeletedAt                          *time.Time
+	Slug                               string
+	SandboxDefaultAllowPublicTraffic   *bool
+	SandboxDefaultExposeLocalhostPorts *bool
+	MaxLengthHours                     int64
+	ConcurrentSandboxes                int64
+	ConcurrentTemplateBuilds           int64
+	MaxVcpu                            int64
+	MaxRamMb                           int64
+	DiskMb                             int64
+	EventsTtlDays                      int64
+	DefaultFreeDiskSizeMb              int64
+	MaxDiskSizeMb                      int64
+	MaxFreeDiskSizeMb                  int64
+	ApiTeamRpsList                     int64
+	ApiTeamRpsDelete                   int64
+	MaxSecrets                         int64
 }
 
 func (q *Queries) GetTeamByTeamID(ctx context.Context, id uuid.UUID) (GetTeamByTeamIDRow, error) {
@@ -280,6 +288,7 @@ func (q *Queries) GetTeamByTeamID(ctx context.Context, id uuid.UUID) (GetTeamByT
 		&i.DeletedAt,
 		&i.Slug,
 		&i.SandboxDefaultAllowPublicTraffic,
+		&i.SandboxDefaultExposeLocalhostPorts,
 		&i.MaxLengthHours,
 		&i.ConcurrentSandboxes,
 		&i.ConcurrentTemplateBuilds,
@@ -303,6 +312,7 @@ SELECT t.id, t.created_at, t.is_blocked, t.name, t.email, t.is_banned, t.blocked
     t.deleted_at, t.slug,
     ut.is_default, ut.role,
     ps.sandbox_default_allow_public_traffic,
+    ps.sandbox_default_expose_localhost_ports,
     COALESCE(pl.max_length_hours, d.max_length_hours) AS max_length_hours,
     COALESCE(pl.concurrent_sandboxes, d.concurrent_sandboxes) AS concurrent_sandboxes,
     COALESCE(pl.concurrent_template_builds, d.concurrent_template_builds) AS concurrent_template_builds,
@@ -325,35 +335,36 @@ WHERE ut.user_id = $1
 `
 
 type GetUserTeamsWithLimitsRow struct {
-	ID                               uuid.UUID
-	CreatedAt                        time.Time
-	IsBlocked                        bool
-	Name                             string
-	Email                            string
-	IsBanned                         bool
-	BlockedReason                    *string
-	ClusterID                        *uuid.UUID
-	SandboxSchedulingLabels          []string
-	SsoOrganizationID                *uuid.UUID
-	SsoAutoJoin                      bool
-	DeletedAt                        *time.Time
-	Slug                             string
-	IsDefault                        bool
-	Role                             string
-	SandboxDefaultAllowPublicTraffic *bool
-	MaxLengthHours                   int64
-	ConcurrentSandboxes              int64
-	ConcurrentTemplateBuilds         int64
-	MaxVcpu                          int64
-	MaxRamMb                         int64
-	DiskMb                           int64
-	EventsTtlDays                    int64
-	DefaultFreeDiskSizeMb            int64
-	MaxDiskSizeMb                    int64
-	MaxFreeDiskSizeMb                int64
-	ApiTeamRpsList                   int64
-	ApiTeamRpsDelete                 int64
-	MaxSecrets                       int64
+	ID                                 uuid.UUID
+	CreatedAt                          time.Time
+	IsBlocked                          bool
+	Name                               string
+	Email                              string
+	IsBanned                           bool
+	BlockedReason                      *string
+	ClusterID                          *uuid.UUID
+	SandboxSchedulingLabels            []string
+	SsoOrganizationID                  *uuid.UUID
+	SsoAutoJoin                        bool
+	DeletedAt                          *time.Time
+	Slug                               string
+	IsDefault                          bool
+	Role                               string
+	SandboxDefaultAllowPublicTraffic   *bool
+	SandboxDefaultExposeLocalhostPorts *bool
+	MaxLengthHours                     int64
+	ConcurrentSandboxes                int64
+	ConcurrentTemplateBuilds           int64
+	MaxVcpu                            int64
+	MaxRamMb                           int64
+	DiskMb                             int64
+	EventsTtlDays                      int64
+	DefaultFreeDiskSizeMb              int64
+	MaxDiskSizeMb                      int64
+	MaxFreeDiskSizeMb                  int64
+	ApiTeamRpsList                     int64
+	ApiTeamRpsDelete                   int64
+	MaxSecrets                         int64
 }
 
 func (q *Queries) GetUserTeamsWithLimits(ctx context.Context, userID uuid.UUID) ([]GetUserTeamsWithLimitsRow, error) {
@@ -382,6 +393,7 @@ func (q *Queries) GetUserTeamsWithLimits(ctx context.Context, userID uuid.UUID) 
 			&i.IsDefault,
 			&i.Role,
 			&i.SandboxDefaultAllowPublicTraffic,
+			&i.SandboxDefaultExposeLocalhostPorts,
 			&i.MaxLengthHours,
 			&i.ConcurrentSandboxes,
 			&i.ConcurrentTemplateBuilds,

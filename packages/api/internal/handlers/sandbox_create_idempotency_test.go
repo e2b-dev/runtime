@@ -33,6 +33,8 @@ func TestPostV2SandboxesSuppliesIdempotencyFields(t *testing.T) {
 	for _, test := range []struct {
 		name            string
 		projectDefault  *bool
+		projectLocal    *bool
+		retryLocal      *bool
 		first           string
 		retry           string
 		wantRetryStatus int
@@ -57,6 +59,26 @@ func TestPostV2SandboxesSuppliesIdempotencyFields(t *testing.T) {
 			first: `{"templateID":"/","network":{"allowPublicTraffic":true}}`,
 			retry: `{"templateID":"/","network":{}}`, wantRetryStatus: http.StatusConflict,
 		},
+		{
+			name: "an inherited localhost default does not match an explicit equal value", projectLocal: new(false),
+			first: `{"templateID":"/","network":{}}`,
+			retry: `{"templateID":"/","network":{"exposeLocalhostPorts":false}}`, wantRetryStatus: http.StatusConflict,
+		},
+		{
+			name: "an explicit localhost value does not match an inherited equal default", projectLocal: new(false),
+			first: `{"templateID":"/","network":{"exposeLocalhostPorts":false}}`,
+			retry: `{"templateID":"/","network":{}}`, wantRetryStatus: http.StatusConflict,
+		},
+		{
+			name: "an unchanged localhost default replays", projectLocal: new(false), retryLocal: new(false),
+			first: `{"templateID":"/","network":{}}`,
+			retry: `{"templateID":"/","network":{}}`, wantRetryStatus: http.StatusBadRequest,
+		},
+		{
+			name: "a changed localhost default changes the fingerprint", projectLocal: new(false), retryLocal: new(true),
+			first: `{"templateID":"/","network":{}}`,
+			retry: `{"templateID":"/","network":{}}`, wantRetryStatus: http.StatusConflict,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -69,7 +91,7 @@ func TestPostV2SandboxesSuppliesIdempotencyFields(t *testing.T) {
 			team := &types.Team{
 				Team: &dbtypes.Team{ID: uuid.New()},
 				ProjectSettings: dbtypes.ProjectSettings{
-					SandboxSettings: dbtypes.SandboxSettings{DefaultAllowPublicTraffic: test.projectDefault},
+					SandboxSettings: dbtypes.SandboxSettings{DefaultAllowPublicTraffic: test.projectDefault, DefaultExposeLocalhostPorts: test.projectLocal},
 				},
 			}
 			r := gin.New()
@@ -82,6 +104,9 @@ func TestPostV2SandboxesSuppliesIdempotencyFields(t *testing.T) {
 
 			var original string
 			for i, body := range []string{test.first, test.retry} {
+				if i == 1 && test.retryLocal != nil {
+					team.ProjectSettings.SandboxSettings.DefaultExposeLocalhostPorts = test.retryLocal
+				}
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v2/sandboxes", strings.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Idempotency-Key", "samerequest")

@@ -2452,6 +2452,9 @@ type SandboxRefreshRequest struct {
 type SandboxSettings struct {
 	// DefaultAllowPublicTraffic Whether new sandboxes without an explicit network.allowPublicTraffic accept traffic without a traffic access token. Omission uses the public default. Existing sandboxes, resumes and forks keep their settings.
 	DefaultAllowPublicTraffic *bool `json:"defaultAllowPublicTraffic,omitempty"`
+
+	// DefaultExposeLocalhostPorts Whether new sandboxes without an explicit network.exposeLocalhostPorts make services listening only on loopback reachable through sandbox URLs. Omission exposes them. Existing sandboxes, resumes and forks keep their settings.
+	DefaultExposeLocalhostPorts *bool `json:"defaultExposeLocalhostPorts,omitempty"`
 }
 
 // SandboxSnapshotRequest defines model for SandboxSnapshotRequest.
