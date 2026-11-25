@@ -22,6 +22,7 @@ import (
 	"github.com/e2b-dev/infra/packages/scheduling-api/internal/server"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/factories"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	e2bgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc"
 	reservationpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/reservation"
 	statepb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/scheduling/state"
@@ -98,6 +99,16 @@ func run() int {
 		drain = 0
 	}
 	log.Info(ctx, "starting "+serviceName, zap.String("commit_sha", commitSHA), zap.String("version", version))
+	featureFlags, err := featureflags.NewClient(cfg.DeploymentEnvironment, serviceName, version, featureflags.WithStartOnInitTimeout())
+	if err != nil {
+		log.Error(ctx, serviceName+" feature flags initialization failed", zap.Error(err))
+
+		return 1
+	}
+	defer func() {
+		_ = featureFlags.Close(context.WithoutCancel(ctx))
+	}()
+
 	redisClient, err := factories.NewRedisClient(ctx, factories.RedisConfig{
 		RedisURL:         cfg.InfraRedisURL,
 		RedisClusterURL:  cfg.InfraRedisClusterURL,

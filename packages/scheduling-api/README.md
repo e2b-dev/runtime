@@ -80,6 +80,12 @@ own storage.
 | `INFRA_REDIS_POOL_SIZE` | no | Connection pool size, default `160` |
 | `NODE_ID` | yes | Node ID reported in telemetry |
 | `ENVIRONMENT` | no | `local` skips the shutdown drain |
+| `DEPLOYMENT_ENVIRONMENT` | no | Deployment environment, for example `staging`, sent to LaunchDarkly with every flag evaluation |
+| `LAUNCH_DARKLY_API_KEY` | no | LaunchDarkly SDK key; without it the feature flags use their fallback values and the service makes no LaunchDarkly connection |
+
+Startup waits at most 5 s for LaunchDarkly. If LaunchDarkly has not answered
+by then, the service starts on the flag fallback values and follows the flags
+when the connection is made. A rejected SDK key stops the startup.
 
 Set the Redis variables to the values of the API, so that both use the same
 Redis data.

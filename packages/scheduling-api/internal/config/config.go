@@ -7,10 +7,13 @@ import (
 
 	"github.com/caarlos0/env/v11"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
 )
 
 type Config struct {
+	featureflags.Config
+
 	TLS         mtls.ListenerSettings `envPrefix:"E2B_TLS_GRPC_"`
 	GRPCAddress string                `env:"SCHEDULING_GRPC_ADDRESS,required,notEmpty"`
 

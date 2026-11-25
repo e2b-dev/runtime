@@ -31,6 +31,18 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseDeploymentEnvironment(t *testing.T) {
+	t.Parallel()
+
+	config, err := parseConfig(env.Options{Environment: map[string]string{
+		"SCHEDULING_GRPC_ADDRESS": ":50051",
+		"INFRA_REDIS_URL":         "redis://localhost:6379",
+		"DEPLOYMENT_ENVIRONMENT":  "staging",
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "staging", config.DeploymentEnvironment)
+}
+
 func TestParseRedis(t *testing.T) {
 	t.Parallel()
 
