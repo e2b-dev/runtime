@@ -9,6 +9,44 @@ import (
 	"context"
 )
 
+const adminListAliasesOfTemplates = `-- name: AdminListAliasesOfTemplates :many
+SELECT
+    ea.env_id AS template_id,
+    ea.alias,
+    ea.namespace
+FROM public.env_aliases AS ea
+WHERE ea.env_id = ANY($1::text[])
+ORDER BY ea.env_id, ea.namespace NULLS FIRST, ea.alias
+`
+
+type AdminListAliasesOfTemplatesRow struct {
+	TemplateID string
+	Alias      string
+	Namespace  *string
+}
+
+// Every alias of the templates in @template_ids, in any namespace, found
+// through the index on env_id.
+func (q *Queries) AdminListAliasesOfTemplates(ctx context.Context, templateIds []string) ([]AdminListAliasesOfTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, adminListAliasesOfTemplates, templateIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListAliasesOfTemplatesRow
+	for rows.Next() {
+		var i AdminListAliasesOfTemplatesRow
+		if err := rows.Scan(&i.TemplateID, &i.Alias, &i.Namespace); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const adminResolveTemplateAliases = `-- name: AdminResolveTemplateAliases :many
 SELECT
     ea.alias,

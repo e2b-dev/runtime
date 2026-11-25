@@ -50,8 +50,9 @@ func TestAdminResolveTemplateAliases_ReturnsNakedAndNamespacedHolders(t *testing
 }
 
 // The resolve query must reach env_aliases through the unique (alias,
-// namespace) index and envs through an index on id, never a sequential scan,
-// on a table large enough that the planner would prefer one if it could.
+// namespace) index and envs through an index on id, and the aliases query
+// env_aliases through the index on env_id, never a sequential scan, on a table
+// large enough that the planner would prefer one if it could.
 func TestAdminResolveTemplateAliases_UsesIndexes(t *testing.T) {
 	t.Parallel()
 	db := testutils.SetupDatabase(t)
@@ -78,18 +79,58 @@ func TestAdminResolveTemplateAliases_UsesIndexes(t *testing.T) {
 		names = append(names, fmt.Sprintf("name-%d", i*7))
 	}
 
-	q := queries.New(&resolvePlan{DBTX: conn, t: t})
+	q := queries.New(&resolvePlan{DBTX: conn, t: t, index: "idx_env_aliases_alias_namespace_unique", envsByIndex: true})
 	_, err = q.AdminResolveTemplateAliases(ctx, queries.AdminResolveTemplateAliasesParams{
 		Names:     names,
 		Namespace: "ns-1",
 	})
 	require.NoError(t, err)
+
+	// One resolve call finds at most two templates per name.
+	templateIDs := make([]string, 0, 400)
+	for i := range 400 {
+		templateIDs = append(templateIDs, fmt.Sprintf("plan-env-%d", i*50+1))
+	}
+	q = queries.New(&resolvePlan{DBTX: conn, t: t, index: "idx_envs_envs_aliases"})
+	_, err = q.AdminListAliasesOfTemplates(ctx, templateIDs)
+	require.NoError(t, err)
+}
+
+func TestAdminListAliasesOfTemplates_ReturnsEveryAliasOfTheTemplates(t *testing.T) {
+	t.Parallel()
+	db := testutils.SetupDatabase(t)
+	ctx := t.Context()
+
+	teamID := testutils.CreateTestTeam(t, db)
+	published := testutils.CreateTestTemplate(t, db, teamID)
+	squatter := testutils.CreateTestTemplate(t, db, teamID)
+	unasked := testutils.CreateTestTemplate(t, db, teamID)
+	bare := testutils.CreateTestTemplate(t, db, teamID)
+	testutils.CreateTestTemplateAliasWithName(t, db, published, "base", new("vendor"))
+	testutils.CreateTestTemplateAliasWithName(t, db, published, "base", nil)
+	testutils.CreateTestTemplateAliasWithName(t, db, published, "hand-added", nil)
+	testutils.CreateTestTemplateAliasWithName(t, db, published, "copy", new("someone-else"))
+	testutils.CreateTestTemplateAliasWithName(t, db, squatter, "squat", nil)
+	testutils.CreateTestTemplateAliasWithName(t, db, unasked, "unasked", nil)
+
+	rows, err := db.SqlcClient.AdminListAliasesOfTemplates(ctx, []string{published, squatter, bare})
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []queries.AdminListAliasesOfTemplatesRow{
+		{TemplateID: published, Alias: "base", Namespace: nil},
+		{TemplateID: published, Alias: "hand-added", Namespace: nil},
+		{TemplateID: published, Alias: "base", Namespace: new("vendor")},
+		{TemplateID: published, Alias: "copy", Namespace: new("someone-else")},
+		{TemplateID: squatter, Alias: "squat", Namespace: nil},
+	}, rows, "every alias of the asked templates in any namespace, none of other templates")
 }
 
 type resolvePlan struct {
 	queries.DBTX
 
-	t *testing.T
+	t           *testing.T
+	index       string
+	envsByIndex bool
 }
 
 func (p *resolvePlan) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
@@ -118,8 +159,10 @@ func (p *resolvePlan) Query(ctx context.Context, sql string, args ...any) (pgx.R
 	}
 	walk(plans[0].Plan)
 
-	assert.Contains(p.t, indexes, "idx_env_aliases_alias_namespace_unique", "plan:\n%s", raw)
-	assert.True(p.t, envsByIndex, "envs is looked up by an index on id, plan:\n%s", raw)
+	assert.Contains(p.t, indexes, p.index, "plan:\n%s", raw)
+	if p.envsByIndex {
+		assert.True(p.t, envsByIndex, "envs is looked up by an index on id, plan:\n%s", raw)
+	}
 
 	return p.DBTX.Query(ctx, sql, args...)
 }

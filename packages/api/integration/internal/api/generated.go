@@ -654,11 +654,23 @@ type AdminDefaultTemplateUpdateRequest struct {
 
 // AdminResolvedTemplate defines model for AdminResolvedTemplate.
 type AdminResolvedTemplate struct {
+	// Aliases Every alias of the template, in any namespace
+	Aliases *[]AdminResolvedTemplateAlias `json:"aliases,omitempty"`
+
 	// Public Whether the template is public
 	Public bool `json:"public"`
 
 	// TemplateID Identifier of the template that holds the alias
 	TemplateID string `json:"templateID"`
+}
+
+// AdminResolvedTemplateAlias defines model for AdminResolvedTemplateAlias.
+type AdminResolvedTemplateAlias struct {
+	// Alias The alias
+	Alias string `json:"alias"`
+
+	// Namespace Namespace of the alias, or null for an alias that resolves for every team
+	Namespace *string `json:"namespace"`
 }
 
 // AdminSandbox defines model for AdminSandbox.
@@ -5475,7 +5487,7 @@ type ClientInterface interface {
 
 	// PostUnstableAdminTemplatesAliasesResolveWithBody Resolve template names as admin
 	//
-	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -5484,7 +5496,7 @@ type ClientInterface interface {
 
 	// PostUnstableAdminTemplatesAliasesResolve Resolve template names as admin
 	//
-	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7892,7 +7904,7 @@ func (c *Client) PostUnstableAdminTemplatesAliases(ctx context.Context, body Pos
 
 // PostUnstableAdminTemplatesAliasesResolveWithBody Resolve template names as admin
 //
-// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7911,7 +7923,7 @@ func (c *Client) PostUnstableAdminTemplatesAliasesResolveWithBody(ctx context.Co
 
 // PostUnstableAdminTemplatesAliasesResolve Resolve template names as admin
 //
-// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -16232,7 +16244,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostUnstableAdminTemplatesAliasesResolveWithBodyWithResponse Resolve template names as admin
 	//
-	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16241,7 +16253,7 @@ type ClientWithResponsesInterface interface {
 
 	// PostUnstableAdminTemplatesAliasesResolveWithResponse Resolve template names as admin
 	//
-	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+	// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -28425,7 +28437,7 @@ func (c *ClientWithResponses) PostUnstableAdminTemplatesAliasesWithResponse(ctx 
 
 // PostUnstableAdminTemplatesAliasesResolveWithBodyWithResponse Resolve template names as admin
 //
-// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28440,7 +28452,7 @@ func (c *ClientWithResponses) PostUnstableAdminTemplatesAliasesResolveWithBodyWi
 
 // PostUnstableAdminTemplatesAliasesResolveWithResponse Resolve template names as admin
 //
-// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Deleted templates are left out. Names are matched exactly and answered in the order given.
+// For each name, reports the template that holds it as an alias without a namespace and the template that holds it in `namespace`, each with whether the template is public. A name no template holds in that place answers null there. Each template found also lists every alias it has, in any namespace. Deleted templates are left out. Names are matched exactly and answered in the order given.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

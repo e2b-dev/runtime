@@ -26,6 +26,8 @@ func TestPostUnstableAdminTemplatesAliasesResolve_ReportsEachNameInRequestOrder(
 	complete := testutils.CreateTestTemplate(t, testDB, teamID)
 	testutils.CreateTestTemplateAliasWithName(t, testDB, complete, "complete", new("vendor"))
 	testutils.CreateTestTemplateAliasWithName(t, testDB, complete, "complete", nil)
+	testutils.CreateTestTemplateAliasWithName(t, testDB, complete, "hand-added", nil)
+	testutils.CreateTestTemplateAliasWithName(t, testDB, complete, "copy", new("someone-else"))
 	nakedMissing := testutils.CreateTestTemplate(t, testDB, teamID)
 	testutils.CreateTestTemplateAliasWithName(t, testDB, nakedMissing, "naked-missing", new("vendor"))
 	split := testutils.CreateTestTemplate(t, testDB, teamID)
@@ -50,18 +52,27 @@ func TestPostUnstableAdminTemplatesAliasesResolve_ReportsEachNameInRequestOrder(
 	var response api.AdminTemplateAliasResolveResponse
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 
-	held := func(templateID string, public bool) *api.AdminResolvedTemplate {
-		return &api.AdminResolvedTemplate{TemplateID: templateID, Public: public}
+	alias := func(name string, namespace *string) api.AdminResolvedTemplateAlias {
+		return api.AdminResolvedTemplateAlias{Alias: name, Namespace: namespace}
+	}
+	held := func(templateID string, public bool, aliases ...api.AdminResolvedTemplateAlias) *api.AdminResolvedTemplate {
+		return &api.AdminResolvedTemplate{TemplateID: templateID, Public: public, Aliases: &aliases}
+	}
+	completeAliases := []api.AdminResolvedTemplateAlias{
+		alias("complete", nil),
+		alias("hand-added", nil),
+		alias("copy", new("someone-else")),
+		alias("complete", new("vendor")),
 	}
 	assert.Equal(t, []api.AdminTemplateAliasResolution{
-		{Name: "split", Namespaced: held(split, true), Naked: held(squatter, true)},
-		{Name: "complete", Namespaced: held(complete, true), Naked: held(complete, true)},
-		{Name: "naked-missing", Namespaced: held(nakedMissing, true)},
+		{Name: "split", Namespaced: held(split, true, alias("split", new("vendor"))), Naked: held(squatter, true, alias("split", nil))},
+		{Name: "complete", Namespaced: held(complete, true, completeAliases...), Naked: held(complete, true, completeAliases...)},
+		{Name: "naked-missing", Namespaced: held(nakedMissing, true, alias("naked-missing", new("vendor")))},
 		{Name: "elsewhere"},
 		{Name: "deleted"},
-		{Name: "private", Namespaced: held(private, false)},
+		{Name: "private", Namespaced: held(private, false, alias("private", new("vendor")))},
 		{Name: "unknown"},
-	}, response.Results)
+	}, response.Results, "each template found lists every alias it has, in any namespace")
 	assert.Contains(t, recorder.Body.String(), `{"naked":null,"name":"unknown","namespaced":null}`, "a name nobody holds answers null, not an absent field")
 }
 

@@ -2575,6 +2575,24 @@ components:
         public:
           type: boolean
           description: Whether the template is public
+        aliases:
+          type: array
+          description: Every alias of the template, in any namespace
+          items:
+            $ref: "#/components/schemas/AdminResolvedTemplateAlias"
+
+    AdminResolvedTemplateAlias:
+      required:
+        - alias
+        - namespace
+      properties:
+        alias:
+          type: string
+          description: The alias
+        namespace:
+          type: string
+          nullable: true
+          description: Namespace of the alias, or null for an alias that resolves for every team
 
     AdminTemplateAliasResolution:
       required:
@@ -8742,8 +8760,9 @@ paths:
       description: >
         For each name, reports the template that holds it as an alias without a namespace and the
         template that holds it in `namespace`, each with whether the template is public. A name no
-        template holds in that place answers null there. Deleted templates are left out. Names are
-        matched exactly and answered in the order given.
+        template holds in that place answers null there. Each template found also lists every alias
+        it has, in any namespace. Deleted templates are left out. Names are matched exactly and
+        answered in the order given.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []
