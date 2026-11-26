@@ -34,6 +34,17 @@ func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID 
 	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), snapshot.TemplateID, aliasKeys)
 	a.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
 
+	// A snapshot is backed by its own template, so deleting it soft-deletes that
+	// template above. Clean up the storage artifacts of builds now exclusively
+	// owned by it, reusing the same reachability-guarded, best-effort cleanup as
+	// template deletion. The guard is what makes this safe in the base-deleted
+	// direction: the snapshot's build reaches its base template's layers through
+	// its header closure, so if some OTHER live build also reaches a base layer
+	// that is now DB-exclusive to this snapshot-template, the guard keeps it.
+	// Background + bounded: never affects the delete result. teamID scopes the
+	// live-root set the guard consults.
+	a.startTemplateArtifactCleanup(ctx, teamID, snapshot.TemplateID)
+
 	return nil
 }
 
