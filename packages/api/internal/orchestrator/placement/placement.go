@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"regexp"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -17,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	sharedutils "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
@@ -253,6 +255,23 @@ func placeSandbox(
 			}
 
 			telemetry.ReportEvent(ctx, "Placing sandbox on the node", telemetry.WithNodeID(node.ID))
+		}
+
+		if !sbxRequest.GetSandbox().GetSnapshot() {
+			address := sbxRequest.GetSandbox().GetNetwork().GetEgress().GetEgressProxyAddress()
+			if err := node.LegacyProxyCreateRefusal(ctx, address); err != nil {
+				// Every legacy node uses the same regional DNS and policy. A newer
+				// worker may resolve the name in its VPC and allow the endpoint.
+				for _, candidate := range clusterNodes {
+					if !slices.Contains(candidate.Capabilities(), sandbox_network.CapabilityProxyEndpointAdmission) {
+						nodesExcluded[candidate.ID] = struct{}{}
+					}
+				}
+				lastCreateErr = err
+				node = nil
+
+				continue
+			}
 		}
 
 		chosen := node

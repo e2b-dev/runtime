@@ -185,6 +185,14 @@ func TestPlacementAPIError(t *testing.T) {
 			wantMsg:       "Failed to place sandbox: memory hotplug refused (kernel): vmlinux-5.10",
 		},
 		{
+			name:          "node rejects the configured proxy endpoint",
+			wantRetry:     apierrors.NoRetry,
+			err:           placement.SandboxCreateError{Attempts: 1, LastErr: createRefusedStatus(t, codes.InvalidArgument, "Invalid egress proxy config: denied endpoint")},
+			wantCode:      http.StatusBadRequest,
+			wantErrorCode: "sandbox_create_refused",
+			wantMsg:       "Failed to place sandbox: Invalid egress proxy config: denied endpoint",
+		},
+		{
 			// The auto-pause policy is a field of the request: the node's
 			// 400 is the client's when the pause refusal's detail marks it.
 			name:          "create refused for an auto-pause the guest cannot take is the client's",

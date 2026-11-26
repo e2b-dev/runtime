@@ -159,3 +159,27 @@ func TestPlaceSandbox_RemembersRemotePoolRefusalUntilFreshSample(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaceSandbox_PrivateProxyOnMixedFleet(t *testing.T) {
+	t.Parallel()
+	legacy, legacyCalls := countingCreate(t, "legacy", nil)
+	upgraded := nodemanager.NewTestNode("upgraded", api.NodeStatusReady, 0, 4,
+		nodemanager.WithCapabilities("egress-proxy-endpoint-admission"))
+	nodes := []*nodemanager.Node{legacy, upgraded}
+	req := testSbxRequest("private-proxy")
+	req.Sandbox.Network = &orchestrator.SandboxNetworkConfig{Egress: &orchestrator.SandboxNetworkEgressConfig{EgressProxyAddress: "10.20.0.5:1080"}}
+	algorithm := stubAlgorithm{choose: func(excluded map[string]struct{}) (*nodemanager.Node, error) {
+		require.Contains(t, excluded, legacy.ID)
+
+		return upgraded, nil
+	}}
+	result, err := placeSandbox(t.Context(), algorithm, nodes, legacy, req, Requirements{}, false, nil, defaultRefusalBackoff, time.Time{})
+	require.NoError(t, err)
+	require.Same(t, upgraded, result.Node)
+	require.Zero(t, legacyCalls.Load())
+
+	req.Sandbox.Snapshot = true
+	result, err = placeSandbox(t.Context(), failIfCalled(t), nodes, legacy, req, Requirements{}, false, nil, defaultRefusalBackoff, time.Time{})
+	require.NoError(t, err)
+	require.Same(t, legacy, result.Node)
+}

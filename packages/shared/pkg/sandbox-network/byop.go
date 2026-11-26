@@ -225,13 +225,50 @@ func DefaultHostResolver(ctx context.Context, host string) ([]net.IP, error) {
 //   - A TLS block that is not enabled carries no other field, and an enabled
 //     one has a parseable CA bundle within the size caps.
 func ValidateEgressProxy(ctx context.Context, cfg *EgressProxyConfig, resolve HostResolver) (*EgressProxyConfig, error) {
-	if cfg == nil {
-		return nil, nil
+	canonical, err := ParseEgressProxyConfig(cfg)
+	if err != nil || canonical == nil {
+		return canonical, err
+	}
+	if err := ValidatePublicProxyEndpoint(ctx, canonical.Address, resolve); err != nil {
+		return nil, err
+	}
+
+	return canonical, nil
+}
+
+const (
+	CapabilityProxyEndpointAdmission = "egress-proxy-endpoint-admission"
+	InvalidProxyEndpointPrefix       = "Invalid egress proxy config: "
+)
+
+// ValidatePublicProxyEndpoint preserves regional admission for older workers.
+func ValidatePublicProxyEndpoint(ctx context.Context, address string, resolve HostResolver) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
 	}
 	if resolve == nil {
 		resolve = DefaultHostResolver
 	}
+	ips, err := resolve(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve egress proxy host %q: %w", host, err)
+	}
+	for _, ip := range ips {
+		if IsIPInDeniedSandboxCIDRs(ip) && !IsIPDevAllowedAsProxyEndpoint(ip) {
+			return fmt.Errorf("%w: %s resolves to %s", ErrEgressProxyInternalEndpoint, host, ip)
+		}
+	}
 
+	return nil
+}
+
+// ParseEgressProxyConfig validates the request fields without resolving a name
+// outside the network that will dial it.
+func ParseEgressProxyConfig(cfg *EgressProxyConfig) (*EgressProxyConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
 	address := strings.TrimSpace(cfg.Address)
 	if address == "" {
 		return nil, errors.New("egress proxy address must not be empty")
@@ -248,17 +285,6 @@ func ValidateEgressProxy(ctx context.Context, cfg *EgressProxyConfig, resolve Ho
 	portNum, err := strconv.Atoi(port)
 	if err != nil || portNum <= 0 || portNum > 65535 {
 		return nil, fmt.Errorf("egress proxy port %q is not a valid 1-65535 value", port)
-	}
-
-	// Resolve and ensure no resolved IP falls in the denied set.
-	ips, err := resolve(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("resolve egress proxy host %q: %w", host, err)
-	}
-	for _, ip := range ips {
-		if IsIPInDeniedSandboxCIDRs(ip) && !IsIPDevAllowedAsProxyEndpoint(ip) {
-			return nil, fmt.Errorf("%w: %s resolves to %s", ErrEgressProxyInternalEndpoint, host, ip)
-		}
 	}
 
 	username := cfg.Username

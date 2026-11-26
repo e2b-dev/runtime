@@ -13,10 +13,6 @@ type EgressProxy interface {
 
 	CABundle(envdVersion string) string
 
-	// SupportsBYOP reports whether this build can tunnel TCP egress
-	// through a user-supplied SOCKS5 proxy.
-	SupportsBYOP() bool
-
 	// HeadFilterRules returns rules the slot firewall installs ahead of its
 	// default filter chain on every ApplyRules, never on DenyEgress.
 	HeadFilterRules(s *Slot) [][]expr.Any
@@ -41,10 +37,6 @@ func (NoopEgressProxy) OnSlotDelete(_ *Slot, _ *iptables.IPTables) error {
 
 func (NoopEgressProxy) CABundle(_ string) string {
 	return ""
-}
-
-func (NoopEgressProxy) SupportsBYOP() bool {
-	return false
 }
 
 func (NoopEgressProxy) HeadFilterRules(_ *Slot) [][]expr.Any {

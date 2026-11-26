@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
@@ -17,6 +18,7 @@ import (
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/servicestatus"
 	orchestratorinfo "github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
+	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 )
 
 type Server struct {
@@ -119,6 +121,9 @@ func (s *Server) ServiceInfo(ctx context.Context, _ *emptypb.Empty) (*orchestrat
 		MetricDiskMb:       int64(sandboxDiskAllocated / (1024 * 1024)),
 	}
 	servicestatus.Fill(resp, snap)
+	if slices.Contains(info.Roles, orchestratorinfo.ServiceInfoRole_Orchestrator) {
+		resp.Capabilities = append(slices.Clip(resp.GetCapabilities()), sandbox_network.CapabilityProxyEndpointAdmission)
+	}
 
 	return resp, nil
 }

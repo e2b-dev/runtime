@@ -15,6 +15,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
+	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 )
 
@@ -93,7 +94,7 @@ func createRefusal(st *status.Status) *orchestrator.UserError {
 // outside 400..599.
 func refusalHTTPStatus(st *status.Status, refusal *orchestrator.UserError) int {
 	code := int(refusal.GetHttpStatus())
-	if code == http.StatusBadRequest && unsupportedPauseRefusal(st) {
+	if code == http.StatusBadRequest && (unsupportedPauseRefusal(st) || strings.HasPrefix(refusal.GetMessage(), sandbox_network.InvalidProxyEndpointPrefix)) {
 		return code
 	}
 	if code < http.StatusInternalServerError || code > 599 {

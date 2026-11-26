@@ -83,7 +83,7 @@ func addSandboxInState(t *testing.T, o *Orchestrator, state sandbox.State, nodeI
 
 func tlsProxy() *sandbox_network.EgressProxyConfig {
 	return &sandbox_network.EgressProxyConfig{
-		Address: "proxy.example.com:1080",
+		Address: "203.0.113.5:1080",
 		TLS:     &sandbox_network.EgressProxyTLSConfig{Enabled: true},
 	}
 }
@@ -155,7 +155,7 @@ func TestUpdateSandboxNetworkConfig_EgressProxyTLSGate(t *testing.T) {
 		sbx := addRunningSandbox(t, o)
 
 		apiErr := o.UpdateSandboxNetworkConfig(t.Context(), sbx.TeamID, sbx.SandboxID, nil, nil, nil, nil, nil,
-			&sandbox_network.EgressProxyConfig{Address: "proxy.example.com:1080"})
+			&sandbox_network.EgressProxyConfig{Address: "203.0.113.5:1080"})
 		require.Nil(t, apiErr, "the gate applies only to configs that ask for TLS")
 	})
 
@@ -290,7 +290,7 @@ func TestUpdateSandboxNetworkConfig_DnsServers(t *testing.T) {
 func TestCheckpointRecordsTheRunningNetwork(t *testing.T) {
 	t.Parallel()
 
-	proxy := &sandbox_network.EgressProxyConfig{Address: "proxy.example.com:1080"}
+	proxy := &sandbox_network.EgressProxyConfig{Address: "203.0.113.5:1080"}
 	for name, c := range checkpointCallers {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -364,7 +364,7 @@ func TestCheckpointNeverServesAStalePlacement(t *testing.T) {
 			assert.True(t, proto.Equal(placed, stored.NetworkPlacement))
 			assert.Zero(t, client.deletes.Load(), "the healthy VM is not killed")
 			apiErr := f.o.UpdateSandboxNetworkConfig(t.Context(), f.sbx.TeamID, f.sbx.SandboxID, nil, nil, nil, nil, nil,
-				&sandbox_network.EgressProxyConfig{Address: "proxy.example.com:1080"})
+				&sandbox_network.EgressProxyConfig{Address: "203.0.113.5:1080"})
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusConflict, apiErr.Code)
 			require.NoError(t, f.o.sandboxStore.WaitForStateChange(t.Context(), f.sbx.TeamID, f.sbx.SandboxID), "the transition ended")

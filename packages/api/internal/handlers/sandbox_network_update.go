@@ -70,7 +70,7 @@ func (a *APIStore) PutSandboxesSandboxIDNetwork(c *gin.Context, sandboxID string
 			return
 		}
 
-		canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
+		canonical, err := sandbox_network.ParseEgressProxyConfig(apiEgressProxyToConfig(ep))
 		if err != nil {
 			telemetry.ReportError(ctx, "invalid egress proxy config", err)
 			a.sendAPIStoreError(c, http.StatusBadRequest, fmt.Sprintf("Invalid egress proxy config: %s", err))

@@ -217,7 +217,7 @@ func (s *Server) RestorePaused(ctx context.Context, api *orchestrator.SandboxCon
 		return nil, errLifecycleTracked
 	}
 	ctx = featureflags.AddToContext(ctx, startFlagContexts(api)...)
-	if err := s.admitEgressProxy(ctx, api); err != nil {
+	if err := s.admitEgressProxy(ctx, api.GetNetwork().GetEgress().GetEgressProxyAddress(), true); err != nil {
 		return nil, err
 	}
 	if err := s.waitForAcquire(ctx, startGateResume); err != nil {

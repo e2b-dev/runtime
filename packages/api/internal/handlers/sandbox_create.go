@@ -361,7 +361,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 				}
 			}
 
-			canonical, err := sandbox_network.ValidateEgressProxy(ctx, apiEgressProxyToConfig(ep), nil)
+			canonical, err := sandbox_network.ParseEgressProxyConfig(apiEgressProxyToConfig(ep))
 			if err != nil {
 				telemetry.ReportError(ctx, "invalid egress proxy config", err, telemetry.WithSandboxID(sandboxID))
 

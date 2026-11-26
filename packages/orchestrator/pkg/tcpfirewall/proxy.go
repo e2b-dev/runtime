@@ -205,10 +205,6 @@ func (p *Proxy) CABundle(_ string) string {
 	return ""
 }
 
-func (p *Proxy) SupportsBYOP() bool {
-	return false
-}
-
 func (p *Proxy) HeadFilterRules(_ *network.Slot) [][]expr.Any {
 	return nil
 }

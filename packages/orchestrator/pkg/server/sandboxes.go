@@ -47,6 +47,7 @@ import (
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/retry"
 	catalog "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-catalog"
+	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -187,8 +188,8 @@ func firecrackerSupports(ctx context.Context, sbx *sandbox.Sandbox, feature stri
 // names one; it mirrors the API gate for direct gRPC callers and snapshot
 // resumes, and a migration's restore runs it too, since the target may lack
 // the dialer or the team's flag the source had.
-func (s *Server) admitEgressProxy(ctx context.Context, config *orchestrator.SandboxConfig) error {
-	if config.GetNetwork().GetEgress().GetEgressProxyAddress() == "" {
+func (s *Server) admitEgressProxy(ctx context.Context, address string, stored bool) error {
+	if address == "" {
 		return nil
 	}
 	if !s.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
@@ -196,10 +197,23 @@ func (s *Server) admitEgressProxy(ctx context.Context, config *orchestrator.Sand
 
 		return status.Error(codes.PermissionDenied, "egress proxy is not enabled for this team")
 	}
-	if !s.sandboxFactory.EgressProxy().SupportsBYOP() {
+	validator, ok := s.sandboxFactory.EgressProxy().(interface {
+		ValidateProxyEndpoint(ctx context.Context, address string) error
+	})
+	if !ok {
 		telemetry.ReportEvent(ctx, "egressProxy rejected: orchestrator build has no BYOP dialer")
 
 		return status.Error(codes.Unimplemented, "egress proxy is not supported by this orchestrator build")
+	}
+
+	// Restores retain the saved policy. DNS availability affects its next dial,
+	// but must not prevent the sandbox itself from resuming.
+	if stored {
+		return nil
+	}
+
+	if err := validator.ValidateProxyEndpoint(ctx, address); err != nil {
+		return createRefused(ctx, codes.InvalidArgument, "%s%s", sandbox_network.InvalidProxyEndpointPrefix, err)
 	}
 
 	return nil
@@ -271,7 +285,7 @@ func (s *Server) Create(ctx context.Context, req *orchestrator.SandboxCreateRequ
 	// setup launch darkly
 	ctx = featureflags.AddToContext(ctx, startFlagContexts(req.GetSandbox())...)
 
-	if err := s.admitEgressProxy(ctx, req.GetSandbox()); err != nil {
+	if err := s.admitEgressProxy(ctx, req.GetSandbox().GetNetwork().GetEgress().GetEgressProxyAddress(), isResume); err != nil {
 		return nil, err
 	}
 
@@ -723,21 +737,8 @@ func (s *Server) Update(ctx context.Context, req *orchestrator.SandboxUpdateRequ
 		attribute.String("balloon_mode", sbx.BalloonMode()),
 	)
 
-	// Mirror the Create-side BYOP gates; defense-in-depth for direct gRPC
-	// callers.
-	if req.GetEgress().GetEgressProxyAddress() != "" {
-		if !s.featureFlags.BoolFlag(ctx, featureflags.BYOPProxyEnabledFlag) {
-			telemetry.ReportEvent(ctx, "egressProxy update rejected by BYOPProxyEnabledFlag")
-
-			return nil, status.Error(codes.PermissionDenied,
-				"egress proxy is not enabled for this team")
-		}
-		if !s.sandboxFactory.EgressProxy().SupportsBYOP() {
-			telemetry.ReportEvent(ctx, "egressProxy update rejected: orchestrator build has no BYOP dialer")
-
-			return nil, status.Error(codes.Unimplemented,
-				"egress proxy is not supported by this orchestrator build")
-		}
+	if err := s.admitEgressProxy(ctx, req.GetEgress().GetEgressProxyAddress(), false); err != nil {
+		return nil, err
 	}
 	// Refused before anything is applied; the API stores nothing on this answer.
 	if err := sandbox.RefuseTLSInterception(sbx.Config.GuestProfile(), req.GetEgress()); err != nil {

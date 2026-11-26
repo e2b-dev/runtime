@@ -109,7 +109,11 @@ func TestServiceInfoReportsOutstandingWork(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, standby, response.GetServiceStatus())
 			require.Equal(t, "x", response.GetStatusOwner())
-			require.Equal(t, []string{"park-owner"}, response.GetCapabilities())
+			wantCapabilities := []string{"park-owner"}
+			if name != "builder" {
+				wantCapabilities = append(wantCapabilities, "egress-proxy-endpoint-admission")
+			}
+			require.Equal(t, wantCapabilities, response.GetCapabilities())
 		})
 	}
 }

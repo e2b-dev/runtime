@@ -210,6 +210,9 @@ func (o *Orchestrator) updateSandboxNetworkOnNode(
 	)
 	defer span.End()
 
+	if err := node.ValidateLegacyProxyEndpoint(ctx, egress.GetEgressProxyAddress()); err != nil {
+		return &api.APIError{Code: http.StatusBadRequest, ClientMsg: sandbox_network.InvalidProxyEndpointPrefix + err.Error(), Err: err}
+	}
 	client, ctx := node.GetSandboxClient(ctx, sbx.TeamID.String())
 	_, err := client.Sandbox.Update(ctx, &orchestratorgrpc.SandboxUpdateRequest{
 		SandboxId: sbx.SandboxID,
