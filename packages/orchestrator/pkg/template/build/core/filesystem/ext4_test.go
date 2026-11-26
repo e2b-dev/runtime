@@ -65,6 +65,23 @@ func TestMakeInlineData(t *testing.T) {
 	}
 }
 
+// TestMountErrorCarriesMountOutput runs Mount against a stub mount that fails
+// the way util-linux does when it cannot set up a loop device. Not parallel:
+// t.Setenv puts the stub first on PATH for the whole process.
+func TestMountErrorCarriesMountOutput(t *testing.T) {
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\necho \"mount: $4: failed to setup loop device for $3.\" >&2\nexit 32\n"
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "mount"), []byte(stub), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := Mount(t.Context(), "/images/rootfs.ext4", "/mnt/rootfs")
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 32, exitErr.ExitCode())
+	assert.ErrorContains(t, err, "mount: /mnt/rootfs: failed to setup loop device for /images/rootfs.ext4.")
+}
+
 func requireTools(t *testing.T, tools ...string) {
 	t.Helper()
 

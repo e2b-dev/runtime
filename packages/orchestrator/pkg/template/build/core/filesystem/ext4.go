@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -110,10 +111,16 @@ func Mount(ctx context.Context, rootfsPath string, mountPoint string) error {
 	mountStdoutWriter := telemetry.NewEventWriter(ctx, "stdout")
 	cmd.Stdout = mountStdoutWriter
 
-	mountStderrWriter := telemetry.NewEventWriter(ctx, "stderr")
-	cmd.Stderr = mountStderrWriter
+	// mount reports why it failed only on stderr; its exit status is a generic 32.
+	var stderr bytes.Buffer
+	cmd.Stderr = io.MultiWriter(telemetry.NewEventWriter(ctx, "stderr"), &stderr)
 
-	return cmd.Run()
+	err := cmd.Run()
+	if err != nil && stderr.Len() > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	return err
 }
 
 func Unmount(ctx context.Context, rootfsPath string) error {
