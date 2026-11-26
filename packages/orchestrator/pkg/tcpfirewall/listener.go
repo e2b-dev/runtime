@@ -22,14 +22,19 @@ const (
 type resilientListener struct {
 	net.Listener
 
-	ctx    context.Context //nolint:containedctx // needed for cancellation in Accept retry loop
-	logger logger.Logger
+	ctx      context.Context //nolint:containedctx // needed for cancellation in Accept retry loop
+	logger   logger.Logger
+	onAccept func(net.Conn) bool
 }
 
 func (l *resilientListener) Accept() (net.Conn, error) {
 	for {
 		conn, err := l.Listener.Accept()
 		if err == nil {
+			if l.onAccept != nil && !l.onAccept(conn) {
+				_ = conn.Close()
+				continue
+			}
 			return conn, nil
 		}
 
