@@ -2698,6 +2698,7 @@ components:
         - templateID
         - team
         - names
+        - aliases
         - public
         - createdAt
         - lastSpawnedAt
@@ -2717,6 +2718,12 @@ components:
           description: Names of the template (namespace/alias format when namespaced)
           items:
             type: string
+        aliases:
+          type: array
+          description: >
+            The template's aliases, those without a namespace first, then by namespace and alias
+          items:
+            $ref: "#/components/schemas/AdminTemplateAlias"
         public:
           type: boolean
           description: Whether the template is public
@@ -8912,8 +8919,8 @@ paths:
       description: >
         Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's
         newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`,
-        or an alias without a namespace). Returns the template with its owning team and its newest
-        builds. Deleted templates are not found.
+        or an alias without a namespace). Returns the template with its owning team, its aliases
+        and its newest builds. Deleted templates are not found.
       tags: [admin]
       security:
         - AdminApiKeyAuth: []

@@ -1077,6 +1077,9 @@ type AdminTemplateAliases struct {
 
 // AdminTemplateLookup defines model for AdminTemplateLookup.
 type AdminTemplateLookup struct {
+	// Aliases The template's aliases, those without a namespace first, then by namespace and alias
+	Aliases []AdminTemplateAlias `json:"aliases"`
+
 	// Builds The template's newest builds of any tag and status, newest first, at most 100
 	Builds []TemplateBuild `json:"builds"`
 
@@ -5558,7 +5561,7 @@ type ClientInterface interface {
 
 	// GetUnstableAdminTemplatesLookup Look up a template as admin
 	//
-	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team, its aliases and its newest builds. Deleted templates are not found.
 	//
 	// Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
 	GetUnstableAdminTemplatesLookup(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -8055,7 +8058,7 @@ func (c *Client) PatchUnstableAdminTemplatesDefaultsTemplateID(ctx context.Conte
 
 // GetUnstableAdminTemplatesLookup Look up a template as admin
 //
-// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team, its aliases and its newest builds. Deleted templates are not found.
 //
 // Corresponds with GET /unstable/admin/templates/lookup (the `GetUnstableAdminTemplatesLookup` operationId).
 func (c *Client) GetUnstableAdminTemplatesLookup(ctx context.Context, params *GetUnstableAdminTemplatesLookupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16319,7 +16322,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetUnstableAdminTemplatesLookupWithResponse Look up a template as admin
 	//
-	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+	// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team, its aliases and its newest builds. Deleted templates are not found.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -28560,7 +28563,7 @@ func (c *ClientWithResponses) PatchUnstableAdminTemplatesDefaultsTemplateIDWithR
 
 // GetUnstableAdminTemplatesLookupWithResponse Look up a template as admin
 //
-// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team and its newest builds. Deleted templates are not found.
+// Resolves `query` as, in order: a build ID (a UUID, matched to the template of the build's newest assignment, with no fallback), a template ID, or a template name (`namespace/alias`, or an alias without a namespace). Returns the template with its owning team, its aliases and its newest builds. Deleted templates are not found.
 //
 // Returns a wrapper object for the known response body format(s).
 //

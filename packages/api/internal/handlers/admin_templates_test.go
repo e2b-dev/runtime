@@ -231,6 +231,8 @@ func TestGetUnstableAdminTemplatesLookup_ResolvesBuildTemplateIDAndNames(t *test
 	templateID := testutils.CreateTestTemplate(t, testDB, teamID)
 	testutils.CreateTestTemplateAliasWithName(t, testDB, templateID, "worker", new("acme"))
 	testutils.CreateTestTemplateAliasWithName(t, testDB, templateID, "promoted-worker", nil)
+	otherTemplateID := testutils.CreateTestTemplate(t, testDB, teamID)
+	testutils.CreateTestTemplateAliasWithName(t, testDB, otherTemplateID, "worker", new("other"))
 
 	baseTime := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	buildID := insertTestBuild(t, ctx, testDB, templateID, dbtypes.BuildStatusGroupReady, 2, baseTime)
@@ -260,6 +262,16 @@ func TestGetUnstableAdminTemplatesLookup_ResolvesBuildTemplateIDAndNames(t *test
 			assert.Equal(t, teamID, lookup.Team.Id)
 			assert.NotEmpty(t, lookup.Team.Email)
 			assert.ElementsMatch(t, []string{"acme/worker", "promoted-worker"}, lookup.Names)
+			require.Len(t, lookup.Aliases, 2)
+			assert.Equal(t, "promoted-worker", lookup.Aliases[0].Alias)
+			assert.Nil(t, lookup.Aliases[0].Namespace)
+			assert.Equal(t, "worker", lookup.Aliases[1].Alias)
+			assert.Equal(t, new("acme"), lookup.Aliases[1].Namespace)
+			for _, alias := range lookup.Aliases {
+				assert.NotEqual(t, uuid.Nil, alias.Id)
+				assert.Equal(t, templateID, alias.TemplateID)
+				assert.True(t, alias.IsRenamable)
+			}
 			assert.False(t, lookup.IsSnapshot)
 			assert.Equal(t, tc.wantBuild, lookup.MatchedBuildID)
 			require.Len(t, lookup.Builds, 1)

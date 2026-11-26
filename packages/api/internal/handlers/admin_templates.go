@@ -76,13 +76,7 @@ func (a *APIStore) GetUnstableAdminTemplatesAliases(c *gin.Context, params api.G
 
 	aliasesByTemplate := make(map[string][]api.AdminTemplateAlias, len(rows))
 	for _, alias := range aliases {
-		aliasesByTemplate[alias.EnvID] = append(aliasesByTemplate[alias.EnvID], api.AdminTemplateAlias{
-			Id:          alias.ID,
-			TemplateID:  alias.EnvID,
-			Alias:       alias.Alias,
-			Namespace:   alias.Namespace,
-			IsRenamable: alias.IsRenamable,
-		})
+		aliasesByTemplate[alias.EnvID] = append(aliasesByTemplate[alias.EnvID], adminTemplateAliasToAPI(alias))
 	}
 
 	result := make([]api.AdminTemplateAliases, 0, len(rows))
@@ -330,6 +324,13 @@ func (a *APIStore) GetUnstableAdminTemplatesLookup(c *gin.Context, params api.Ge
 		return
 	}
 
+	aliases, err := a.sqlcDB.AdminListTemplateAliases(ctx, []string{templateID})
+	if err != nil {
+		a.respondAdminLookupError(c, err)
+
+		return
+	}
+
 	builds, err := a.sqlcDB.GetTemplateBuilds(ctx, queries.GetTemplateBuildsParams{
 		TemplateID: templateID,
 		CursorTime: maxTemplatesCursorTime,
@@ -350,6 +351,7 @@ func (a *APIStore) GetUnstableAdminTemplatesLookup(c *gin.Context, params api.Ge
 			Email: owner.TeamEmail,
 		},
 		Names:             template.Names,
+		Aliases:           make([]api.AdminTemplateAlias, 0, len(aliases)),
 		Public:            template.Public,
 		CreatedAt:         template.CreatedAt,
 		LastSpawnedAt:     template.LastSpawnedAt,
@@ -363,11 +365,25 @@ func (a *APIStore) GetUnstableAdminTemplatesLookup(c *gin.Context, params api.Ge
 		result.Names = []string{}
 	}
 
+	for _, alias := range aliases {
+		result.Aliases = append(result.Aliases, adminTemplateAliasToAPI(alias))
+	}
+
 	for _, build := range builds {
 		result.Builds = append(result.Builds, templateBuildToAPI(ctx, build))
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func adminTemplateAliasToAPI(alias queries.AdminListTemplateAliasesRow) api.AdminTemplateAlias {
+	return api.AdminTemplateAlias{
+		Id:          alias.ID,
+		TemplateID:  alias.EnvID,
+		Alias:       alias.Alias,
+		Namespace:   alias.Namespace,
+		IsRenamable: alias.IsRenamable,
+	}
 }
 
 // resolveAdminTemplateQuery finds the template a lookup query names: a build
