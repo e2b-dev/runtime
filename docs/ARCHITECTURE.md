@@ -534,8 +534,9 @@ if no live team references the cluster locally. The reference must be cleared be
 can succeed. If the cluster service is unavailable, both the deletion request and the cluster
 delete return HTTP 503 with `Should-Retry: true`. Once deletion is recorded, protection stays off.
 A project already admitted to this cluster may finish creation during the drain; its claim prevents final
-removal. A new remote team checks admission with `CheckProjectCreation` while holding the
-per-cluster advisory lock in the database. The response carries no cluster credentials. The
+removal. A new remote team must have a live claim on the requested cluster. The API checks
+this with `CheckProjectCreation` while holding the per-cluster advisory lock in the database.
+The response carries no cluster credentials. The
 deletion request takes that lock after recording the drain. Deleting each project clears its
 team's cluster; the caller releases its claim after the deletion is acknowledged.
 The cluster delete then checks deletion protection with the cluster service, and in one
