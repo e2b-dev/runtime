@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 
 	"github.com/e2b-dev/infra/packages/shared/pkg/filesystem"
@@ -408,9 +409,49 @@ func (fs *Chrooted) TempFile(dir, prefix string) (*os.File, error) {
 	return nil, &os.PathError{Op: "createtemp", Path: path.Join(dir, prefix+"*"), Err: os.ErrExist}
 }
 
+// ReadDirScaling says how many per-entry stat calls ReadDir issues in
+// parallel as the listed directory grows: the stats are serial below
+// Threshold, then run on Base workers plus one more per Step additional
+// entries, capped at Max. Each stat is a single fstatat through the listing's
+// directory descriptor, so the calls are independent of each other and safe
+// to run concurrently. Workers is total: the zero value and degenerate
+// fields yield 1, never a panic.
+type ReadDirScaling struct {
+	Threshold int
+	Base      int
+	Step      int
+	Max       int
+}
+
+// Workers returns how many of a listing's entries may be statted in parallel.
+func (s ReadDirScaling) Workers(entries int) int {
+	if entries < s.Threshold {
+		return 1
+	}
+
+	workers := s.Base
+	if s.Step > 0 {
+		workers += (entries - s.Threshold) / s.Step
+	}
+	if s.Max > 0 && workers > s.Max {
+		workers = s.Max
+	}
+
+	return max(workers, 1)
+}
+
+// defaultReadDirScaling is the scaling a Chroot gets unless an option
+// overrides it; production values come from the orchestrator's config.
+var defaultReadDirScaling = ReadDirScaling{Threshold: 1000, Base: 8, Step: 5000, Max: 16}
+
 // ReadDir lists the directory at dirPath sorted by name, as os.ReadDir does.
 // Each entry carries its own attributes, not those of a symlink's target. An
 // entry removed while the directory is being read is left out.
+//
+// The per-entry stats run in parallel once the directory is large enough,
+// scaled by the fs's ReadDirScaling: the tree is usually an NFS volume, where
+// every stat is a network round trip. Smaller listings stay serial on the
+// calling goroutine — a worker pool would cost more than the stats.
 func (fs *Chrooted) ReadDir(dirPath string) ([]os.FileInfo, error) {
 	release, err := fs.acquire()
 	if err != nil {
@@ -432,21 +473,52 @@ func (fs *Chrooted) ReadDir(dirPath string) ([]os.FileInfo, error) {
 	}
 	slices.Sort(names)
 
-	infos := make([]os.FileInfo, 0, len(names))
-	for _, name := range names {
-		info, err := lstatAt(fd, name)
-		if err != nil {
-			if errors.Is(err, unix.ENOENT) {
-				continue
+	infos := make([]os.FileInfo, len(names))
+	statEntry := func(index int) error {
+		info, statErr := lstatAt(fd, names[index])
+		if statErr != nil {
+			if errors.Is(statErr, unix.ENOENT) {
+				// The entry was removed while the directory was being read.
+				return nil
 			}
 
-			return nil, pathError("readdir", path.Join(dirPath, name), err)
+			return pathError("readdir", path.Join(dirPath, names[index]), statErr)
 		}
 
-		infos = append(infos, info)
+		infos[index] = info
+
+		return nil
 	}
 
-	return infos, nil
+	if workers := fs.readDirScaling.Workers(len(names)); workers > 1 {
+		group := new(errgroup.Group)
+		group.SetLimit(workers)
+
+		for index := range names {
+			group.Go(func() error {
+				return statEntry(index)
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			return nil, err
+		}
+	} else {
+		for index := range names {
+			if err := statEntry(index); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	listed := make([]os.FileInfo, 0, len(infos))
+	for _, info := range infos {
+		if info != nil {
+			listed = append(listed, info)
+		}
+	}
+
+	return listed, nil
 }
 
 func (fs *Chrooted) Mkdir(filename string, perm os.FileMode) error {

@@ -45,6 +45,10 @@ type Chrooted struct {
 	// Waiters never initiate or retry that close.
 	closeDone chan struct{}
 	closeErr  error
+
+	// readDirScaling is how the parallelism of ReadDir's per-entry stat
+	// calls scales with the number of entries; see WithReadDirScaling.
+	readDirScaling ReadDirScaling
 }
 
 type Option func(*Chrooted)
@@ -56,6 +60,14 @@ func WithMetadata(key, value string) Option {
 		}
 
 		fs.Metadata[key] = value
+	}
+}
+
+// WithReadDirScaling sets how the parallelism of ReadDir's per-entry stat
+// calls scales with the number of entries listed.
+func WithReadDirScaling(scaling ReadDirScaling) Option {
+	return func(fs *Chrooted) {
+		fs.readDirScaling = scaling
 	}
 }
 
@@ -124,9 +136,10 @@ func Chroot(source string, opts ...Option) (*Chrooted, error) {
 	}
 
 	fs := &Chrooted{
-		ActualRoot: source,
-		rootFD:     rootFD,
-		closeDone:  make(chan struct{}),
+		ActualRoot:     source,
+		rootFD:         rootFD,
+		closeDone:      make(chan struct{}),
+		readDirScaling: defaultReadDirScaling,
 	}
 
 	for _, opt := range opts {
