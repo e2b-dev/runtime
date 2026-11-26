@@ -40,6 +40,7 @@ type TemplateManager struct {
 	clusters      *clusters.Pool
 	lock          sync.Mutex
 	processing    map[uuid.UUID]processingBuilds
+	pollers       pollerGroup
 	buildCache    *templatecache.TemplatesBuildCache
 	templateCache *templatecache.TemplateCache
 	sqlcDB        *sqlcdb.Client
@@ -101,9 +102,14 @@ func New(
 
 func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
+	stopping := tm.pollers.stopping()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-stopping:
 			return
 		case <-ticker.C:
 			dbCtx, dbxCtxCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -128,6 +134,12 @@ func (tm *TemplateManager) BuildsStatusPeriodicalSync(ctx context.Context) {
 			dbxCtxCancel()
 		}
 	}
+}
+
+// Close stops the build status pollers and waits for them to return. Call it
+// before the cluster pool and the database close.
+func (tm *TemplateManager) Close(ctx context.Context) error {
+	return tm.pollers.close(ctx)
 }
 
 // GetAvailableBuildClient picks a builder in the cluster. A non-nil minVersion

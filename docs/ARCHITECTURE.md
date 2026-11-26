@@ -1434,6 +1434,13 @@ sequenceDiagram
     API->>API: mark build ready in Postgres
 ```
 
+Every API instance polls every build in progress: the instance that started a build polls it at
+once, and a periodic sync picks up the others. An instance that is shutting down stops its
+pollers, and waits for them, before it closes its builder connections and database clients, so a
+build it stops watching stays in progress for another instance to record. Whichever poller
+records a build ready invalidates its template's cached tag lookups, which still name the previous
+ready build.
+
 A template a build creates is private to its team unless the api runs with
 `TEMPLATES_DEFAULT_PUBLIC=true`; then it is public, so any team on the same cluster can start it by
 template ID or `<team-slug>/<alias>`. A rebuild keeps the visibility the template already has.

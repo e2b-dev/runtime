@@ -84,7 +84,7 @@ func (c *recordingClient) DeleteBuild(ctx context.Context, _ uuid.UUID, _ string
 	return nil
 }
 
-func (c *recordingClient) SetFinished(ctx context.Context, _ uuid.UUID, _ int64, _, _, _ string) error {
+func (c *recordingClient) SetFinished(ctx context.Context, _ uuid.UUID, _ string, _ int64, _, _, _ string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

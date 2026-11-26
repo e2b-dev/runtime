@@ -44,6 +44,13 @@ func terminalWriteContext(ctx context.Context) (context.Context, context.CancelF
 }
 
 func (tm *TemplateManager) BuildStatusSync(ctx context.Context, buildID uuid.UUID, templateID string, clusterID uuid.UUID, nodeID *string) error {
+	ctx, pollerDone, ok := tm.pollers.start(ctx)
+	if !ok {
+		// Shutting down: another instance's periodical sync adopts the build.
+		return nil
+	}
+	defer pollerDone()
+
 	if tm.createInProcessingQueue(buildID, templateID) {
 		// already processing, skip
 		return nil
@@ -106,7 +113,7 @@ func (tm *TemplateManager) BuildStatusSync(ctx context.Context, buildID uuid.UUI
 
 type templateManagerClient interface {
 	SetTerminalStatus(ctx context.Context, buildID uuid.UUID, statusGroup types.BuildStatusGroup, reason *templatemanagergrpc.TemplateBuildStatusReason) (bool, error)
-	SetFinished(ctx context.Context, buildID uuid.UUID, rootfsSize int64, envdVersion, kernelVersion, firecrackerVersion string) error
+	SetFinished(ctx context.Context, buildID uuid.UUID, templateID string, rootfsSize int64, envdVersion, kernelVersion, firecrackerVersion string) error
 	GetStatus(ctx context.Context, buildId uuid.UUID, templateID string, clusterID uuid.UUID, nodeID string) (*templatemanagergrpc.TemplateBuildStatusResponse, error)
 	DeleteBuild(ctx context.Context, buildID uuid.UUID, templateID string, clusterID uuid.UUID, nodeID string) error
 }
@@ -323,6 +330,7 @@ func (c *PollBuildStatus) dispatchBasedOnStatus(ctx context.Context, status *tem
 		err := c.client.SetFinished(
 			writeCtx,
 			c.buildID,
+			c.templateID,
 			int64(meta.GetRootfsSizeKey()),
 			meta.GetEnvdVersionKey(),
 			meta.GetKernelVersion(),
@@ -446,7 +454,10 @@ func buildReasonFrom(reason *templatemanagergrpc.TemplateBuildStatusReason) type
 	return buildReason
 }
 
-func (tm *TemplateManager) SetFinished(ctx context.Context, buildID uuid.UUID, rootfsSize int64, envdVersion, kernelVersion, firecrackerVersion string) error {
+// SetFinished records a build as ready. Its template's tags may still resolve
+// to the previous ready build in the template cache, so they are invalidated
+// here: any instance's poller can be the one that records the build.
+func (tm *TemplateManager) SetFinished(ctx context.Context, buildID uuid.UUID, templateID string, rootfsSize int64, envdVersion, kernelVersion, firecrackerVersion string) error {
 	// first do database update to prevent race condition while calling status
 	err := tm.sqlcDB.FinishTemplateBuild(ctx, queries.FinishTemplateBuildParams{
 		TotalDiskSizeMb:    &rootfsSize,
@@ -458,6 +469,11 @@ func (tm *TemplateManager) SetFinished(ctx context.Context, buildID uuid.UUID, r
 	})
 
 	tm.buildCache.Invalidate(ctx, buildID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	tm.templateCache.InvalidateAllTags(ctx, templateID)
+
+	return nil
 }

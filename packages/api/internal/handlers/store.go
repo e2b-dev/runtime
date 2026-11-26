@@ -595,6 +595,15 @@ func (a *APIStore) Close(ctx context.Context) error {
 	a.templateSpawnCounter.Close(ctx)
 
 	errs := []error{}
+
+	// Build status pollers reach the builders through the cluster pool and record
+	// outcomes in the database, so they stop before either closes.
+	if a.templateManager != nil {
+		if err := a.templateManager.Close(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("closing template manager: %w", err))
+		}
+	}
+
 	if err := a.posthog.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing Posthog client: %w", err))
 	}
