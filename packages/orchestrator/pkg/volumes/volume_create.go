@@ -32,6 +32,13 @@ func (s *Service) CreateVolume(
 		attribute.String("path", fullPath),
 	))
 
+	// Fail fast if a volume filesystem type is configured but the path is not on
+	// such a mount - otherwise MkdirAll would silently create the volume on the
+	// local root disk when the distributed FS is not mounted. No-op by default.
+	if err := verifyVolumeMount(fullPath, s.config.VolumeExpectedFSType); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(fullPath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create volume: %w", err)
 	}
