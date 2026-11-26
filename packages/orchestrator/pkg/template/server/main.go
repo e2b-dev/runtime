@@ -48,6 +48,7 @@ type ServerStore struct {
 	info            *service.ServiceInfo
 	builder         *build.Builder
 	buildCache      *cache.BuildCache
+	buildLimiter    *utils.AdjustableSemaphore
 	buildLogger     logger.Logger
 	featureFlags    *featureflags.Client
 	templateStorage storage.StorageProvider
@@ -132,6 +133,10 @@ func New(
 	closers = append(closers, dockerhubRepository)
 
 	buildCache := cache.NewBuildCache(ctx, meterProvider)
+	buildLimiter, err := utils.NewAdjustableSemaphore(int64(featureflags.MaxConcurrentTemplateBuilds.Fallback()))
+	if err != nil {
+		return nil, fmt.Errorf("create template build limiter: %w", err)
+	}
 	buildMetrics, err := metrics.NewBuildMetrics(meterProvider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create build metrics: %w", err)
@@ -157,6 +162,7 @@ func New(
 		info:            info,
 		builder:         builder,
 		buildCache:      buildCache,
+		buildLimiter:    buildLimiter,
 		buildLogger:     buildLogger,
 		featureFlags:    featureFlags,
 		templateStorage: templatePersistence,

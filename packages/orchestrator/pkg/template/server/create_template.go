@@ -308,15 +308,21 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 			{Type: zapcore.StringType, Key: "buildID", String: metadata.BuildID},
 		}),
 	)
+	// The cap belongs to this node. Evaluate it without the request's team and template.
+	buildLimit := s.featureFlags.IntFlag(context.Background(), featureflags.MaxConcurrentTemplateBuilds)
+	if buildLimit < 1 {
+		buildLimit = featureflags.MaxConcurrentTemplateBuilds.Fallback()
+	}
+	if err := s.buildLimiter.SetLimit(int64(buildLimit)); err != nil {
+		return nil, fmt.Errorf("set template build limit: %w", err)
+	}
 
 	// Register child work before the foreground request releases its hold.
 	buildDone := s.info.TrackWork()
 	s.wg.Add(1)
-	s.activeBuilds.Add(1)
 	go func(ctx context.Context) {
 		defer s.wg.Done()
 		defer buildDone()
-		defer s.activeBuilds.Add(-1)
 
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -349,6 +355,22 @@ func (s *ServerStore) TemplateCreate(ctx context.Context, templateRequest *templ
 				return
 			}
 		}()
+
+		if err := s.buildLimiter.Acquire(ctx, 1); err != nil {
+			buildInfo.SetFail(builderrors.UnwrapUserError(err))
+			return
+		}
+		defer s.buildLimiter.Release(1)
+		// Deletion can mark the build failed before its watcher cancels ctx.
+		if !buildInfo.IsRunning() {
+			return
+		}
+		s.activeBuilds.Add(1)
+		defer s.activeBuilds.Add(-1)
+		if err := ctx.Err(); err != nil {
+			buildInfo.SetFail(builderrors.UnwrapUserError(err))
+			return
+		}
 
 		res, err := s.builder.Build(ctx, metadata, template, core)
 		_ = core.Sync()
