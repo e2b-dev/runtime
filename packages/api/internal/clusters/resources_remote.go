@@ -159,6 +159,7 @@ func (r *ClusterResourceProviderImpl) GetSandboxLogs(ctx context.Context, teamID
 func (r *ClusterResourceProviderImpl) GetBuildLogs(
 	ctx context.Context,
 	nodeID *string,
+	_ uuid.UUID,
 	templateID string,
 	buildID string,
 	offset int32,

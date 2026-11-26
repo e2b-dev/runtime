@@ -161,8 +161,9 @@ func (r *Reader) QuerySandboxLogs(ctx context.Context, teamID uuid.UUID, sandbox
 	return out, nil
 }
 
-func (r *Reader) QueryBuildLogs(ctx context.Context, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order SortOrder) ([]logs.LogEntry, error) {
+func (r *Reader) QueryBuildLogs(ctx context.Context, teamID uuid.UUID, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order SortOrder) ([]logs.LogEntry, error) {
 	filters := []string{
+		"team_id = {team_id:String}",
 		"build_id = {build_id:String}",
 		"template_id = {template_id:String}",
 		"timestamp >= fromUnixTimestamp64Nano({start:Int64})",
@@ -170,6 +171,7 @@ func (r *Reader) QueryBuildLogs(ctx context.Context, templateID, buildID string,
 		"service = 'template-manager'",
 	}
 	args := []any{
+		clickhouse.Named("team_id", teamID.String()),
 		clickhouse.Named("build_id", buildID),
 		clickhouse.Named("template_id", templateID),
 		clickhouse.Named("start", unixNano(start)),

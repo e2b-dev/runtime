@@ -28,7 +28,7 @@ import (
 // cluster needs.
 type ClickhouseLogsReader interface {
 	QuerySandboxLogs(ctx context.Context, teamID uuid.UUID, sandboxID string, start, end time.Time, limit int, order sandboxlogs.SortOrder, level *logs.LogLevel, search *string) ([]logs.LogEntry, error)
-	QueryBuildLogs(ctx context.Context, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error)
+	QueryBuildLogs(ctx context.Context, teamID uuid.UUID, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error)
 }
 
 var _ ClickhouseLogsReader = (*sandboxlogs.Reader)(nil)
@@ -258,6 +258,7 @@ func (l *LocalClusterResourceProvider) GetSandboxLogs(ctx context.Context, teamI
 func (l *LocalClusterResourceProvider) GetBuildLogs(
 	ctx context.Context,
 	nodeID *string,
+	teamID uuid.UUID,
 	templateID string,
 	buildID string,
 	offset int32,
@@ -273,7 +274,7 @@ func (l *LocalClusterResourceProvider) GetBuildLogs(
 
 	var persistentFetcher logSourceFunc
 	if l.readFromClickhouse(ctx) {
-		persistentFetcher = l.logsFromClickhouse(ctx, templateID, buildID, start, end, int(limit), offset, level, apiLogDirectionToSandboxLogsSortOrder(&direction))
+		persistentFetcher = l.logsFromClickhouse(ctx, teamID, templateID, buildID, start, end, int(limit), offset, level, apiLogDirectionToSandboxLogsSortOrder(&direction))
 	} else {
 		persistentFetcher = l.logsFromLocalLoki(ctx, templateID, buildID, start, end, int(limit), offset, level, apiLogDirectionToLokiProtoDirection(&direction))
 	}
@@ -281,9 +282,9 @@ func (l *LocalClusterResourceProvider) GetBuildLogs(
 	return getBuildLogsWithSources(ctx, l.instances, nodeID, templateID, buildID, offset, limit, level, cursor, direction, source, persistentFetcher)
 }
 
-func (l *LocalClusterResourceProvider) logsFromClickhouse(ctx context.Context, templateID string, buildID string, start time.Time, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) logSourceFunc {
+func (l *LocalClusterResourceProvider) logsFromClickhouse(ctx context.Context, teamID uuid.UUID, templateID string, buildID string, start time.Time, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) logSourceFunc {
 	return func() ([]logs.LogEntry, *api.APIError) {
-		entries, err := l.sandboxLogsReader.QueryBuildLogs(ctx, templateID, buildID, start, end, limit, offset, level, order)
+		entries, err := l.sandboxLogsReader.QueryBuildLogs(ctx, teamID, templateID, buildID, start, end, limit, offset, level, order)
 		if err != nil {
 			recordClickhouseLogReadError(ctx, "build")
 

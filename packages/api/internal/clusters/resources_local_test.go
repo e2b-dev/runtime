@@ -21,15 +21,15 @@ import (
 
 type stubClickhouseLogsReader struct {
 	sandbox func(context.Context, uuid.UUID, string, time.Time, time.Time, int, sandboxlogs.SortOrder, *logs.LogLevel, *string) ([]logs.LogEntry, error)
-	build   func(context.Context, string, string, time.Time, time.Time, int, int32, *logs.LogLevel, sandboxlogs.SortOrder) ([]logs.LogEntry, error)
+	build   func(context.Context, uuid.UUID, string, string, time.Time, time.Time, int, int32, *logs.LogLevel, sandboxlogs.SortOrder) ([]logs.LogEntry, error)
 }
 
 func (s *stubClickhouseLogsReader) QuerySandboxLogs(ctx context.Context, teamID uuid.UUID, sandboxID string, start, end time.Time, limit int, order sandboxlogs.SortOrder, level *logs.LogLevel, search *string) ([]logs.LogEntry, error) {
 	return s.sandbox(ctx, teamID, sandboxID, start, end, limit, order, level, search)
 }
 
-func (s *stubClickhouseLogsReader) QueryBuildLogs(ctx context.Context, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
-	return s.build(ctx, templateID, buildID, start, end, limit, offset, level, order)
+func (s *stubClickhouseLogsReader) QueryBuildLogs(ctx context.Context, teamID uuid.UUID, templateID, buildID string, start, end time.Time, limit int, offset int32, level *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
+	return s.build(ctx, teamID, templateID, buildID, start, end, limit, offset, level, order)
 }
 
 // TestBuildLogsFromClickhouseFailsFast asserts that a ClickHouse read error
@@ -43,6 +43,7 @@ func TestBuildLogsFromClickhouseFailsFast(t *testing.T) {
 	clickhouseErr := errors.New("clickhouse unavailable")
 	start, end := time.Now().Add(-time.Minute), time.Now()
 	level := logs.LevelInfo
+	teamID := uuid.New()
 	want := []logs.LogEntry{{Message: "from ClickHouse"}}
 
 	tests := []struct {
@@ -61,7 +62,8 @@ func TestBuildLogsFromClickhouseFailsFast(t *testing.T) {
 			t.Parallel()
 
 			provider := &LocalClusterResourceProvider{
-				sandboxLogsReader: &stubClickhouseLogsReader{build: func(_ context.Context, templateID, buildID string, gotStart, gotEnd time.Time, limit int, offset int32, gotLevel *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
+				sandboxLogsReader: &stubClickhouseLogsReader{build: func(_ context.Context, gotTeamID uuid.UUID, templateID, buildID string, gotStart, gotEnd time.Time, limit int, offset int32, gotLevel *logs.LogLevel, order sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
+					assert.Equal(t, teamID, gotTeamID)
 					assert.Equal(t, "template-id", templateID)
 					assert.Equal(t, "build-id", buildID)
 					assert.Equal(t, start, gotStart)
@@ -75,7 +77,7 @@ func TestBuildLogsFromClickhouseFailsFast(t *testing.T) {
 				}},
 			}
 
-			got, apiErr := provider.logsFromClickhouse(t.Context(), "template-id", "build-id", start, end, 42, 7, &level, sandboxlogs.SortOrderBackward)()
+			got, apiErr := provider.logsFromClickhouse(t.Context(), teamID, "template-id", "build-id", start, end, 42, 7, &level, sandboxlogs.SortOrderBackward)()
 			if tt.wantErr {
 				require.NotNil(t, apiErr)
 				require.ErrorIs(t, apiErr.Err, clickhouseErr)
@@ -155,11 +157,14 @@ func TestLogReadsUseClickhouseWithoutAnyLokiClient(t *testing.T) {
 	t.Parallel()
 
 	want := []logs.LogEntry{{Message: "from ClickHouse", Raw: "raw line"}}
+	teamID := uuid.New()
 	reader := &stubClickhouseLogsReader{
 		sandbox: func(context.Context, uuid.UUID, string, time.Time, time.Time, int, sandboxlogs.SortOrder, *logs.LogLevel, *string) ([]logs.LogEntry, error) {
 			return want, nil
 		},
-		build: func(context.Context, string, string, time.Time, time.Time, int, int32, *logs.LogLevel, sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
+		build: func(_ context.Context, gotTeamID uuid.UUID, _, _ string, _, _ time.Time, _ int, _ int32, _ *logs.LogLevel, _ sandboxlogs.SortOrder) ([]logs.LogEntry, error) {
+			assert.Equal(t, teamID, gotTeamID)
+
 			return want, nil
 		},
 	}
@@ -170,7 +175,7 @@ func TestLogReadsUseClickhouseWithoutAnyLokiClient(t *testing.T) {
 	require.Len(t, sandboxLogs.Logs, 1)
 	assert.Equal(t, "raw line", sandboxLogs.Logs[0].Line)
 
-	buildLogs, apiErr := provider.GetBuildLogs(t.Context(), nil, "template-id", "build-id", 0, 100, nil, nil, api.LogsDirectionForward, nil)
+	buildLogs, apiErr := provider.GetBuildLogs(t.Context(), nil, teamID, "template-id", "build-id", 0, 100, nil, nil, api.LogsDirectionForward, nil)
 	require.Nil(t, apiErr)
 	assert.Equal(t, want, buildLogs)
 }

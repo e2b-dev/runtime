@@ -224,16 +224,19 @@ func TestTemplateClusterRebuildReadyLookup(t *testing.T) {
 		require.Contains(t, w.Body.String(), "original cluster")
 	}
 	require.Equal(t, 2, reader.calls)
+	require.Equal(t, []uuid.UUID{team.ID, team.ID}, reader.teams, "both reads are scoped to the team that owns the template")
 }
 
 type originalClusterLogs struct {
 	clusters.ClusterResource
 
 	calls int
+	teams []uuid.UUID
 }
 
-func (r *originalClusterLogs) GetBuildLogs(context.Context, *string, string, string, int32, int32, *logs.LogLevel, *time.Time, api.LogsDirection, *api.LogsSource) ([]logs.LogEntry, *api.APIError) {
+func (r *originalClusterLogs) GetBuildLogs(_ context.Context, _ *string, teamID uuid.UUID, _ string, _ string, _ int32, _ int32, _ *logs.LogLevel, _ *time.Time, _ api.LogsDirection, _ *api.LogsSource) ([]logs.LogEntry, *api.APIError) {
 	r.calls++
+	r.teams = append(r.teams, teamID)
 
 	return []logs.LogEntry{{Message: "original cluster", Timestamp: time.Now()}}, nil
 }
