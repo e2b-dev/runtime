@@ -417,10 +417,17 @@ func getBestOfKConfig(ctx context.Context, featureFlagsClient *featureflags.Clie
 	alpha := float64(alphaPercent) / 100.0
 	maxOvercommit := float64(maxOvercommitPercent) / 100.0
 
+	affinityWeight := float64(featureFlagsClient.IntFlag(ctx, featureflags.BestOfKTemplateAffinityWeight)) / 100.0
+	affinityCap := featureFlagsClient.IntFlag(ctx, featureflags.BestOfKTemplateAffinityCap)
+
 	return placement.BestOfKConfig{
 		R:              maxOvercommit,
 		K:              k,
 		Alpha:          alpha,
 		ScoreHugepages: scoreHugepages,
+		// Same-build affinity, off unless an operator sets the weight flag. Readies
+		// node-local same-template base sharing (pmem+DAX) by colocating siblings.
+		TemplateAffinityWeight: affinityWeight,
+		TemplateAffinityCap:    affinityCap,
 	}
 }
