@@ -2,8 +2,11 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
@@ -12,6 +15,32 @@ import (
 )
 
 const pausedExpiryWriteTimeout = 5 * time.Second
+
+// ClaimPausedSandbox claims the sandbox's ID for a snapshot delete, as
+// KillAndClaim does, but only while no run of it is live: it never kills. It
+// reports false while the sandbox runs, pauses or resumes. The team index can
+// lag a record an interrupted Add left behind, so the record is checked after
+// the claim too, once no new one can be added.
+func (o *Orchestrator) ClaimPausedSandbox(ctx context.Context, teamID uuid.UUID, sandboxID string) (claimID string, claimed bool, err error) {
+	claimID, claimed, err = o.sandboxStore.ClaimKill(ctx, teamID, sandboxID)
+	if err != nil || !claimed {
+		return "", false, err
+	}
+
+	_, err = o.sandboxStore.Get(ctx, teamID, sandboxID)
+	switch {
+	case errors.Is(err, sandbox.ErrNotFound):
+		return claimID, true, nil
+	case err == nil:
+		o.ReleaseKillClaim(context.WithoutCancel(ctx), teamID, sandboxID, claimID)
+
+		return "", false, nil
+	default:
+		o.ReleaseKillClaim(context.WithoutCancel(ctx), teamID, sandboxID, claimID)
+
+		return "", false, fmt.Errorf("read sandbox record: %w", err)
+	}
+}
 
 func pausedTTLSeconds(ttl *time.Duration) *int64 {
 	if ttl == nil {
@@ -27,7 +56,9 @@ func pausedTTLSeconds(ttl *time.Duration) *int64 {
 // MaxInstanceLength, plus the run's TTL, so a run end whose stamp fails
 // leaves the sandbox expiring late rather than at the previous pause's
 // expiry, which a run longer than its TTL has already passed. A run without a
-// TTL clears the expiry.
+// TTL clears the expiry. It returns errPausedSnapshotDeleted when no live
+// snapshot was left to bound: DELETE or the expiry sweep removed it after the
+// resume read it, and the run must not start from it.
 func (o *Orchestrator) boundPausedExpiry(ctx context.Context, sbx sandbox.Sandbox) error {
 	if sbx.PausedTTL == nil && !sbx.PausedTTLStored {
 		return nil
@@ -41,12 +72,24 @@ func (o *Orchestrator) boundPausedExpiry(ctx context.Context, sbx sandbox.Sandbo
 	ctx, cancel := context.WithTimeout(ctx, pausedExpiryWriteTimeout)
 	defer cancel()
 
-	return o.sqlcDB.BoundSnapshotExpiry(ctx, queries.BoundSnapshotExpiryParams{
+	rows, err := o.sqlcDB.BoundSnapshotExpiry(ctx, queries.BoundSnapshotExpiryParams{
 		ExpiresAt: expiresAt,
 		SandboxID: sbx.SandboxID,
 		TeamID:    sbx.TeamID,
 	})
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errPausedSnapshotDeleted
+	}
+
+	return nil
 }
+
+// errPausedSnapshotDeleted means a resumed sandbox's snapshot was soft-deleted
+// between the resume reading it and the run starting.
+var errPausedSnapshotDeleted = errors.New("the paused sandbox's snapshot was deleted")
 
 // stampPausedExpiry restarts the expiry clock of the sandbox's snapshot when
 // RemoveSandbox ends one of its runs, with the TTL the run carried. A run

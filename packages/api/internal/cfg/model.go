@@ -203,6 +203,13 @@ type Config struct {
 	// OutboxBacklogInterval is how often the outbox backlog gauges are read
 	// from the database.
 	OutboxBacklogInterval time.Duration `env:"OUTBOX_BACKLOG_INTERVAL" envDefault:"30s"`
+	// PausedExpiryInterval is how often the outbox sweeps expired paused
+	// sandboxes, PausedExpiryBatchSize how many it reads at once, and
+	// PausedExpiryConcurrency how many it handles at once. The
+	// paused-sandbox-expiry-mode flag decides what the sweep does with them.
+	PausedExpiryInterval    time.Duration `env:"PAUSED_EXPIRY_INTERVAL"    envDefault:"5m"`
+	PausedExpiryBatchSize   int32         `env:"PAUSED_EXPIRY_BATCH_SIZE"  envDefault:"100"`
+	PausedExpiryConcurrency int           `env:"PAUSED_EXPIRY_CONCURRENCY" envDefault:"8"`
 
 	// TLS is the mutual TLS settings of the api's ports and client hops.
 	TLS TLSConfig
@@ -357,6 +364,12 @@ func Parse() (Config, error) {
 
 	if err := config.VolumesToken.validate(); err != nil {
 		return config, err
+	}
+
+	// A zero batch would never finish a page, and a zero interval would rerun
+	// the sweep without pause.
+	if config.PausedExpiryInterval <= 0 || config.PausedExpiryBatchSize <= 0 || config.PausedExpiryConcurrency <= 0 {
+		return config, errors.New("PAUSED_EXPIRY_INTERVAL, PAUSED_EXPIRY_BATCH_SIZE and PAUSED_EXPIRY_CONCURRENCY must be positive")
 	}
 
 	return config, nil

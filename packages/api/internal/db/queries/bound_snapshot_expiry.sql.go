@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const boundSnapshotExpiry = `-- name: BoundSnapshotExpiry :exec
+const boundSnapshotExpiry = `-- name: BoundSnapshotExpiry :execrows
 UPDATE "public"."snapshots"
 SET expires_at = $1::timestamptz
 WHERE sandbox_id = $2
@@ -29,7 +29,11 @@ type BoundSnapshotExpiryParams struct {
 // Sets a resumed sandbox's expiry to the latest its run can end plus its TTL,
 // before the run starts. The run's end then only brings it forward, so a stamp
 // that fails leaves a later expiry, never an earlier one. A NULL bound clears it.
-func (q *Queries) BoundSnapshotExpiry(ctx context.Context, arg BoundSnapshotExpiryParams) error {
-	_, err := q.db.Exec(ctx, boundSnapshotExpiry, arg.ExpiresAt, arg.SandboxID, arg.TeamID)
-	return err
+// No row means the snapshot was deleted after the resume read it.
+func (q *Queries) BoundSnapshotExpiry(ctx context.Context, arg BoundSnapshotExpiryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, boundSnapshotExpiry, arg.ExpiresAt, arg.SandboxID, arg.TeamID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

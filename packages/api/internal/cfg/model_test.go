@@ -33,6 +33,18 @@ func TestParse(t *testing.T) {
 		assert.ErrorContains(t, err, `environment variable "POSTGRES_CONNECTION_STRING" should not be empty`)
 	})
 
+	// Not parallel: the subtests set the environment with t.Setenv.
+	t.Run("the paused expiry sweep needs a positive batch, interval and concurrency", func(t *testing.T) {
+		for key, value := range map[string]string{"PAUSED_EXPIRY_BATCH_SIZE": "0", "PAUSED_EXPIRY_INTERVAL": "0s", "PAUSED_EXPIRY_CONCURRENCY": "0"} {
+			t.Run(key, func(t *testing.T) {
+				t.Setenv(key, value)
+
+				_, err := Parse()
+				assert.ErrorContains(t, err, "must be positive")
+			})
+		}
+	})
+
 	t.Run("LOKI_URL is optional", func(t *testing.T) { //nolint:paralleltest // cannot call t.Setenv and t.Parallel
 		removeEnv(t, "LOKI_URL")
 

@@ -707,6 +707,23 @@ func run(opts Options) int {
 		// the health status to the load balancer.
 		apiStore.BeginDrain()
 
+		// Stop the outbox now, alongside the drains below. A job still running
+		// when the process exits stays running until River rescues it 45
+		// minutes later, and a unique periodic job like the expiry sweep
+		// blocks its own next runs until then. Its soft stop timeout cancels
+		// running jobs well inside the pod's grace period, and a cancelled job
+		// goes straight back to available for another replica. Jobs requests
+		// enqueue while draining are only inserted, which works after Stop.
+		outboxStopped := make(chan struct{})
+		go func() {
+			defer close(outboxStopped)
+			outboxStopCtx, outboxStopCancel := context.WithTimeout(ctx, shutdownTimeout)
+			defer outboxStopCancel()
+			if err := riverOutbox.Stop(outboxStopCtx); err != nil {
+				l.Error(ctx, "outbox shutdown error", zap.Error(err))
+			}
+		}()
+
 		// Skip the delay in local environment for instant shutdown
 		if !env.IsLocal() {
 			time.Sleep(shutdownDrainWait)
@@ -746,13 +763,9 @@ func run(opts Options) int {
 			l.Error(ctx, "sandbox work did not finish before shutdown", zap.Error(err))
 		}
 
-		// Outbox jobs use the same clients. One still running at the deadline
-		// is rescued and retried by another replica; every step is idempotent.
-		outboxStopCtx, outboxStopCancel := context.WithTimeout(ctx, shutdownTimeout)
-		defer outboxStopCancel()
-		if err := riverOutbox.Stop(outboxStopCtx); err != nil {
-			l.Error(ctx, "outbox shutdown error", zap.Error(err))
-		}
+		// Outbox jobs use the same clients, so they must have stopped before
+		// the cleanup below closes them.
+		<-outboxStopped
 
 		// Drain pprof after, so that it is still available during the shutdown process for debugging if needed.
 		pprofShutdownCtx, pprofCancel := context.WithTimeout(ctx, pprofShutdownTimeout)

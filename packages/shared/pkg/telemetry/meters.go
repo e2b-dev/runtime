@@ -61,6 +61,12 @@ const (
 	// ApiTemplateListCapExceeded counts unpaginated template list requests
 	// refused because the team has more templates than the cap, by team.
 	ApiTemplateListCapExceeded CounterType = "api.template.list.cap_exceeded"
+	// ApiSandboxPausedExpirySwept counts the expired paused sandboxes the
+	// expiry sweep visited, by outcome: deleted | would_delete (dry run) |
+	// skipped_live (running, pausing or resuming) | skipped_refreshed (a run
+	// ended since the sweep listed it and restarted the clock, or it was
+	// deleted meanwhile) | failed.
+	ApiSandboxPausedExpirySwept CounterType = "api.sandbox.paused_expiry.swept"
 	// ApiEvictorFsOnlyAutoPause counts timeout auto-pauses whose policy asked
 	// for a filesystem-only snapshot. Unlabeled since the fs-only version
 	// gate was dropped: every counted eviction takes the fs-only path.
@@ -796,6 +802,11 @@ const (
 	// longer than the lifetime mean the store is being read as fast as the
 	// allowance permits. Exported with explicit buckets (metrics.go).
 	ApiSandboxListAge HistogramType = "api.sandbox.list.age"
+	// ApiSandboxPausedExpiryRunDuration is how long one expiry sweep run took,
+	// by result: reached_end | out_of_time (stopped at its time budget; the
+	// next run resumes from its cursor) | stopped (cancelled by shutdown) |
+	// failed. Runs near the budget mean the sweep is behind.
+	ApiSandboxPausedExpiryRunDuration HistogramType = "api.sandbox.paused_expiry.run.duration"
 	// ApiRedisStorageListGets is the commands one bulk record read issued, by
 	// the sandbox list, the evictor or the node reconcile: one GET per record
 	// on the sandbox-tagged keys.
@@ -941,6 +952,7 @@ var counterDesc = map[CounterType]string{
 	ApiOrchestratorCreateRefusals:                "Sandbox creates a node refused before starting them, by cause: status | capacity.",
 	ApiSandboxListReads:                          "Sandbox list requests by team and by how the team's store read was served: disabled | read | shared | hit.",
 	ApiTemplateListCapExceeded:                   "Unpaginated template list requests refused because the team has more templates than the cap, by team.",
+	ApiSandboxPausedExpirySwept:                  "Expired paused sandboxes the expiry sweep visited, by outcome: deleted | would_delete | skipped_live | skipped_refreshed | failed.",
 	BuildResultCounterName:                       "Number of template build results, by result, requested vcpu_sizing (absent|equal|resizable) and built (resizable|not_resizable|none)",
 	BuildCacheResultCounterName:                  "Number of build cache results",
 	TeamSandboxCreated:                           "Counter of started sandboxes for the team in the interval",
@@ -1052,6 +1064,7 @@ var counterUnits = map[CounterType]string{
 	ApiOrchestratorCreateRefusals:                "{refusal}",
 	ApiSandboxListReads:                          "{request}",
 	ApiTemplateListCapExceeded:                   "{request}",
+	ApiSandboxPausedExpirySwept:                  "{sandbox}",
 	BuildResultCounterName:                       "{build}",
 	BuildCacheResultCounterName:                  "{layer}",
 	TeamSandboxCreated:                           "{sandbox}",
@@ -1365,6 +1378,7 @@ var histogramDesc = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "Duration of a single Redis PUBLISH round-trip from the storage publisher",
 	ApiRedisScriptDuration:                  "Round trip of one Lua script run against the sandbox store, by script",
 	ApiSandboxListAge:                       "Age of a served sandbox list: the store sweep's duration for a read, the wait from the sweep's start for a joined (shared) read, the snapshot's lag for a hit",
+	ApiSandboxPausedExpiryRunDuration:       "Duration of one paused-sandbox expiry sweep run, by result",
 	ApiRedisStorageListGets:                 "Commands one bulk record read issued, by the sandbox list, the evictor or the node reconcile: one GET per record on the sandbox-tagged keys",
 
 	FPHRunDurationName:                                "Duration of a completed free-page-hinting drain or run, labeled by phase",
@@ -1467,6 +1481,7 @@ var histogramUnits = map[HistogramType]string{
 	ApiRedisStoragePublisherPublishDuration: "ms",
 	ApiRedisScriptDuration:                  "ms",
 	ApiSandboxListAge:                       "ms",
+	ApiSandboxPausedExpiryRunDuration:       "ms",
 	ApiRedisStorageListGets:                 "{command}",
 
 	FPHRunDurationName:                                "ms",

@@ -1,7 +1,8 @@
 // Package outbox works the API's River jobs: the jobs another service enqueues
 // in the shared database for work only the API can do, because it holds the
-// orchestrator connections, and the jobs the API enqueues with its own writes
-// to carry them to another service.
+// orchestrator connections, the jobs the API enqueues with its own writes to
+// carry them to another service, and the API's own periodic expiry sweep of
+// paused sandboxes. River schedules periodic jobs on its elected leader only.
 package outbox
 
 import (
@@ -19,6 +20,7 @@ import (
 	dbmodule "github.com/e2b-dev/infra/packages/api/internal/db"
 	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
 	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	webhooksgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/webhooks/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
@@ -34,11 +36,28 @@ const (
 
 	retryFloor = 30 * time.Second
 	retryCap   = 15 * time.Minute
+
+	// softStopTimeout is how long Stop waits for running jobs before it
+	// cancels them. A job cancelled by the stop goes straight back to
+	// available for another replica; one the process outlives stays running
+	// until rescueStuckJobsAfter, and a unique job like the expiry sweep
+	// blocks its own next runs until then. It is shorter than the API's
+	// 75 s outbox stop deadline, which starts with the shutdown.
+	softStopTimeout = 60 * time.Second
 )
 
 type Config struct {
 	MaxWorkers      int
 	BacklogInterval time.Duration
+	// PausedExpiryInterval is how often the expiry sweep runs,
+	// PausedExpiryBatchSize how many expired paused sandboxes it reads at once,
+	// and PausedExpiryConcurrency how many of them it handles at once.
+	PausedExpiryInterval    time.Duration
+	PausedExpiryBatchSize   int32
+	PausedExpiryConcurrency int
+	// SoftStopTimeout is how long Stop lets running jobs finish before it
+	// cancels them; zero means softStopTimeout.
+	SoftStopTimeout time.Duration
 }
 
 type Dependencies struct {
@@ -48,9 +67,13 @@ type Dependencies struct {
 	Containment teamContainer
 	TeamCache   teamCache
 	Teams       *authdb.Client
-	Logger      logger.Logger
-	Telemetry   *telemetry.Client
-	Config      Config
+	// PausedExpiry, when set, schedules the expiry sweep, which FeatureFlags
+	// gate per team.
+	PausedExpiry pausedSandboxExpirer
+	FeatureFlags *featureflags.Client
+	Logger       logger.Logger
+	Telemetry    *telemetry.Client
+	Config       Config
 }
 
 type River struct {
@@ -83,10 +106,44 @@ func New(deps Dependencies) (*River, error) {
 		settle:    containSettleDelay,
 		steps:     steps.Job(outbox.ContainBannedTeam{}.Kind()),
 	})
+
+	kinds := []string{outbox.TeardownTeamResources{}.Kind(), outbox.RetireProjectWebhooks{}.Kind(), outbox.ContainBannedTeam{}.Kind()}
+	var periodic []*river.PeriodicJob
+	if deps.PausedExpiry != nil {
+		meter := deps.Telemetry.MeterProvider.Meter("github.com/e2b-dev/infra/packages/api/internal/outbox")
+		swept, err := telemetry.GetCounter(meter, telemetry.ApiSandboxPausedExpirySwept)
+		if err != nil {
+			return nil, fmt.Errorf("create paused expiry counter: %w", err)
+		}
+		runDuration, err := telemetry.GetHistogram(meter, telemetry.ApiSandboxPausedExpiryRunDuration)
+		if err != nil {
+			return nil, fmt.Errorf("create paused expiry run duration: %w", err)
+		}
+		river.AddWorker(workers, &pausedExpiryWorker{
+			expirer:     deps.PausedExpiry,
+			flags:       deps.FeatureFlags,
+			batchSize:   deps.Config.PausedExpiryBatchSize,
+			concurrency: deps.Config.PausedExpiryConcurrency,
+			swept:       swept,
+			runDuration: runDuration,
+			log:         deps.Logger,
+			softBudget:  expirePausedSandboxesSoftBudget,
+			now:         time.Now,
+		})
+		kinds = append(kinds, expirePausedSandboxesKind)
+		periodic = append(periodic, expirePausedSandboxes(deps.Config.PausedExpiryInterval))
+	}
+
+	stopAfter := deps.Config.SoftStopTimeout
+	if stopAfter <= 0 {
+		stopAfter = softStopTimeout
+	}
 	client, err := river.NewClient(riverpgxv5.New(deps.Pool), &river.Config{
 		Schema:               dbmodule.RiverSchema,
 		Queues:               queues,
 		Workers:              workers,
+		PeriodicJobs:         periodic,
+		SoftStopTimeout:      stopAfter,
 		Plugins:              []rivertype.Plugin{sharedriver.NewOTelMiddleware(deps.Telemetry)},
 		Middleware:           []rivertype.Middleware{sharedriver.NewOutboxJobTelemetry(deps.Telemetry, deps.Logger)},
 		Logger:               sharedriver.NewLogger(deps.Logger),
@@ -102,7 +159,7 @@ func New(deps Dependencies) (*River, error) {
 	}
 	backlog, err := sharedriver.NewBacklog(deps.Pool, deps.Telemetry, deps.Logger, sharedriver.BacklogConfig{
 		Schema:   dbmodule.RiverSchema,
-		Kinds:    []string{outbox.TeardownTeamResources{}.Kind(), outbox.RetireProjectWebhooks{}.Kind(), outbox.ContainBannedTeam{}.Kind()},
+		Kinds:    kinds,
 		Interval: deps.Config.BacklogInterval,
 	})
 	if err != nil {

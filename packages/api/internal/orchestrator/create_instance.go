@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
+	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
@@ -781,6 +782,15 @@ func (o *Orchestrator) CreateSandbox(
 					zap.Error(killErr),
 					logger.WithSandboxID(sbx.SandboxID),
 				)
+			}
+
+			// A retry would only find the snapshot gone again.
+			if errors.Is(err, errPausedSnapshotDeleted) {
+				return sandbox.Sandbox{}, &api.APIError{
+					Code:      http.StatusNotFound,
+					ClientMsg: utils.SandboxNotFoundMsg(sandboxID),
+					Err:       fmt.Errorf("the snapshot of '%s' was deleted during its resume: %w", sandboxID, err),
+				}
 			}
 
 			return sandbox.Sandbox{}, &api.APIError{

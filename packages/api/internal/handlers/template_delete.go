@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
 	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
@@ -24,34 +25,47 @@ import (
 // whose fresh per-statement snapshots then see those rows. Returns the released
 // alias cache keys.
 func (a *APIStore) softDeleteTemplate(ctx context.Context, teamID uuid.UUID, templateID string) ([]string, error) {
+	_, aliasKeys, err := a.softDeleteEnv(ctx, func(txDB *sqlcdb.Client) (string, error) {
+		return txDB.SoftDeleteTemplate(ctx, queries.SoftDeleteTemplateParams{TemplateID: templateID, TeamID: teamID})
+	})
+
+	return aliasKeys, err
+}
+
+// softDeleteEnv runs softDeleteTemplate's transaction with deleteEnv as its
+// env-locking first statement, which returns the env it soft-deleted. It
+// returns that env and the released alias cache keys, or an empty env when
+// deleteEnv deleted none.
+func (a *APIStore) softDeleteEnv(ctx context.Context, deleteEnv func(txDB *sqlcdb.Client) (string, error)) (string, []string, error) {
 	txDB, tx, err := a.sqlcDB.WithTx(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return "", nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
-	if _, err := txDB.SoftDeleteTemplate(ctx, queries.SoftDeleteTemplateParams{TemplateID: templateID, TeamID: teamID}); err != nil {
+	templateID, err := deleteEnv(txDB)
+	if err != nil {
 		if dberrors.IsNotFoundError(err) {
-			return nil, nil // already deleted or not owned by the team
+			return "", nil, nil // already deleted or not owned by the team
 		}
 
-		return nil, fmt.Errorf("soft delete template: %w", err)
+		return "", nil, fmt.Errorf("soft delete env: %w", err)
 	}
 
 	aliasKeys, err := txDB.ReleaseTemplateAliases(ctx, templateID)
 	if err != nil {
-		return nil, fmt.Errorf("release aliases: %w", err)
+		return "", nil, fmt.Errorf("release aliases: %w", err)
 	}
 
 	if err := txDB.DeleteActiveTemplateBuilds(ctx, templateID); err != nil {
-		return nil, fmt.Errorf("delete active builds: %w", err)
+		return "", nil, fmt.Errorf("delete active builds: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+		return "", nil, fmt.Errorf("commit: %w", err)
 	}
 
-	return aliasKeys, nil
+	return templateID, aliasKeys, nil
 }
 
 // DeleteTemplatesTemplateID serves to delete a template (e.g. in CLI)

@@ -105,6 +105,35 @@ var RateLimitV2Mode = NewStringFlag("rate-limit-v2-mode", APIGroupRateLimitDisab
 
 var RateLimitDeleteMode = NewStringFlag("rate-limit-delete-mode", APIGroupRateLimitDisabled)
 
+const (
+	PausedSandboxExpiryDisabled = "disabled"
+	PausedSandboxExpiryDryRun   = "dry_run"
+	PausedSandboxExpiryEnabled  = "enabled"
+)
+
+// PausedSandboxExpiryMode is what the API's expiry sweep does with a team's
+// expired paused sandboxes: nothing (disabled), log and count what it would
+// delete without touching them (dry_run), or soft-delete them (enabled).
+// Evaluated per team. Any other value reads as disabled. Turning it back to
+// disabled is the kill switch. PAUSED_SANDBOX_EXPIRY_MODE sets the fallback
+// where there is no LaunchDarkly.
+var PausedSandboxExpiryMode = NewStringFlag("paused-sandbox-expiry-mode", env.GetEnv("PAUSED_SANDBOX_EXPIRY_MODE", PausedSandboxExpiryDisabled))
+
+// PausedSandboxExpiryTuning tunes the expiry sweep without a deploy:
+//
+//	{"batchSize": 100, "concurrency": 8, "budgetSeconds": 195}
+//
+// batchSize (1 to 1000) is how many expired paused sandboxes a page read
+// returns, concurrency (1 to 64) how many of a page are handled at once, and
+// budgetSeconds (10 to 195) how long a run takes sandboxes before it stops and
+// leaves the rest to the next run; 195 keeps a run plus one last delete inside
+// its hard timeout. A missing or out-of-range field takes the API's
+// configured value (PAUSED_EXPIRY_BATCH_SIZE, PAUSED_EXPIRY_CONCURRENCY) or
+// the 195 s budget. Read once at the start of every run, with no team context.
+// The run interval stays PAUSED_EXPIRY_INTERVAL: River fixes periodic
+// schedules when the API starts.
+var PausedSandboxExpiryTuning = NewJSONFlag("paused-sandbox-expiry-tuning", ldvalue.Null())
+
 // SandboxPauseRateLimitFlag caps explicit pause requests per sandbox:
 //
 //	{"limit": 5, "period_s": 60}

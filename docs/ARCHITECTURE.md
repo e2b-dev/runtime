@@ -356,7 +356,19 @@ image, which E2B Embed runs on port 3001 against the API alone.
   point and sweeps again, so work admitted before that eviction cannot outlive it. It
   is not unique: a job already running may have read the team before a later ban, so each ban
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
-  follow the teardown's. Steps report
+  follow the teardown's. `expire_paused_sandboxes` is the API's own periodic job, which River
+  schedules on its elected leader every `PAUSED_EXPIRY_INTERVAL` (default 5m, and once at
+  start). It reads the live snapshots whose `expires_at` had passed when it started, in
+  `PAUSED_EXPIRY_BATCH_SIZE` pages (default 100), and the `paused-sandbox-expiry-mode` flag
+  decides per team what it does with each: nothing (`disabled`, the fallback, which
+  `PAUSED_SANDBOX_EXPIRY_MODE` overrides), log and count it without touching it (`dry_run`), or
+  soft-delete it as `DELETE /sandboxes/{id}` does (`enabled`). It never kills: it takes the
+  sandbox's kill claim only while no run of it is in the store or resuming, and the soft delete
+  checks again that the expiry has passed, since a run that ended after the read restarted the
+  clock. No storage is freed. `api.sandbox.paused_expiry.swept` counts each by outcome. A sweep
+  stops taking sandboxes after 3m15s, within its 4-minute attempt bound, and keeps where it
+  stopped in Redis; the next one, on any replica, resumes there and starts over from the oldest
+  once a sweep reads to the end, so sandboxes it leaves in place cannot hold back the rest. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
   `OUTBOX_MAX_WORKERS` (default 10) controls the default queue. Each replica configured for

@@ -313,7 +313,7 @@ func TestCreateSandbox_ResumeBoundsPausedExpiry(t *testing.T) {
 		sandboxID string
 		apiErr    *api.APIError
 	}
-	resume := func(t *testing.T, beforeResume func(db *testutils.Database, sandboxID string)) resumed {
+	resume := func(t *testing.T, beforeResume func(db *testutils.Database, sandboxID, envID string, teamID uuid.UUID)) resumed {
 		t.Helper()
 
 		o := newCreateSandboxTestOrchestrator(t)
@@ -323,14 +323,15 @@ func TestCreateSandbox_ResumeBoundsPausedExpiry(t *testing.T) {
 		team.Team.ID = testutils.CreateTestTeam(t, db)
 		baseTemplateID := testutils.CreateTestTemplate(t, db, team.Team.ID)
 		sandboxID := "sbx-bound-" + uuid.NewString()[:8]
-		testutils.UpsertTestSnapshot(t, t.Context(), db, "tpl-"+uuid.NewString()[:8], sandboxID, team.Team.ID, baseTemplateID)
+		envID := "tpl-" + uuid.NewString()[:8]
+		testutils.UpsertTestSnapshot(t, t.Context(), db, envID, sandboxID, team.Team.ID, baseTemplateID)
 		_, err := db.SqlcClient.StampSnapshotExpiry(t.Context(), queries.StampSnapshotExpiryParams{
 			SandboxID:        sandboxID,
 			TeamID:           team.Team.ID,
 			PausedTtlSeconds: new(int64(3600)),
 		})
 		require.NoError(t, err)
-		beforeResume(db, sandboxID)
+		beforeResume(db, sandboxID, envID, team.Team.ID)
 
 		fetcher := func(context.Context) (SandboxMetadata, *api.APIError) {
 			return SandboxMetadata{TemplateID: "tpl", BaseTemplateID: baseTemplateID, Build: testBuild(), PausedTTL: &day, PausedTTLStored: true}, nil
@@ -345,7 +346,7 @@ func TestCreateSandbox_ResumeBoundsPausedExpiry(t *testing.T) {
 	t.Run("the bound covers the longest run plus its TTL", func(t *testing.T) {
 		t.Parallel()
 
-		r := resume(t, func(*testutils.Database, string) {})
+		r := resume(t, func(*testutils.Database, string, string, uuid.UUID) {})
 		require.Nil(t, r.apiErr)
 
 		assertExpiresIn(t, 24*time.Hour+day, readExpiresIn(t, r.db.SqlcClient, r.sandboxID))
@@ -355,7 +356,7 @@ func TestCreateSandbox_ResumeBoundsPausedExpiry(t *testing.T) {
 		t.Parallel()
 
 		var released <-chan struct{}
-		r := resume(t, func(db *testutils.Database, sandboxID string) {
+		r := resume(t, func(db *testutils.Database, sandboxID, _ string, _ uuid.UUID) {
 			released = lockSnapshotRow(t, db.SqlcClient, sandboxID)
 		})
 		<-released
@@ -367,5 +368,21 @@ func TestCreateSandbox_ResumeBoundsPausedExpiry(t *testing.T) {
 		expiresIn := readExpiresIn(t, r.db.SqlcClient, r.sandboxID)
 		require.NotNil(t, expiresIn)
 		assert.LessOrEqual(t, *expiresIn, time.Hour, "the pause's expiry stays, unbounded")
+	})
+
+	t.Run("a snapshot deleted after the resume read it refuses the resume", func(t *testing.T) {
+		t.Parallel()
+
+		// DELETE or the expiry sweep, between the resume reading the snapshot
+		// and the run starting.
+		r := resume(t, func(db *testutils.Database, _, envID string, teamID uuid.UUID) {
+			_, err := db.SqlcClient.SoftDeleteTemplate(t.Context(), queries.SoftDeleteTemplateParams{TemplateID: envID, TeamID: teamID})
+			require.NoError(t, err)
+		})
+
+		require.NotNil(t, r.apiErr)
+		assert.Equal(t, http.StatusNotFound, r.apiErr.Code, "a retry would find the snapshot gone again")
+		_, err := r.o.sandboxStore.Get(t.Context(), r.teamID, r.sandboxID)
+		require.ErrorIs(t, err, sandbox.ErrNotFound, "the run is not recorded")
 	})
 }

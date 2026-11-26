@@ -30,11 +30,15 @@ func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID 
 		return fmt.Errorf("error deleting template from db: %w", dbErr)
 	}
 
-	a.templateCache.InvalidateAllTags(context.WithoutCancel(ctx), snapshot.TemplateID)
-	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), snapshot.TemplateID, aliasKeys)
-	a.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
+	a.invalidateDeletedSnapshot(ctx, sandboxID, snapshot.TemplateID, aliasKeys)
 
 	return nil
+}
+
+func (a *APIStore) invalidateDeletedSnapshot(ctx context.Context, sandboxID, templateID string, aliasKeys []string) {
+	a.templateCache.InvalidateAllTags(context.WithoutCancel(ctx), templateID)
+	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), templateID, aliasKeys)
+	a.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
 }
 
 func (a *APIStore) DeleteSandboxesSandboxID(

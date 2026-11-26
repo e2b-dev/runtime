@@ -92,14 +92,17 @@ func stampSnapshotExpiry(t *testing.T, db *testutils.Database, teamID uuid.UUID,
 	return rows
 }
 
-func boundSnapshotExpiry(t *testing.T, db *testutils.Database, teamID uuid.UUID, sandboxID string, expiresAt *time.Time) {
+func boundSnapshotExpiry(t *testing.T, db *testutils.Database, teamID uuid.UUID, sandboxID string, expiresAt *time.Time) int64 {
 	t.Helper()
 
-	require.NoError(t, db.SqlcClient.BoundSnapshotExpiry(t.Context(), queries.BoundSnapshotExpiryParams{
+	rows, err := db.SqlcClient.BoundSnapshotExpiry(t.Context(), queries.BoundSnapshotExpiryParams{
 		ExpiresAt: expiresAt,
 		SandboxID: sandboxID,
 		TeamID:    teamID,
-	}))
+	})
+	require.NoError(t, err)
+
+	return rows
 }
 
 func assertExpiresIn(t *testing.T, want time.Duration, got snapshotExpiry) {
@@ -249,7 +252,7 @@ func TestBoundSnapshotExpiry(t *testing.T) {
 		upsertSnapshotWithTTL(t, db, teamID, baseTemplateID, sandboxID, &hour)
 		stampSnapshotExpiry(t, db, teamID, sandboxID, &hour)
 
-		boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour)))
+		assert.Equal(t, int64(1), boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour))))
 
 		got := readSnapshotExpiry(t, db, sandboxID)
 		assertExpiresIn(t, 25*time.Hour, got)
@@ -276,7 +279,7 @@ func TestBoundSnapshotExpiry(t *testing.T) {
 		sandboxID := "sandbox-" + uuid.NewString()
 		upsertSnapshotWithTTL(t, db, otherTeamID, otherBaseTemplateID, sandboxID, &hour)
 
-		boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour)))
+		assert.Equal(t, int64(0), boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour))))
 
 		assert.Nil(t, readSnapshotExpiry(t, db, sandboxID).expiresIn)
 	})
@@ -290,7 +293,8 @@ func TestBoundSnapshotExpiry(t *testing.T) {
 			"UPDATE public.snapshots SET env_deleted_at = now() WHERE sandbox_id = $1", sandboxID)
 		require.NoError(t, err)
 
-		boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour)))
+		assert.Equal(t, int64(0), boundSnapshotExpiry(t, db, teamID, sandboxID, new(time.Now().Add(25*time.Hour))),
+			"no row tells the resume that its snapshot is gone")
 
 		assert.Nil(t, readSnapshotExpiry(t, db, sandboxID).expiresIn)
 	})

@@ -1,7 +1,8 @@
--- name: BoundSnapshotExpiry :exec
+-- name: BoundSnapshotExpiry :execrows
 -- Sets a resumed sandbox's expiry to the latest its run can end plus its TTL,
 -- before the run starts. The run's end then only brings it forward, so a stamp
 -- that fails leaves a later expiry, never an earlier one. A NULL bound clears it.
+-- No row means the snapshot was deleted after the resume read it.
 UPDATE "public"."snapshots"
 SET expires_at = sqlc.narg(expires_at)::timestamptz
 WHERE sandbox_id = @sandbox_id

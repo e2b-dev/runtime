@@ -559,17 +559,22 @@ func NewAPIStore(ctx context.Context, tel *telemetry.Client, redisClient redis.U
 // client. Stop it before Close.
 func (a *APIStore) NewOutbox(l logger.Logger) (*outbox.River, error) {
 	riverOutbox, err := outbox.New(outbox.Dependencies{
-		Pool:        a.sqlcDB.Pool(),
-		Webhooks:    a.webhookManagement,
-		Sandboxes:   a.orchestrator,
-		Containment: a.teamService,
-		TeamCache:   a.authService,
-		Teams:       a.authDB,
-		Logger:      l,
-		Telemetry:   a.Telemetry,
+		Pool:         a.sqlcDB.Pool(),
+		Webhooks:     a.webhookManagement,
+		Sandboxes:    a.orchestrator,
+		Containment:  a.teamService,
+		TeamCache:    a.authService,
+		Teams:        a.authDB,
+		PausedExpiry: a,
+		FeatureFlags: a.featureFlags,
+		Logger:       l,
+		Telemetry:    a.Telemetry,
 		Config: outbox.Config{
-			MaxWorkers:      a.config.OutboxMaxWorkers,
-			BacklogInterval: a.config.OutboxBacklogInterval,
+			MaxWorkers:              a.config.OutboxMaxWorkers,
+			BacklogInterval:         a.config.OutboxBacklogInterval,
+			PausedExpiryInterval:    a.config.PausedExpiryInterval,
+			PausedExpiryBatchSize:   a.config.PausedExpiryBatchSize,
+			PausedExpiryConcurrency: a.config.PausedExpiryConcurrency,
 		},
 	})
 	if err != nil {
