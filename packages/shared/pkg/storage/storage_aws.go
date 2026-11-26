@@ -96,6 +96,19 @@ func newAWSStorage(ctx context.Context, spec Spec, limiter *limit.Limiter) (*aws
 		// default virtual-host style https://bucket.host/key) is required by
 		// most S3-compatible backends (MinIO, Ceph, …).
 		o.UsePathStyle = spec.UsePathStyle
+
+		// Only calculate/validate checksums when the operation requires it.
+		// The SDK's default (WhenSupported) attaches a request checksum to, and
+		// validates a response checksum for, every operation that supports one.
+		// S3-compatible backends (GCS, Volces TOS, MinIO, …) routinely return
+		// no SDK-recognized checksum, so WhenSupported makes the SDK log
+		// "Response has no supported checksum. Not validating response payload."
+		// at WARN on every read — here, once per object fetch, which floods the
+		// orchestrator/template-manager logs. WhenRequired keeps checksums for
+		// operations that mandate them (unchanged correctness) and drops the
+		// noise for the rest. S3 itself still validates where it requires it.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 	presignClient := s3.NewPresignClient(client)
 
