@@ -208,7 +208,7 @@ func buildUpsertSnapshotParams(sbx sandbox.Sandbox, node *nodemanager.Node, curr
 		clusterID = &sbx.ClusterID
 	}
 
-	pausedTTL := pausedTTLSeconds(sbx.PausedTTL)
+	pausedTTL := PausedTTLSeconds(sbx.PausedTTL)
 
 	return queries.UpsertSnapshotParams{
 		// Used if there's no snapshot for this sandbox yet

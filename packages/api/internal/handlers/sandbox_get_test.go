@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
@@ -26,8 +27,10 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
+	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
+	sandboxredis "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/storage/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -43,8 +46,10 @@ func injectsACredential() *dbtypes.PausedSandboxConfig {
 	}}
 }
 
-func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
-	t.Parallel()
+// newSandboxGetTestStore returns a store whose orchestrator and snapshot cache
+// read only Redis, so a test seeds both through the returned client.
+func newSandboxGetTestStore(t *testing.T) (*APIStore, redis.UniversalClient) {
+	t.Helper()
 
 	redisClient := redis_utils.SetupContainerInstance(t)
 	flags, err := featureflags.NewClientWithDatasource(ldtestdata.DataSource())
@@ -62,9 +67,51 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 		require.NoError(t, orch.Close(context.WithoutCancel(t.Context())))
 		require.NoError(t, snapshots.Close(context.WithoutCancel(t.Context())))
 	})
+
 	tokens, err := sandbox.NewAccessTokenGenerator("seed")
 	require.NoError(t, err)
-	store := &APIStore{orchestrator: orch, snapshotCache: snapshots, accessTokenGenerator: tokens}
+
+	return &APIStore{orchestrator: orch, snapshotCache: snapshots, accessTokenGenerator: tokens}, redisClient
+}
+
+// seedPausedSnapshot writes the snapshot cache entry a paused get reads. A miss
+// would fall through to the nil DB and panic.
+func seedPausedSnapshot(t *testing.T, redisClient redis.UniversalClient, aliases []string, snapshot queries.Snapshot) {
+	t.Helper()
+
+	diskSize := int64(1024)
+	envdVersion := "v1.0.0"
+	data, err := json.Marshal(snapshotcache.SnapshotInfo{ //nolint:musttag // Snapshot rows use their Go field names in the shared cache format.
+		Aliases:  aliases,
+		Snapshot: snapshot,
+		EnvBuild: queries.EnvBuild{TotalDiskSizeMb: &diskSize, EnvdVersion: &envdVersion},
+		Format:   snapshotcache.SnapshotInfoFormat,
+	})
+	require.NoError(t, err)
+	require.NoError(t, redisClient.Set(t.Context(), "snapshot:last:v2:"+snapshot.SandboxID, data, 5*time.Minute).Err())
+}
+
+// getSandboxBody returns the get response's fields and its raw body.
+func getSandboxBody(t *testing.T, store *APIStore, teamID uuid.UUID, role, sandboxID string) (map[string]json.RawMessage, string) {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sandboxes/"+sandboxID, nil)
+	auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{Team: &dbtypes.Team{ID: teamID}, Role: role})
+	store.GetSandboxesSandboxID(ginCtx, sandboxID)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+
+	return body, recorder.Body.String()
+}
+
+func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
+	t.Parallel()
+
+	store, redisClient := newSandboxGetTestStore(t)
 	teamID := uuid.New()
 
 	for _, tt := range []struct {
@@ -95,36 +142,18 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 			t.Parallel()
 
 			sandboxID := tt.sandboxID
-			diskSize := int64(1024)
-			envdVersion := "v1.0.0"
-			data, err := json.Marshal(snapshotcache.SnapshotInfo{ //nolint:musttag // Snapshot rows use their Go field names in the shared cache format.
-				Aliases: tt.aliases,
-				Snapshot: queries.Snapshot{
-					SandboxID: sandboxID, TeamID: teamID, BaseEnvID: "template", Config: tt.config, EnvSecure: tt.secure,
-				},
-				EnvBuild: queries.EnvBuild{TotalDiskSizeMb: &diskSize, EnvdVersion: &envdVersion},
-				Format:   snapshotcache.SnapshotInfoFormat,
+			seedPausedSnapshot(t, redisClient, tt.aliases, queries.Snapshot{
+				SandboxID: sandboxID, TeamID: teamID, BaseEnvID: "template", Config: tt.config, EnvSecure: tt.secure,
 			})
-			require.NoError(t, err)
-			// The snapshot cache's Redis key. A miss falls through to the nil DB and panics.
-			require.NoError(t, redisClient.Set(t.Context(), "snapshot:last:v2:"+sandboxID, data, 5*time.Minute).Err())
 
-			recorder := httptest.NewRecorder()
-			ginCtx, _ := gin.CreateTestContext(recorder)
-			ginCtx.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/sandboxes/"+sandboxID, nil)
-			auth.SetTeamInfoForTest(t, ginCtx, &authtypes.Team{Team: &dbtypes.Team{ID: teamID}, Role: tt.role})
-			store.GetSandboxesSandboxID(ginCtx, sandboxID)
-
-			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-			var body map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+			body, raw := getSandboxBody(t, store, teamID, tt.role, sandboxID)
 			assert.JSONEq(t, `"paused"`, string(body["state"]))
 			if tt.wantSecrets {
 				assert.Contains(t, body, "envdAccessToken")
-				assert.Contains(t, recorder.Body.String(), egressCredential)
+				assert.Contains(t, raw, egressCredential)
 			} else {
 				assert.NotContains(t, body, "envdAccessToken")
-				assert.NotContains(t, recorder.Body.String(), egressCredential)
+				assert.NotContains(t, raw, egressCredential)
 			}
 			if tt.wantMounts == "" {
 				assert.NotContains(t, body, "volumeMounts")
@@ -137,6 +166,88 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 				wantAlias = `"first"`
 			}
 			assert.JSONEq(t, wantAlias, string(body["alias"]))
+		})
+	}
+}
+
+func TestGetSandboxesSandboxID_PausedTTL(t *testing.T) {
+	t.Parallel()
+
+	store, redisClient := newSandboxGetTestStore(t)
+	storage, err := sandboxredis.NewStorage(redisClient, noop.NewMeterProvider())
+	require.NoError(t, err)
+	teamID := uuid.New()
+	ttl := 2 * time.Hour
+	expiresAt := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+
+	running := func(state sandbox.State, ttl *time.Duration) func(*testing.T, string) {
+		return func(t *testing.T, sandboxID string) {
+			t.Helper()
+			now := time.Now()
+			require.NoError(t, storage.Add(t.Context(), sandbox.Sandbox{
+				SandboxID: sandboxID, ExecutionID: uuid.NewString(), TeamID: teamID, TemplateID: "template",
+				StartTime: now, EndTime: now.Add(time.Hour), MaxInstanceLength: time.Hour,
+				ClusterID: consts.LocalClusterID, State: state, PausedTTL: ttl,
+			}))
+		}
+	}
+	paused := func(config *dbtypes.PausedSandboxConfig, expiresAt *time.Time) func(*testing.T, string) {
+		return func(t *testing.T, sandboxID string) {
+			t.Helper()
+			seedPausedSnapshot(t, redisClient, nil, queries.Snapshot{
+				SandboxID: sandboxID, TeamID: teamID, BaseEnvID: "template", Config: config, ExpiresAt: expiresAt,
+			})
+		}
+	}
+
+	for _, tt := range []struct {
+		name          string
+		sandboxID     string
+		seed          func(t *testing.T, sandboxID string)
+		wantTTL       string
+		wantExpiresAt string
+	}{
+		{
+			name: "running with a TTL", sandboxID: "runningttl",
+			seed:    running(sandbox.StateRunning, &ttl),
+			wantTTL: `7200`, wantExpiresAt: `null`,
+		},
+		{
+			name: "running without a TTL", sandboxID: "runningnottl",
+			seed:    running(sandbox.StateRunning, nil),
+			wantTTL: `null`, wantExpiresAt: `null`,
+		},
+		{
+			name: "pausing has no expiry until the pause finishes", sandboxID: "pausingttl",
+			seed:    running(sandbox.StatePausing, &ttl),
+			wantTTL: `7200`, wantExpiresAt: `null`,
+		},
+		{
+			name: "paused with a TTL", sandboxID: "pausedttl",
+			seed:    paused(&dbtypes.PausedSandboxConfig{PausedTTL: new(int64(7200))}, &expiresAt),
+			wantTTL: `7200`, wantExpiresAt: `"2026-11-12T10:00:00Z"`,
+		},
+		{
+			name: "paused without a TTL", sandboxID: "pausednottl",
+			seed:    paused(&dbtypes.PausedSandboxConfig{}, nil),
+			wantTTL: `null`, wantExpiresAt: `null`,
+		},
+		{
+			name: "legacy snapshot without config", sandboxID: "pausedlegacyttl",
+			seed:    paused(nil, nil),
+			wantTTL: `null`, wantExpiresAt: `null`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.seed(t, tt.sandboxID)
+
+			body, _ := getSandboxBody(t, store, teamID, "", tt.sandboxID)
+			require.Contains(t, body, "pausedRetentionSeconds")
+			require.Contains(t, body, "expiresAt")
+			assert.JSONEq(t, tt.wantTTL, string(body["pausedRetentionSeconds"]))
+			assert.JSONEq(t, tt.wantExpiresAt, string(body["expiresAt"]))
 		})
 	}
 }

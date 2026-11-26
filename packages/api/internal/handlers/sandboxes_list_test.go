@@ -335,6 +335,49 @@ func TestInstanceInfoToPaginatedSandboxes_PaginationTimestampPrecision(t *testin
 		"pagination key should have no sub-microsecond bits")
 }
 
+func TestListedSandboxes_PausedTTL(t *testing.T) {
+	t.Parallel()
+
+	ttl := 2 * time.Hour
+	expiresAt := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+
+	t.Run("running and pausing sandboxes carry the TTL but no expiry yet", func(t *testing.T) {
+		t.Parallel()
+
+		listed := instanceInfoToPaginatedSandboxes([]sandbox.Sandbox{
+			{SandboxID: "running", State: sandbox.StateRunning, PausedTTL: &ttl},
+			{SandboxID: "pausing", State: sandbox.StatePausing, PausedTTL: &ttl},
+			{SandboxID: "nottl", State: sandbox.StateRunning},
+		})
+		require.Len(t, listed, 3)
+
+		for _, sbx := range listed[:2] {
+			assert.Equal(t, new(int64(7200)), sbx.PausedRetentionSeconds, sbx.SandboxID)
+			assert.Nil(t, sbx.ExpiresAt, sbx.SandboxID)
+		}
+		assert.Nil(t, listed[2].PausedRetentionSeconds)
+		assert.Nil(t, listed[2].ExpiresAt)
+	})
+
+	t.Run("paused sandboxes carry the stored TTL and expiry", func(t *testing.T) {
+		t.Parallel()
+
+		listed := snapshotsToPaginatedSandboxes(t.Context(), []queries.GetSnapshotsWithCursorRow{
+			{Snapshot: queries.Snapshot{SandboxID: "ttl", Config: &dbtypes.PausedSandboxConfig{PausedTTL: new(int64(7200))}, ExpiresAt: &expiresAt}},
+			{Snapshot: queries.Snapshot{SandboxID: "nottl", Config: &dbtypes.PausedSandboxConfig{}}},
+			{Snapshot: queries.Snapshot{SandboxID: "legacy"}},
+		})
+		require.Len(t, listed, 3)
+
+		assert.Equal(t, new(int64(7200)), listed[0].PausedRetentionSeconds)
+		assert.Equal(t, &expiresAt, listed[0].ExpiresAt)
+		for _, sbx := range listed[1:] {
+			assert.Nil(t, sbx.PausedRetentionSeconds, sbx.SandboxID)
+			assert.Nil(t, sbx.ExpiresAt, sbx.SandboxID)
+		}
+	})
+}
+
 // GET /sandboxes refuses a list above the cap, counting the sandboxes the
 // metadata filter leaves, since those are what the response would carry.
 func TestGetRunningSandboxes_Cap(t *testing.T) {

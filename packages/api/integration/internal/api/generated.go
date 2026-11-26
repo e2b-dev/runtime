@@ -1455,9 +1455,15 @@ type ListedSandbox struct {
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
 
+	// ExpiresAt When the paused sandbox will be deleted. Null while the sandbox is running or pausing, and when no retention is set.
+	ExpiresAt *time.Time `json:"expiresAt"`
+
 	// MemoryMB Memory for the sandbox in MiB
 	MemoryMB MemoryMB         `json:"memoryMB"`
 	Metadata *SandboxMetadata `json:"metadata,omitempty"`
+
+	// PausedRetentionSeconds Seconds the sandbox may stay paused and unused before it is deleted. Null when no retention is set.
+	PausedRetentionSeconds *int64 `json:"pausedRetentionSeconds"`
 
 	// SandboxID Identifier of the sandbox
 	SandboxID string `json:"sandboxID"`
@@ -1730,6 +1736,9 @@ type NewSandboxV2 struct {
 	MemoryMB *MemoryMB             `json:"memoryMB,omitempty"`
 	Metadata *SandboxMetadata      `json:"metadata,omitempty"`
 	Network  *SandboxNetworkConfig `json:"network,omitempty"`
+
+	// PausedRetentionSeconds Seconds a paused sandbox may stay unused before it is deleted, from 1 hour to 100 years. The clock restarts every time a run of the sandbox ends, by pause or by kill. Null means the sandbox is never deleted automatically.
+	PausedRetentionSeconds *SandboxPausedRetentionSeconds `json:"pausedRetentionSeconds,omitempty"`
 
 	// TemplateID Identifier of the required template
 	TemplateID string `json:"templateID"`
@@ -2124,6 +2133,9 @@ type SandboxDetail struct {
 	// EnvdVersion Version of the envd running in the sandbox
 	EnvdVersion EnvdVersion `json:"envdVersion"`
 
+	// ExpiresAt When the paused sandbox will be deleted. Null while the sandbox is running or pausing, and when no retention is set.
+	ExpiresAt *time.Time `json:"expiresAt"`
+
 	// Lifecycle Sandbox lifecycle policy returned by sandbox info.
 	Lifecycle *SandboxLifecycle `json:"lifecycle,omitempty"`
 
@@ -2134,6 +2146,9 @@ type SandboxDetail struct {
 
 	// PauseMode What the sandbox's latest pause saved. `full` saved the filesystem and the memory, and resuming restores the sandbox where it left off. `filesystem` saved only the filesystem, and resuming reboots the sandbox from disk. Returned for a paused sandbox once its pause has finished, and omitted while it is still pausing.
 	PauseMode *SandboxPauseMode `json:"pauseMode,omitempty"`
+
+	// PausedRetentionSeconds Seconds the sandbox may stay paused and unused before it is deleted. Null when no retention is set.
+	PausedRetentionSeconds *int64 `json:"pausedRetentionSeconds"`
 
 	// SandboxID Identifier of the sandbox
 	SandboxID string `json:"sandboxID"`
@@ -2408,6 +2423,15 @@ type SandboxPauseRequest struct {
 	// RequireHealthyGuest The pause checks that the sandbox guest agent answers before it takes the snapshot. By default an unresponsive agent is recorded on the snapshot and the pause proceeds; the sandbox then shows `envdUnresponsiveAtPause` and a later resume must ask for `memory: false`, since restoring that memory would bring the unresponsive agent back. With this true, the pause is instead refused with 503 while the agent does not answer, and the sandbox keeps running. A filesystem-only pause (`memory: false`) is always refused while the agent does not answer, whatever this says.
 	RequireHealthyGuest *bool `json:"requireHealthyGuest,omitempty"`
 }
+
+// SandboxPausedRetentionRequest defines model for SandboxPausedRetentionRequest.
+type SandboxPausedRetentionRequest struct {
+	// PausedRetentionSeconds Seconds a paused sandbox may stay unused before it is deleted, from 1 hour to 100 years. The clock restarts every time a run of the sandbox ends, by pause or by kill. Null means the sandbox is never deleted automatically.
+	PausedRetentionSeconds *SandboxPausedRetentionSeconds `json:"pausedRetentionSeconds"`
+}
+
+// SandboxPausedRetentionSeconds Seconds a paused sandbox may stay unused before it is deleted, from 1 hour to 100 years. The clock restarts every time a run of the sandbox ends, by pause or by kill. Null means the sandbox is never deleted automatically.
+type SandboxPausedRetentionSeconds = int64
 
 // SandboxRecord defines model for SandboxRecord.
 type SandboxRecord struct {
@@ -4011,6 +4035,9 @@ type PutSandboxesSandboxIDNetworkJSONRequestBody = SandboxNetworkUpdateConfig
 // PostSandboxesSandboxIDPauseJSONRequestBody defines body for PostSandboxesSandboxIDPause for application/json ContentType.
 type PostSandboxesSandboxIDPauseJSONRequestBody = SandboxPauseRequest
 
+// PutSandboxesSandboxIDPausedRetentionJSONRequestBody defines body for PutSandboxesSandboxIDPausedRetention for application/json ContentType.
+type PutSandboxesSandboxIDPausedRetentionJSONRequestBody = SandboxPausedRetentionRequest
+
 // PostSandboxesSandboxIDRefreshesJSONRequestBody defines body for PostSandboxesSandboxIDRefreshes for application/json ContentType.
 type PostSandboxesSandboxIDRefreshesJSONRequestBody = SandboxRefreshRequest
 
@@ -4994,6 +5021,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /sandboxes/{sandboxID}/pause (the `PostSandboxesSandboxIDPause` operationId).
 	PostSandboxesSandboxIDPause(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDPauseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutSandboxesSandboxIDPausedRetentionWithBody Set the paused sandbox retention
+	//
+	// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+	PutSandboxesSandboxIDPausedRetentionWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutSandboxesSandboxIDPausedRetention Set the paused sandbox retention
+	//
+	// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+	PutSandboxesSandboxIDPausedRetention(ctx context.Context, sandboxID SandboxID, body PutSandboxesSandboxIDPausedRetentionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PostSandboxesSandboxIDRefreshesWithBody Refresh sandbox
 	//
@@ -6857,6 +6902,44 @@ func (c *Client) PostSandboxesSandboxIDPauseWithBody(ctx context.Context, sandbo
 // Corresponds with POST /sandboxes/{sandboxID}/pause (the `PostSandboxesSandboxIDPause` operationId).
 func (c *Client) PostSandboxesSandboxIDPause(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDPauseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostSandboxesSandboxIDPauseRequest(c.Server, sandboxID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutSandboxesSandboxIDPausedRetentionWithBody Set the paused sandbox retention
+//
+// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+func (c *Client) PutSandboxesSandboxIDPausedRetentionWithBody(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSandboxesSandboxIDPausedRetentionRequestWithBody(c.Server, sandboxID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutSandboxesSandboxIDPausedRetention Set the paused sandbox retention
+//
+// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+func (c *Client) PutSandboxesSandboxIDPausedRetention(ctx context.Context, sandboxID SandboxID, body PutSandboxesSandboxIDPausedRetentionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSandboxesSandboxIDPausedRetentionRequest(c.Server, sandboxID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10929,6 +11012,53 @@ func NewPostSandboxesSandboxIDPauseRequestWithBody(server string, sandboxID Sand
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPutSandboxesSandboxIDPausedRetentionRequest calls the generic PutSandboxesSandboxIDPausedRetention builder with application/json body
+func NewPutSandboxesSandboxIDPausedRetentionRequest(server string, sandboxID SandboxID, body PutSandboxesSandboxIDPausedRetentionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutSandboxesSandboxIDPausedRetentionRequestWithBody(server, sandboxID, "application/json", bodyReader)
+}
+
+// NewPutSandboxesSandboxIDPausedRetentionRequestWithBody constructs an http.Request for the PutSandboxesSandboxIDPausedRetention method, with any body, and a specified content type
+func NewPutSandboxesSandboxIDPausedRetentionRequestWithBody(server string, sandboxID SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sandboxID", sandboxID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/sandboxes/%s/paused-retention", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -15698,6 +15828,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /sandboxes/{sandboxID}/pause (the `PostSandboxesSandboxIDPause` operationId).
 	PostSandboxesSandboxIDPauseWithResponse(ctx context.Context, sandboxID SandboxID, body PostSandboxesSandboxIDPauseJSONRequestBody, reqEditors ...RequestEditorFn) (*PostSandboxesSandboxIDPauseResponse, error)
 
+	// PutSandboxesSandboxIDPausedRetentionWithBodyWithResponse Set the paused sandbox retention
+	//
+	// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+	PutSandboxesSandboxIDPausedRetentionWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSandboxesSandboxIDPausedRetentionResponse, error)
+
+	// PutSandboxesSandboxIDPausedRetentionWithResponse Set the paused sandbox retention
+	//
+	// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+	PutSandboxesSandboxIDPausedRetentionWithResponse(ctx context.Context, sandboxID SandboxID, body PutSandboxesSandboxIDPausedRetentionJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSandboxesSandboxIDPausedRetentionResponse, error)
+
 	// PostSandboxesSandboxIDRefreshesWithBodyWithResponse Refresh sandbox
 	//
 	// Refresh the sandbox extending its time to live.
@@ -19946,6 +20094,89 @@ func (r PostSandboxesSandboxIDPauseResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PostSandboxesSandboxIDPauseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutSandboxesSandboxIDPausedRetentionResponse429Headers the declared response headers of an HTTP 429 response for PutSandboxesSandboxIDPausedRetention
+type PutSandboxesSandboxIDPausedRetentionResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PutSandboxesSandboxIDPausedRetentionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *N400
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *N401
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *N404
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *N409
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *N429
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *N500
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PutSandboxesSandboxIDPausedRetentionResponse429Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON400() *N400 {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON401() *N401 {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON404() *N404 {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON409() *N409 {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON429() *N429 {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetJSON500() *N500 {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PutSandboxesSandboxIDPausedRetentionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutSandboxesSandboxIDPausedRetentionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutSandboxesSandboxIDPausedRetentionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutSandboxesSandboxIDPausedRetentionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27563,6 +27794,36 @@ func (c *ClientWithResponses) PostSandboxesSandboxIDPauseWithResponse(ctx contex
 	return ParsePostSandboxesSandboxIDPauseResponse(rsp)
 }
 
+// PutSandboxesSandboxIDPausedRetentionWithBodyWithResponse Set the paused sandbox retention
+//
+// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+func (c *ClientWithResponses) PutSandboxesSandboxIDPausedRetentionWithBodyWithResponse(ctx context.Context, sandboxID SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSandboxesSandboxIDPausedRetentionResponse, error) {
+	rsp, err := c.PutSandboxesSandboxIDPausedRetentionWithBody(ctx, sandboxID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSandboxesSandboxIDPausedRetentionResponse(rsp)
+}
+
+// PutSandboxesSandboxIDPausedRetentionWithResponse Set the paused sandbox retention
+//
+// Replace the sandbox's paused retention (pausedRetentionSeconds); null removes it. For a paused sandbox the clock restarts: expiresAt becomes the time of the request plus the new retention, or null when the retention is removed. A running sandbox keeps the new retention for when its current run ends.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /sandboxes/{sandboxID}/paused-retention (the `PutSandboxesSandboxIDPausedRetention` operationId).
+func (c *ClientWithResponses) PutSandboxesSandboxIDPausedRetentionWithResponse(ctx context.Context, sandboxID SandboxID, body PutSandboxesSandboxIDPausedRetentionJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSandboxesSandboxIDPausedRetentionResponse, error) {
+	rsp, err := c.PutSandboxesSandboxIDPausedRetention(ctx, sandboxID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSandboxesSandboxIDPausedRetentionResponse(rsp)
+}
+
 // PostSandboxesSandboxIDRefreshesWithBodyWithResponse Refresh sandbox
 //
 // Refresh the sandbox extending its time to live.
@@ -32047,6 +32308,83 @@ func ParsePostSandboxesSandboxIDPauseResponse(rsp *http.Response) (*PostSandboxe
 	switch {
 	case rsp.StatusCode == 429:
 		var headers PostSandboxesSandboxIDPauseResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutSandboxesSandboxIDPausedRetentionResponse parses an HTTP response from a PutSandboxesSandboxIDPausedRetentionWithResponse call
+func ParsePutSandboxesSandboxIDPausedRetentionResponse(rsp *http.Response) (*PutSandboxesSandboxIDPausedRetentionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutSandboxesSandboxIDPausedRetentionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest N404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest N409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest N429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest N500
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PutSandboxesSandboxIDPausedRetentionResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

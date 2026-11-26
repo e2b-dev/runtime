@@ -71,7 +71,7 @@ func (f refusalFixture) pausedWithTTL(t *testing.T, pausedTTL *time.Duration, ru
 	_, err = f.o.sqlcDB.StampSnapshotExpiry(t.Context(), queries.StampSnapshotExpiryParams{
 		SandboxID:        f.sbx.SandboxID,
 		TeamID:           f.sbx.TeamID,
-		PausedTtlSeconds: pausedTTLSeconds(pausedTTL),
+		PausedTtlSeconds: PausedTTLSeconds(pausedTTL),
 	})
 	require.NoError(t, err)
 

@@ -147,9 +147,9 @@ type Sandbox struct {
 	// PausedTTL is how long the sandbox may stay paused after this run ends
 	// before it expires. Nil means it never expires.
 	PausedTTL *time.Duration `json:"pausedTtl,omitempty"`
-	// PausedTTLStored records that this run was resumed from a snapshot that
-	// had a TTL, so its end must clear the stored expiry even when PausedTTL
-	// was removed during the run.
+	// PausedTTLStored records that the snapshot holds a TTL or expiry from
+	// this run's resume or from a TTL set during it, so its end must clear the
+	// stored expiry even when PausedTTL was removed during the run.
 	PausedTTLStored bool `json:"pausedTtlStored,omitempty"`
 	// NetworkPlacement is the placement the orchestrator returned for this
 	// execution's successful create. Nil means the legacy per-worker network,

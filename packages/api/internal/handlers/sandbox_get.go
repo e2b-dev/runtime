@@ -11,6 +11,7 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
 	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
@@ -174,23 +175,24 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 
 		// Sandbox exists and belongs to the team - return running sandbox sbx
 		sandbox := api.SandboxDetail{
-			ClientID:            sbx.ClientID,
-			TemplateID:          sbx.BaseTemplateID,
-			Alias:               sbx.Alias,
-			SandboxID:           sbx.SandboxID,
-			StartedAt:           sbx.StartTime,
-			CpuCount:            api.CPUCount(sbx.VCpu),
-			MemoryMB:            api.MemoryMB(sbx.TotalMemoryMB()),
-			DiskSizeMB:          api.DiskSizeMB(sbx.TotalDiskSizeMB),
-			EndAt:               sbx.EndTime,
-			State:               state,
-			EnvdVersion:         sbx.EnvdVersion,
-			EnvdAccessToken:     sbx.EnvdAccessToken,
-			AllowInternetAccess: sbx.AllowInternetAccess,
-			Domain:              sbxDomain,
-			Network:             dbNetworkConfigToAPI(sbx.Network),
-			Lifecycle:           sandboxLifecycleToAPI(sbx.AutoPause, sbx.AutoResume),
-			VolumeMounts:        convertFromDBMountsToAPIMounts(sbx.VolumeMounts),
+			ClientID:               sbx.ClientID,
+			TemplateID:             sbx.BaseTemplateID,
+			Alias:                  sbx.Alias,
+			SandboxID:              sbx.SandboxID,
+			StartedAt:              sbx.StartTime,
+			CpuCount:               api.CPUCount(sbx.VCpu),
+			MemoryMB:               api.MemoryMB(sbx.TotalMemoryMB()),
+			DiskSizeMB:             api.DiskSizeMB(sbx.TotalDiskSizeMB),
+			EndAt:                  sbx.EndTime,
+			State:                  state,
+			EnvdVersion:            sbx.EnvdVersion,
+			EnvdAccessToken:        sbx.EnvdAccessToken,
+			AllowInternetAccess:    sbx.AllowInternetAccess,
+			Domain:                 sbxDomain,
+			Network:                dbNetworkConfigToAPI(sbx.Network),
+			Lifecycle:              sandboxLifecycleToAPI(sbx.AutoPause, sbx.AutoResume),
+			VolumeMounts:           convertFromDBMountsToAPIMounts(sbx.VolumeMounts),
+			PausedRetentionSeconds: orchestrator.PausedTTLSeconds(sbx.PausedTTL),
 		}
 
 		if sbx.Metadata != nil {
@@ -261,9 +263,11 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 
 	var autoResumeConfig *dbtypes.SandboxAutoResumeConfig
 	var networkConfig *dbtypes.SandboxNetworkConfig
+	var pausedTTL *int64
 	if lastSnapshot.Snapshot.Config != nil {
 		autoResumeConfig = lastSnapshot.Snapshot.Config.AutoResume
 		networkConfig = lastSnapshot.Snapshot.Config.Network
+		pausedTTL = lastSnapshot.Snapshot.Config.PausedTTL
 	}
 
 	pausedAlias := firstAlias(lastSnapshot.Aliases)
@@ -286,6 +290,8 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		Network:                 dbNetworkConfigToAPI(networkConfig),
 		Lifecycle:               sandboxLifecycleToAPI(lastSnapshot.Snapshot.AutoPause, autoResumeConfig),
 		PauseMode:               sandboxPauseModeToAPI(lastSnapshot.Snapshot.Config),
+		PausedRetentionSeconds:  pausedTTL,
+		ExpiresAt:               lastSnapshot.Snapshot.ExpiresAt,
 	}
 
 	// Always set, even to "", so a paused sandbox answers like a running one.

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/gin-gonic/gin"
@@ -693,7 +694,7 @@ func TestOrchestrator_convertVolumeMounts(t *testing.T) {
 func TestNewSandboxFromV2(t *testing.T) {
 	t.Parallel()
 
-	t.Run("v2 request has every NewSandbox field except secure", func(t *testing.T) {
+	t.Run("v2 request has every NewSandbox field except secure, and only pausedRetentionSeconds added", func(t *testing.T) {
 		t.Parallel()
 
 		v1Fields := map[string]reflect.Type{}
@@ -706,6 +707,7 @@ func TestNewSandboxFromV2(t *testing.T) {
 		for f := range reflect.TypeFor[api.NewSandboxV2]().Fields() {
 			v2Fields[f.Name] = f.Type
 		}
+		delete(v2Fields, "PausedRetentionSeconds")
 
 		assert.Equal(t, v1Fields, v2Fields)
 	})
@@ -748,6 +750,18 @@ func TestNewSandboxFromV2(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &want))
 		assert.Equal(t, want, got)
 	})
+}
+
+func TestPausedTTLDuration(t *testing.T) {
+	t.Parallel()
+
+	twoHours := 2 * time.Hour
+
+	assert.Nil(t, pausedTTLDuration(nil))
+	assert.Equal(t, &twoHours, pausedTTLDuration(new(int64(7200))))
+
+	hundredYears := 100 * 365 * 24 * time.Hour
+	assert.Equal(t, &hundredYears, pausedTTLDuration(new(int64(3153600000))), "the maximum must not overflow")
 }
 
 func TestPostSandboxes_AlwaysRequiresSecureCapableTemplate(t *testing.T) {

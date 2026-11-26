@@ -82,7 +82,7 @@ func (a *APIStore) PostSandboxes(c *gin.Context) {
 	}
 
 	body.Secure = new(true)
-	sbx, apiErr := a.createSandbox(c, body, sandbox.SandboxTimeoutDefault)
+	sbx, apiErr := a.createSandbox(c, body, sandbox.SandboxTimeoutDefault, nil)
 	if apiErr != nil {
 		// Only POST /v2/sandboxes exposes Should-Retry.
 		apiErr.Retryable = apierrors.UndefinedRetry
@@ -129,7 +129,7 @@ func (a *APIStore) PostV2Sandboxes(c *gin.Context, _ api.PostV2SandboxesParams) 
 	}
 
 	idempotency.Execute(c, fingerprintContent, func() *apierrors.APIError {
-		sbx, apiErr := a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2)
+		sbx, apiErr := a.createSandbox(c, newSandboxFromV2(body), sandbox.SandboxTimeoutDefaultV2, pausedTTLDuration(body.PausedRetentionSeconds))
 		if apiErr != nil {
 			return apiErr
 		}
@@ -162,7 +162,8 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 }
 
 // createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
-func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) (*api.Sandbox, *api.APIError) {
+// pausedTTL comes from the v2 body only, as only the v2 request carries it.
+func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration, pausedTTL *time.Duration) (*api.Sandbox, *api.APIError) {
 	ctx := apiorch.WithMemoryRoute(c.Request.Context(), apiorch.MemoryRouteCreate)
 
 	// Get team from context, use TeamContextKey
@@ -427,6 +428,7 @@ func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTim
 			VolumeMounts:            sbxVolumeMounts,
 			EnvdAccessToken:         envdAccessToken,
 			Iam:                     iamCfg,
+			PausedTTL:               pausedTTL,
 		}, nil
 	}
 
@@ -629,6 +631,15 @@ func buildSandboxIam(iam *api.SandboxIam) (*types.SandboxIam, *api.APIError) {
 	}
 
 	return &types.SandboxIam{Tokens: tokens}, nil
+}
+
+// pausedTTLDuration is the TTL the request sets; nil sets none.
+func pausedTTLDuration(seconds *api.SandboxPausedRetentionSeconds) *time.Duration {
+	if seconds == nil {
+		return nil
+	}
+
+	return new(time.Duration(*seconds) * time.Second)
 }
 
 func buildAutoResumeConfig(autoResume *api.SandboxAutoResumeConfig) *types.SandboxAutoResumeConfig {

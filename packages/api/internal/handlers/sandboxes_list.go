@@ -610,12 +610,14 @@ func snapshotsToPaginatedSandboxes(ctx context.Context, snapshots []queries.GetS
 				State:                   api.Paused,
 				EnvdVersion:             envdVersion,
 				EnvdUnresponsiveAtPause: envdUnresponsiveAtPause(record.BuildEnvdUnresponsive),
+				ExpiresAt:               snapshot.ExpiresAt,
 			},
 			PaginationTimestamp: snapshot.SandboxStartedAt.Time,
 		}
 
 		if snapshot.Config != nil {
 			sandbox.ListedSandbox.VolumeMounts = convertFromDBMountsToAPIMounts(snapshot.Config.VolumeMounts)
+			sandbox.PausedRetentionSeconds = snapshot.Config.PausedTTL
 		}
 
 		if snapshot.Metadata != nil {
@@ -662,18 +664,19 @@ func instanceInfoToPaginatedSandboxes(runningSandboxes []sandbox.Sandbox) []util
 
 		sandbox := utils.PaginatedSandbox{
 			ListedSandbox: api.ListedSandbox{
-				ClientID:     info.ClientID,
-				TemplateID:   info.BaseTemplateID,
-				Alias:        info.Alias,
-				SandboxID:    info.SandboxID,
-				StartedAt:    info.StartTime,
-				CpuCount:     api.CPUCount(info.VCpu),
-				MemoryMB:     api.MemoryMB(info.TotalMemoryMB()),
-				DiskSizeMB:   api.DiskSizeMB(info.TotalDiskSizeMB),
-				EndAt:        info.EndTime,
-				State:        state,
-				EnvdVersion:  info.EnvdVersion,
-				VolumeMounts: convertFromDBMountsToAPIMounts(info.VolumeMounts),
+				ClientID:               info.ClientID,
+				TemplateID:             info.BaseTemplateID,
+				Alias:                  info.Alias,
+				SandboxID:              info.SandboxID,
+				StartedAt:              info.StartTime,
+				CpuCount:               api.CPUCount(info.VCpu),
+				MemoryMB:               api.MemoryMB(info.TotalMemoryMB()),
+				DiskSizeMB:             api.DiskSizeMB(info.TotalDiskSizeMB),
+				EndAt:                  info.EndTime,
+				State:                  state,
+				EnvdVersion:            info.EnvdVersion,
+				VolumeMounts:           convertFromDBMountsToAPIMounts(info.VolumeMounts),
+				PausedRetentionSeconds: orchestrator.PausedTTLSeconds(info.PausedTTL),
 			},
 			// Paused snapshots come from Postgres at microsecond precision, but running
 			// sandboxes carry nanosecond StartTime from time.Now(). Truncate only the

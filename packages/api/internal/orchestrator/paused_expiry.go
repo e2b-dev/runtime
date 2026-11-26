@@ -42,7 +42,9 @@ func (o *Orchestrator) ClaimPausedSandbox(ctx context.Context, teamID uuid.UUID,
 	}
 }
 
-func pausedTTLSeconds(ttl *time.Duration) *int64 {
+// PausedTTLSeconds is the TTL in the whole seconds the database and the API
+// carry.
+func PausedTTLSeconds(ttl *time.Duration) *int64 {
 	if ttl == nil {
 		return nil
 	}
@@ -107,7 +109,7 @@ func (o *Orchestrator) stampPausedExpiry(ctx context.Context, sbx sandbox.Sandbo
 	_, err := o.sqlcDB.StampSnapshotExpiry(stampCtx, queries.StampSnapshotExpiryParams{
 		SandboxID:        sbx.SandboxID,
 		TeamID:           sbx.TeamID,
-		PausedTtlSeconds: pausedTTLSeconds(sbx.PausedTTL),
+		PausedTtlSeconds: PausedTTLSeconds(sbx.PausedTTL),
 	})
 	cancel()
 	if err != nil {
