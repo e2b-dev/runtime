@@ -125,6 +125,35 @@ var Profiles = []Profile{
 		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
 	},
 	{
+		// openEuler is an RPM/dnf, systemd distro and the upstream base for a
+		// large part of the domestic server ecosystem (e.g. Kylin V10 SP). Its
+		// /etc/os-release carries ID=openEuler (mixed case, matched verbatim —
+		// provision.sh does not lowercase it) and no ID_LIKE, so without this
+		// profile it falls through to the unsupported-distro error. Verified
+		// against openeuler/openeuler:22.03: the one package-name difference
+		// from the RHEL family is shadow (shadow-utils does not exist in its
+		// repos); every other package resolves, and dnf/yum are both present.
+		Key:  "openeuler",
+		Init: InitSystemd,
+		IDs:  []string{"openEuler"},
+		Packages: []string{
+			"systemd", "shadow", "passwd", "openssh-server", "sudo", "chrony",
+			"socat", "curl", "ca-certificates", "fuse3", "iptables", "git",
+			"nfs-utils", "less", "nftables", "iputils", "jq", "bash", "tar",
+			"iproute", "findutils",
+		},
+		PkgQueryBody: `rpm -q "$1" >/dev/null 2>&1`,
+		// dnf → microdnf → yum, as the rest of the RPM family: minimal/container
+		// openEuler images may ship only microdnf or yum.
+		PkgInstall:   `dnf -y install --allowerasing "$@" || microdnf -y install "$@" || yum -y install "$@"`,
+		InitBinary:   "/usr/lib/systemd/systemd",
+		TimeSyncUnit: "chronyd",
+		SSHUnit:      "sshd",
+		AdminGroup:   "wheel",
+		CABundle:     "/etc/ssl/certs/ca-certificates.crt",
+		CARefresh:    `update-ca-trust extract && ln -sf /etc/pki/tls/certs/ca-bundle.crt "$E2B_CA_BUNDLE"`,
+	},
+	{
 		Key:  "arch",
 		Init: InitSystemd,
 		IDs:  []string{"arch", "archarm"},
