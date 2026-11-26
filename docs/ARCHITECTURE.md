@@ -725,10 +725,11 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
   and retries cleanup every second. It atomically removes retired roots from the active
   bundle before rootfs work, so source-file failures cannot delay that cleanup.
   It persists each requested certificate as
-  `e2b-<SHA-256>.crt` in `/usr/local/share/ca-certificates`, removes retired managed files,
+  a `0644` `e2b-<SHA-256>.crt` in `/usr/local/share/ca-certificates`, removes retired managed files,
   and retains retirement identities until both bundle and source cleanup succeed.
   Superseded cleanup cannot publish an older bundle. Legacy-file removal checks the latest
-  desired roots under the init lock, preserving hash links to a still-requested certificate.
+  desired roots under the init lock, preserving hash links to a still-requested certificate
+  and restricting the retained file to `0644`.
   State survives envd process restart,
   not guest reboot. Retired roots may be trusted until cleanup succeeds, and an independent
   trust-store rebuild can restore a copy from a customer source file. Applications that
