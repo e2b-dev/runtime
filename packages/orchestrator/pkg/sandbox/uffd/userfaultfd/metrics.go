@@ -423,6 +423,12 @@ type ServeSnapshot struct {
 	// times the page size, but it is tracked directly so it stays correct
 	// across mixed page sizes.
 	Bytes int64
+	// SourceBytes is SourcePages in bytes: the base-image content this sandbox
+	// faulted in from the shared template source. These are the pages a future
+	// same-template page-sharing scheme could serve from one shared physical
+	// copy instead of a private per-sandbox copy; private (written) pages are
+	// excluded because they cannot be shared.
+	SourceBytes int64
 	// WPFaults is the number of synchronous write-protect faults resolved
 	// (guest writes to protected pages). Zero under WP_ASYNC guests. Sampled
 	// per interval it approximates the dirty-set growth at 2 MiB granularity.
@@ -472,6 +478,7 @@ func (s ServeSnapshot) Sub(earlier ServeSnapshot) ServeSnapshot {
 		Pages:             s.Pages - earlier.Pages,
 		SourcePages:       s.SourcePages - earlier.SourcePages,
 		Bytes:             s.Bytes - earlier.Bytes,
+		SourceBytes:       s.SourceBytes - earlier.SourceBytes,
 		WPFaults:          s.WPFaults - earlier.WPFaults,
 		Deferred:          s.Deferred - earlier.Deferred,
 		WPDeferred:        s.WPDeferred - earlier.WPDeferred,
@@ -501,6 +508,7 @@ func (u *Userfaultfd) ServeStats() ServeSnapshot {
 		Pages:             u.servedPages.Load(),
 		SourcePages:       sourcePages,
 		Bytes:             u.servedBytes.Load(),
+		SourceBytes:       sourcePages * int64(u.pageSize),
 		WPFaults:          u.wpFaultsResolved.Load(),
 		Deferred:          u.servedDeferred.Load(),
 		Deduped:           u.servedDeduped.Load(),
