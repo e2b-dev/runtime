@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	templatemanagergrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/template-manager"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"

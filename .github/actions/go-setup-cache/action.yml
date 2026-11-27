@@ -11,8 +11,8 @@ inputs:
       go.work
       packages/*/go.mod
       packages/*/go.sum
-      tests/integration/go.mod
-      tests/integration/go.sum
+      packages/api/integration/go.mod
+      packages/api/integration/go.sum
 
 runs:
   using: "composite"
@@ -39,7 +39,7 @@ runs:
         key: go-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.version }}
 
     - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version-file: go.work
         cache-dependency-path: |

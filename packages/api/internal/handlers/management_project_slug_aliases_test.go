@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 func TestUpsertProjectSlugChangeGivesEveryNamespacedAliasUnderTheNewSlug(t *testing.T) {
@@ -181,7 +181,7 @@ func TestUpsertProjectSlugChangeWaitsForATemplateDeleteInProgress(t *testing.T) 
 	moved := renamed(project)
 	upserted := make(chan error, 1)
 	go func() {
-		_, _, err := store.managementService.UpsertProject(t.Context(), store.riverClient, management.Project{
+		_, _, err := store.managementService.UpsertProject(t.Context(), management.Project{
 			ID: project.id, Name: moved.Name, Slug: moved.Slug, Email: moved.Email,
 		})
 		upserted <- err

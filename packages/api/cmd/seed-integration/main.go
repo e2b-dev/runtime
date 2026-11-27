@@ -1,0 +1,264 @@
+package main
+
+import (
+	"context"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/e2b-dev/infra/packages/api/internal/db/client"
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
+	authqueries "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth/queries"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/envd/pkg"
+	"github.com/e2b-dev/infra/packages/shared/pkg/keys"
+	"github.com/e2b-dev/infra/packages/shared/pkg/templates"
+)
+
+type SeedData struct {
+	APIKey  string
+	EnvID   string
+	BuildID uuid.UUID
+	TeamID  uuid.UUID
+	UserID  uuid.UUID
+	RAMMB   int
+}
+
+func main() {
+	ctx := context.Background()
+
+	exitCode := run(ctx)
+	if exitCode != 0 {
+		log.Printf("Seed failed with exit code %d", exitCode)
+		os.Exit(exitCode)
+	}
+
+	fmt.Println("Seed completed successfully.")
+}
+
+func run(ctx context.Context) int {
+	connectionString := os.Getenv("POSTGRES_CONNECTION_STRING")
+	if connectionString == "" {
+		log.Printf("POSTGRES_CONNECTION_STRING is not set")
+
+		return 1
+	}
+
+	db, err := client.NewClient(ctx, connectionString)
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+
+		return 1
+	}
+	defer db.Close()
+	authDb, err := authdb.NewClient(ctx, connectionString)
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+
+		return 1
+	}
+	defer authDb.Close()
+
+	// The build rows must declare the memory the template's memfile was
+	// actually built with: the VM sizes itself from the row, and a row
+	// larger than the memfile makes resumes read past its end. CI always
+	// sets the env (build-sandbox-template writes it to .env.test); the
+	// fallback matches the orchestrator Makefile's MEMORY_MB default so a
+	// local build-then-seed without the env stays consistent too.
+	ramMB := 256
+	if v := os.Getenv("TESTS_SANDBOX_RAM_MB"); v != "" {
+		ramMB, err = strconv.Atoi(v)
+		if err != nil {
+			log.Printf("Invalid TESTS_SANDBOX_RAM_MB %q: %v", v, err)
+
+			return 1
+		}
+	}
+
+	data := SeedData{
+		APIKey:  os.Getenv("TESTS_E2B_API_KEY"),
+		EnvID:   os.Getenv("TESTS_SANDBOX_TEMPLATE_ID"),
+		BuildID: uuid.MustParse(os.Getenv("TESTS_SANDBOX_BUILD_ID")),
+		TeamID:  uuid.MustParse(os.Getenv("TESTS_SANDBOX_TEAM_ID")),
+		UserID:  uuid.MustParse(os.Getenv("TESTS_SANDBOX_USER_ID")),
+		RAMMB:   ramMB,
+	}
+
+	err = seed(ctx, db, authDb, data)
+	if err != nil {
+		log.Printf("Failed to execute seed: %v", err)
+
+		return 1
+	}
+
+	fmt.Println("Seed completed successfully.")
+
+	return 0
+}
+
+func seed(ctx context.Context, db *client.Client, authdb *authdb.Client, data SeedData) error {
+	hasher := keys.NewSHA256Hashing()
+
+	// User
+	err := authdb.UpsertPublicUser(ctx, data.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to create public user: %w", err)
+	}
+
+	// Team
+	err = authdb.TestsRawSQL(ctx, `
+INSERT INTO teams (id, email, name, is_blocked, slug)
+VALUES ($1, $2, $3, $4, $5)
+`, data.TeamID, "test-integration@e2b.dev", "E2B", false, "e2b-integration")
+	if err != nil {
+		return fmt.Errorf("failed to create team: %w", err)
+	}
+
+	// Grant the integration test team extra capacity so parallel tests don't
+	// hit the default sandbox cap.
+	err = db.TestsRawSQL(ctx, `
+INSERT INTO project_limits (
+	team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
+	max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
+	default_free_disk_size_mb, max_disk_size_mb, max_free_disk_size_mb,
+	api_team_rps_list, api_team_rps_delete, max_secrets
+)
+SELECT $1, max_length_hours, concurrent_sandboxes + 200, concurrent_template_builds + 50,
+	max_vcpu, max_ram_mb, disk_mb, events_ttl_days,
+	default_free_disk_size_mb, max_disk_size_mb, max_disk_size_mb,
+	api_team_rps_list, api_team_rps_delete, max_secrets
+FROM default_limits
+`, data.TeamID)
+	if err != nil {
+		return fmt.Errorf("failed to set test team limits: %w", err)
+	}
+
+	// User-Team
+	err = authdb.TestsRawSQL(ctx, `
+INSERT INTO users_teams (user_id, team_id, is_default)
+VALUES ($1, $2, $3)
+`, data.UserID, data.TeamID, true)
+	if err != nil {
+		return fmt.Errorf("failed to create user-team: %w", err)
+	}
+
+	// Team API Key
+	keyWithoutPrefix := strings.TrimPrefix(data.APIKey, keys.ApiKeyPrefix)
+	apiKeyBytes, err := hex.DecodeString(keyWithoutPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to decode api key: %w", err)
+	}
+	apiKeyHash := hasher.Hash(apiKeyBytes)
+	apiKeyMask, err := keys.MaskKey(keys.ApiKeyPrefix, keyWithoutPrefix)
+	if err != nil {
+		return fmt.Errorf("failed to mask api key: %w", err)
+	}
+	_, err = authdb.CreateTeamAPIKey(ctx, authqueries.CreateTeamAPIKeyParams{
+		TeamID:           data.TeamID,
+		CreatedBy:        &data.UserID,
+		ApiKeyHash:       apiKeyHash,
+		ApiKeyPrefix:     apiKeyMask.Prefix,
+		ApiKeyLength:     int32(apiKeyMask.ValueLength),
+		ApiKeyMaskPrefix: apiKeyMask.MaskedValuePrefix,
+		ApiKeyMaskSuffix: apiKeyMask.MaskedValueSuffix,
+		Name:             "Integration Tests API Key",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create team api key: %w", err)
+	}
+
+	// Env
+	err = db.TestsRawSQL(ctx, `
+INSERT INTO envs (id, team_id, public, build_count, spawn_count, updated_at, source)
+VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, 'template')
+`, data.EnvID, data.TeamID, true, 2, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create env: %w", err)
+	}
+
+	type buildData struct {
+		id        uuid.UUID
+		createdAt *time.Time
+	}
+
+	oldBuildTime := time.Now().Add(-time.Hour)
+	// Important: Insert builds in chronological order (oldest first, newest last)
+	// The query uses ORDER BY eba.created_at DESC to get the latest build,
+	// so the last inserted build assignment will be selected.
+	builds := []buildData{
+		// An older build, so we have multiple builds - inserted FIRST
+		{
+			id:        uuid.New(),
+			createdAt: &oldBuildTime,
+		},
+		// Primary build - inserted LAST so it has the latest assignment timestamp
+		{
+			id:        data.BuildID,
+			createdAt: nil,
+		},
+	}
+
+	for _, build := range builds {
+		if build.createdAt != nil {
+			err = db.TestsRawSQL(ctx, `
+INSERT INTO env_builds (
+	id, env_id, team_id, dockerfile, status_group, vcpu, ram_mb, free_disk_size_mb,
+	total_disk_size_mb, kernel_version, firecracker_version, envd_version,
+	cluster_node_id, version, created_at, updated_at
+) VALUES ($1, $14, $15, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP)
+`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusGroupReady,
+				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.17-0.4.1", pkg.Version,
+				"integration-test-node", templates.TemplateV2LatestVersion, build.createdAt, data.EnvID, data.TeamID)
+		} else {
+			err = db.TestsRawSQL(ctx, `
+INSERT INTO env_builds (
+	id, env_id, team_id, dockerfile, status_group, vcpu, ram_mb, free_disk_size_mb,
+	total_disk_size_mb, kernel_version, firecracker_version, envd_version,
+	cluster_node_id, version, updated_at
+) VALUES ($1, $13, $14, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+`, build.id, "FROM e2bdev/base:latest", dbtypes.BuildStatusGroupReady,
+				2, data.RAMMB, 512, 1982, "vmlinux-6.1.158-c1a568c", "v1.17-0.4.1", pkg.Version,
+				"integration-test-node", templates.TemplateV2LatestVersion, data.EnvID, data.TeamID)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to create env build: %w", err)
+		}
+
+		// Create the build assignment
+		var assignmentCreatedAt *time.Time
+		if build.createdAt != nil {
+			assignmentCreatedAt = build.createdAt
+		}
+
+		if assignmentCreatedAt != nil {
+			err = db.TestsRawSQL(ctx, `
+INSERT INTO env_build_assignments (env_id, build_id, tag, created_at)
+VALUES ($1, $2, 'default', $3)
+`, data.EnvID, build.id, assignmentCreatedAt)
+		} else {
+			err = db.TestsRawSQL(ctx, `
+INSERT INTO env_build_assignments (env_id, build_id, tag)
+VALUES ($1, $2, 'default')
+`, data.EnvID, build.id)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to create env build assignment: %w", err)
+		}
+	}
+
+	err = db.TestsRawSQL(ctx, `
+INSERT INTO env_aliases (alias, is_renamable, env_id)
+VALUES ($1, $2, $3)
+`, "base", true, data.EnvID)
+	if err != nil {
+		return fmt.Errorf("failed to create env alias: %w", err)
+	}
+
+	return nil
+}

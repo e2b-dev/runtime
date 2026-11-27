@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -215,7 +215,7 @@ func TestTemplateCache_RefetchesAnEntryWithoutTheFormatMark(t *testing.T) {
 	defer tc.Close(ctx)
 
 	redisKey := tc.cache.RedisKey(buildCacheKey(templateID, "default"))
-	stale, err := json.Marshal(TemplateInfo{
+	stale, err := json.Marshal(TemplateInfo{ //nolint:musttag // The stale fixture uses the cache's untagged field names.
 		Template: &api.Template{TemplateID: templateID, BuildID: "stale-build"},
 		TeamID:   teamID,
 		Tag:      "default",
@@ -230,7 +230,7 @@ func TestTemplateCache_RefetchesAnEntryWithoutTheFormatMark(t *testing.T) {
 	data, err := redisClient.Get(ctx, redisKey).Bytes()
 	require.NoError(t, err)
 	var stored TemplateInfo
-	require.NoError(t, json.Unmarshal(data, &stored))
+	require.NoError(t, json.Unmarshal(data, &stored)) //nolint:musttag // The cache uses untagged field names.
 	assert.Equal(t, templateInfoFormat, stored.Format)
 
 	require.NotEmpty(t, tc.InvalidateAllTags(ctx, templateID))

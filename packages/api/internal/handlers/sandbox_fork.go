@@ -55,7 +55,7 @@ func (a *APIStore) forkBackend() forkOrchestrator {
 // independently: the response carries one result per requested fork, holding
 // either the created sandbox or the error that prevented it from starting.
 func (a *APIStore) PostSandboxesSandboxIDFork(c *gin.Context, sandboxID api.SandboxID) {
-	ctx := c.Request.Context()
+	ctx := orchestrator.WithMemoryRoute(c.Request.Context(), orchestrator.MemoryRouteFork)
 
 	teamInfo := auth.MustGetTeamInfo(c)
 	teamID := teamInfo.Team.ID

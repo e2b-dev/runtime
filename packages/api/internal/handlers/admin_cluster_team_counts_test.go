@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 )
 
 // The counts come from the teams alone, so they are served with no cluster

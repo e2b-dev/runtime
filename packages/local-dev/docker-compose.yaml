@@ -27,7 +27,7 @@ services:
       - "53000:3000"
 
   loki:
-    image: grafana/loki:3.7.9
+    image: grafana/loki:3.7.10
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
@@ -39,7 +39,7 @@ services:
       retries: 12  # try for 2 minutes
 
   memcached:
-    image: memcached:1.6.38
+    image: memcached:1.6.44
     container_name: memcached
     ports:
       - "11211:11211"
@@ -74,17 +74,24 @@ services:
       - postgres:/var/lib/postgresql
 
   redis:
-    image: redis:7.4.6
+    image: redis:7.4.11
     ports:
       - "6379:6379"
 
   socks5:
-    image: python:3.12-alpine
-    command: >-
-      sh -c "pip install --quiet pproxy &&
-      exec python -u -m pproxy
-      -l socks5://0.0.0.0:1080#byopuser:byoppass
-      -v"
+    image: python:3.15-alpine
+    command:
+      - sh
+      - -ec
+      - |
+        pip install --quiet pproxy==2.7.9
+        exec python -u -c '
+        import asyncio
+        from pproxy.server import main
+
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        main()
+        ' -l 'socks5://0.0.0.0:1080#byopuser:byoppass' -v
     ports:
       - "1080:1080"
 

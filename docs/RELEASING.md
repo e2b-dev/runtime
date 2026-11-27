@@ -14,8 +14,10 @@ appear in this repository.
 | clickhouse-migrator | `packages/clickhouse` | image `us-docker.pkg.dev/e2b-artifacts/clickhouse-migrator/clickhouse-migrator` |
 | embed | `embed` | images `us-docker.pkg.dev/e2b-artifacts/embed/tools`, `…/embed/node-e2b` and `…/embed/seed` (released as one unit; the release moves every platform pin in `embed/compose/.env` and `embed/kubernetes/kustomization.yaml` — api, db-migrator, client-proxy, clickhouse-migrator, orchestrator and these three — to its own version) |
 | envd | `packages/envd` | binary `https://storage.googleapis.com/e2b-artifact-binaries/envd/v<version>/envd` |
-| nomad-nodepool-apm | `packages/nomad-nodepool-apm` | binaries `nomad-nodepool-apm`, `nomad-deployment-aware-target` under `…/nomad-nodepool-apm/v<version>/` |
 | orchestrator | `packages/orchestrator` | binaries `orchestrator`, `clean-nfs-cache` under `…/orchestrator/v<version>/` |
+
+The `nomad-nodepool-apm` and `nomad-deployment-aware-target` plugins are
+deprecated for open-source use and have been removed from this repository.
 
 ## How a release happens
 
@@ -28,8 +30,7 @@ Two identities:
    the patch. The timestamp sits in the patch slot, so these tags sort
    above every `MAJOR.MINOR.x` release — pin exact tags, not "highest".
 2. Conventional commits (`feat:`, `fix:`) accumulate into a release PR.
-   api, client-proxy, clickhouse-migrator,
-   nomad-nodepool-apm and orchestrator share one coordinated SemVer with
+   api, client-proxy, clickhouse-migrator and orchestrator share one coordinated SemVer with
    the rest of the platform: merging that PR tags each of them
    `<component>-vX.Y.Z` at the same number, with changelog. embed has
    its own release PR, opened once the platform release is tagged, at

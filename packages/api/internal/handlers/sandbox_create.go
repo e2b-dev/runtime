@@ -23,14 +23,14 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/fcgate"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	apiorch "github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -154,7 +154,7 @@ func newSandboxFromV2(body api.NewSandboxV2) api.NewSandbox {
 
 // createSandbox runs the shared create flow; defaultTimeout applies when the body omits timeout.
 func (a *APIStore) createSandbox(c *gin.Context, body api.NewSandbox, defaultTimeout time.Duration) (*api.Sandbox, *api.APIError) {
-	ctx := c.Request.Context()
+	ctx := apiorch.WithMemoryRoute(c.Request.Context(), apiorch.MemoryRouteCreate)
 
 	// Get team from context, use TeamContextKey
 	teamInfo := auth.MustGetTeamInfo(c)

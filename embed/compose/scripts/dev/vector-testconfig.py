@@ -20,7 +20,8 @@ def replace_table(text, header, body):
     return pattern.sub(body.rstrip("\n") + "\n\n", text, count=1)
 
 
-toml = replace_table(toml, "sources.http_server", '[sources.http_server]\ntype = "stdin"\ndecoding.codec = "json"\n')
+if sys.argv[1:] != ["--http"]:
+    toml = replace_table(toml, "sources.http_server", '[sources.http_server]\ntype = "stdin"\ndecoding.codec = "json"\n')
 toml = replace_table(
     toml,
     "sinks.clickhouse_sandbox_logs",

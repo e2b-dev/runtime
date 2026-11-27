@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func serveTemplateInfo(t *testing.T, f templateBuildsFixture, teamID uuid.UUID, teamSlug, template string) *httptest.ResponseRecorder {

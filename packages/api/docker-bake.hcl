@@ -39,7 +39,7 @@ target "api" {
 
 target "db-migrator" {
   context    = "."
-  dockerfile = "db/Dockerfile"
+  dockerfile = "api/Dockerfile.migrator"
   platforms  = split(",", PLATFORMS)
   tags       = ["${REGISTRY_PREFIX}/db-migrator"]
 }

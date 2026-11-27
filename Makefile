@@ -15,7 +15,6 @@ build-and-upload:build-and-upload/orchestrator
 build-and-upload:build-and-upload/template-manager
 build-and-upload:build-and-upload/envd
 build-and-upload:build-and-upload/clickhouse-migrator
-build-and-upload:build-and-upload/nomad-nodepool-apm
 build-and-upload/clean-nfs-cache:
 	./scripts/confirm.sh $(TERRAFORM_ENVIRONMENT)
 	GCP_PROJECT_ID=$(GCP_PROJECT_ID) $(MAKE) -C packages/orchestrator build-and-upload/clean-nfs-cache
@@ -44,7 +43,7 @@ download-public-firecrackers:
 	find ./packages/fc-versions/builds/ -name firecracker -exec chmod +x {} \;
 
 .PHONY: generate
-generate: generate/api generate/orchestrator generate/client-proxy generate/envd generate/db generate/shared generate-tests generate-mocks
+generate: generate/api generate/orchestrator generate/client-proxy generate/envd generate/shared generate-tests generate-mocks
 generate/%:
 	@echo "Generating code for *$(notdir $@)*"
 	$(MAKE) -C packages/$(notdir $@) generate
@@ -54,12 +53,12 @@ generate/%:
 generate-tests: generate-tests/integration
 generate-tests/%:
 	@echo "Generating code for *$(notdir $@)*"
-	$(MAKE) -C tests/$(notdir $@) generate
+	$(MAKE) -C packages/api/$(notdir $@) generate
 	@printf "\n\n"
 
 .PHONY: migrate
 migrate:
-	$(MAKE) -C packages/db migrate
+	$(MAKE) -C packages/api migrate
 
 .PHONY: set-env
 set-env:
@@ -75,12 +74,12 @@ switch-env:
 .PHONY: test
 test:
 	go work edit -json \
-		| jq -r '.Use[] | select (.DiskPath | contains("packages")) | .DiskPath' \
+		| jq -r '.Use[].DiskPath | select(startswith("./packages/") and (endswith("/integration") | not))' \
 		| xargs -I{} $(MAKE) -C {} test
 
 .PHONY: test-integration
 test-integration:
-	$(MAKE) -C tests/integration test-shard
+	$(MAKE) -C packages/api/integration test-shard
 
 .PHONY: fmt
 fmt:

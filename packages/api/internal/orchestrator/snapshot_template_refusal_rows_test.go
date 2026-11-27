@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )

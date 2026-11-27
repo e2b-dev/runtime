@@ -126,7 +126,7 @@ func TestNewForwarder_SubscribesOnlyWhenForwarding(t *testing.T) {
 
 		l := zerolog.Nop()
 		scanner := NewScanner(&l, time.Hour)
-		f := NewForwarder(&l, scanner, nil)
+		f := NewForwarder(&l, scanner, nil, "")
 
 		assert.Equal(t, checkForwarding() == nil, f.Forwards())
 	})

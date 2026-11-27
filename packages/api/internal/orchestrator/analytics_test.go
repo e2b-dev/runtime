@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 func TestSbxStopTime(t *testing.T) {

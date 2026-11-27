@@ -183,6 +183,8 @@ func TestBatcherQueueSize(t *testing.T) {
 func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duration) {
 	t.Helper()
 
+	longestDelay := time.Duration(float64(maxDelay) * (1 + flushJitter))
+	shortestDelay := time.Duration(float64(maxDelay) * (1 - flushJitter))
 	startedAt := time.Now()
 	pushedAt := make([]time.Time, itemsCount)
 	n := 0
@@ -192,7 +194,7 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 		if !assert.NotEmpty(t, batch, "itemsCount=%d", itemsCount) {
 			return nil
 		}
-		assert.LessOrEqual(t, time.Since(pushedAt[batch[0]]), maxDelay,
+		assert.LessOrEqual(t, time.Since(pushedAt[batch[0]]), longestDelay,
 			"batch flushed too long after its first item. itemsCount=%d", itemsCount)
 		nn += len(batch)
 		n++
@@ -212,7 +214,7 @@ func testBatcherPushMaxDelay(t *testing.T, itemsCount int, maxDelay time.Duratio
 	}
 	require.NoError(t, b.Stop())
 
-	expectedN := int(time.Since(startedAt)/maxDelay) + 2
+	expectedN := int(time.Since(startedAt)/shortestDelay) + 2
 	require.LessOrEqual(t, n, expectedN, "number of batch func calls. itemsCount=%d, maxDelay=%s", itemsCount, maxDelay)
 	require.Equal(t, itemsCount, nn, "number of items passed to batcher func. maxDelay=%s", maxDelay)
 }
@@ -326,6 +328,135 @@ func TestBatcherCountsFailedFlushes(t *testing.T) {
 	failedItems, ok := failedItemsOf(t, name)
 	require.True(t, ok, "no failed-items series for the batcher")
 	assert.Equal(t, int64(3), failedItems, "only the failed batch's items are lost")
+}
+
+func TestBatcherRetries(t *testing.T) {
+	t.Parallel()
+
+	errRefused := errors.New("refused")
+	errBroken := errors.New("broken")
+	isRefused := func(err error) bool { return errors.Is(err, errRefused) }
+
+	tests := []struct {
+		name        string
+		attempts    []error
+		shouldRetry func(error) bool
+		wantCalls   int
+		wantErr     error
+	}{
+		{name: "succeeds on a retry", attempts: []error{errRefused, errRefused, nil}, shouldRetry: isRefused, wantCalls: 3},
+		{name: "gives up after two retries", attempts: []error{errRefused, errRefused, errRefused, nil}, shouldRetry: isRefused, wantCalls: 3, wantErr: errRefused},
+		{name: "does not retry other errors", attempts: []error{errBroken, nil}, shouldRetry: isRefused, wantCalls: 1, wantErr: errBroken},
+		{name: "stops at an error it may not retry", attempts: []error{errRefused, errBroken, nil}, shouldRetry: isRefused, wantCalls: 2, wantErr: errBroken},
+		{name: "retries nothing without ShouldRetry", attempts: []error{errRefused, nil}, wantCalls: 1, wantErr: errRefused},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				name := t.Name() + "-" + uuid.NewString()
+				calls := 0
+				var handled []error
+				b, err := NewBatcher(func(_ context.Context, batch []int) error {
+					assert.Equal(t, []int{7}, batch, "every attempt carries the same batch")
+					calls++
+
+					return tt.attempts[min(calls, len(tt.attempts))-1]
+				}, BatcherOptions{
+					Name:         name,
+					MaxBatchSize: 1,
+					MaxDelay:     time.Hour,
+					ShouldRetry:  tt.shouldRetry,
+					ErrorHandler: func(err error) { handled = append(handled, err) },
+				})
+				require.NoError(t, err)
+				require.NoError(t, b.Start(t.Context()))
+				require.NoError(t, b.Push(7))
+				require.NoError(t, b.Stop())
+
+				assert.Equal(t, tt.wantCalls, calls)
+				failedItems, _ := failedItemsOf(t, name)
+				if tt.wantErr == nil {
+					assert.Empty(t, handled)
+					assert.Zero(t, failedItems)
+				} else if assert.Len(t, handled, 1, "a lost batch reaches the error handler once") {
+					assert.ErrorIs(t, handled[0], tt.wantErr)
+					assert.Equal(t, int64(1), failedItems, "a lost batch counts its items once")
+				}
+			})
+		})
+	}
+}
+
+// A retry holds up the only goroutine that drains the queue, so a queue that
+// reaches half full during the backoff cancels the retry.
+func TestBatcherStopsRetryingWhenTheQueueFills(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		errRefused := errors.New("refused")
+		attempts := make(chan int, 8)
+		handled := 0
+		b, err := NewBatcher(func(_ context.Context, batch []int) error {
+			attempts <- batch[0]
+			if batch[0] == 0 {
+				return errRefused
+			}
+
+			return nil
+		}, BatcherOptions{
+			MaxBatchSize: 1,
+			MaxDelay:     time.Hour,
+			QueueSize:    4,
+			ShouldRetry:  func(err error) bool { return errors.Is(err, errRefused) },
+			ErrorHandler: func(error) { handled++ },
+		})
+		require.NoError(t, err)
+		require.NoError(t, b.Start(t.Context()))
+		require.NoError(t, b.Push(0))
+		synctest.Wait()
+		require.Len(t, attempts, 1, "the first attempt has failed and the retry is waiting")
+
+		require.NoError(t, b.Push(1))
+		require.NoError(t, b.Push(2))
+		require.NoError(t, b.Stop())
+		close(attempts)
+
+		var got []int
+		for item := range attempts {
+			got = append(got, item)
+		}
+		assert.Equal(t, []int{0, 1, 2}, got)
+		assert.Equal(t, 1, handled)
+	})
+}
+
+// Jitter can lengthen a delay, so the longest one the flag accepts must not
+// overflow into a negative interval, which panics the ticker.
+func TestBatcherLongestFlagDelay(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		source := ldtestdata.DataSource()
+		source.Update(source.Flag(featureflags.ClickhouseBatcherMaxDelay.Key()).ValueForAll(ldvalue.Int(math.MaxInt64 / int(time.Millisecond))))
+		source.Update(source.Flag(featureflags.ClickhouseBatcherMaxBatchSize.Key()).ValueForAll(ldvalue.Int(1)))
+		ff, err := featureflags.NewClientWithDatasource(source)
+		require.NoError(t, err)
+		defer ff.Close(context.WithoutCancel(t.Context()))
+		flushed := 0
+		b, err := NewBatcher(func(context.Context, []int) error {
+			flushed++
+
+			return nil
+		}, BatcherOptions{FeatureFlags: ff})
+		require.NoError(t, err)
+		require.NoError(t, b.Start(t.Context()))
+		// Each flush draws a new interval, so without the guard one of them overflows.
+		for i := range 32 {
+			require.NoError(t, b.Push(i))
+		}
+		require.NoError(t, b.Stop())
+
+		assert.Equal(t, 32, flushed)
+	})
 }
 
 func failedItemsOf(t *testing.T, batcher string) (int64, bool) {

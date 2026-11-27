@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/metric/noop"
 
-	dbmodule "github.com/e2b-dev/infra/packages/db"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	dbmodule "github.com/e2b-dev/infra/packages/api/internal/db"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 )
 
 func TestApplyProjectBanBansTheTeamAndEnqueuesItsContainment(t *testing.T) {

@@ -18,7 +18,7 @@ func TestPageStateBytes(t *testing.T) {
 	t.Parallel()
 
 	const page = header.PageSize
-	tracker := block.NewTracker()
+	tracker := block.NewMemoryTracker(page)
 	u := &Userfaultfd{
 		pageSize:    page,
 		pageTracker: tracker,
@@ -42,5 +42,7 @@ func TestPageStateBytes(t *testing.T) {
 	want[block.Dirty] = 4 * page
 	want[block.Removed] = 2 * page
 	want[block.NotPresent] = 7 * page
-	assert.Equal(t, want, u.PageStateBytes())
+	usage := u.MemoryUsage()
+	assert.Equal(t, want, usage.PageStateBytes)
+	assert.Equal(t, uint64(6*page), usage.HeldBytes())
 }

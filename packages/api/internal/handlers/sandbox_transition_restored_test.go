@@ -16,10 +16,10 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 )
 
@@ -115,6 +115,10 @@ func (s *connectStub) WaitForStateChange(context.Context, uuid.UUID, string) err
 
 	return s.waitErr
 }
+
+func (s *connectStub) RecordConnectMemoryIgnored(context.Context) {}
+
+func (s *connectStub) RecordConnectCPUCountIgnored(context.Context) {}
 
 // A connect that waited on a refused-and-restored pause re-reads and connects
 // to the running sandbox.

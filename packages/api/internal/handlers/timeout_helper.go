@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	typesteam "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 )
 
 const (

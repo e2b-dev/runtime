@@ -1,17 +1,19 @@
-go 1.27.3
+go 1.27.4
 
 use (
 	./packages/api
+	./packages/api/integration
 	./packages/auth
 	./packages/clickhouse
 	./packages/client-proxy
-	./packages/db
 	./packages/envd
-	./packages/local-dev
-	./packages/nomad-nodepool-apm
 	./packages/orchestrator
 	./packages/scheduling-api
 	./packages/shared
-
-	./tests/integration
 )
+
+replace github.com/e2b-dev/infra/packages/shared v0.0.0 => ./packages/shared
+
+replace github.com/e2b-dev/infra/packages/auth v0.0.0 => ./packages/auth
+
+replace github.com/e2b-dev/infra/packages/clickhouse v0.0.0 => ./packages/clickhouse

@@ -1,0 +1,38 @@
+ARG GOLANG_VERSION=1.27.4
+ARG ALPINE_VERSION=3.24
+
+# Builder stage
+FROM --platform=$BUILDPLATFORM golang:${GOLANG_VERSION}-alpine${ALPINE_VERSION} AS builder
+# Fall through to a retry on any module proxy error; see
+# .github/actions/go-setup-cache/action.yml for the mechanism.
+ENV GOPROXY=https://proxy.golang.org|https://proxy.golang.org:443|https://proxy.golang.org/|direct
+ARG TARGETARCH
+
+WORKDIR /build
+COPY ./shared/go.mod ./shared/go.sum ./shared/
+COPY ./clickhouse/go.mod ./clickhouse/go.sum ./clickhouse/
+COPY ./auth/go.mod ./auth/go.sum ./auth/
+COPY ./envd/go.mod ./envd/go.sum ./envd/
+COPY ./api/go.mod ./api/go.sum ./api/
+WORKDIR /build/api
+RUN --mount=type=cache,target=/go/pkg/mod GOWORK=off go mod download
+
+WORKDIR /build
+COPY ./shared/pkg ./shared/pkg
+COPY ./api/internal/db ./api/internal/db
+COPY ./api/cmd/migrate ./api/cmd/migrate
+
+WORKDIR /build/api
+RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
+    GOWORK=off CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -o /migrator ./cmd/migrate
+
+FROM alpine:${ALPINE_VERSION}
+# Bump this date to force a rebuild from here down, so the upgrade below
+# resolves against the current Alpine package index. Nothing reads the value.
+ENV LAST_FORCED_UPDATE=2026-10-20
+
+RUN apk upgrade --no-cache
+
+COPY --from=builder /migrator .
+
+ENTRYPOINT ["./migrator"]

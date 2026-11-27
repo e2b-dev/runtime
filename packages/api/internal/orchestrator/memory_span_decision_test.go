@@ -20,18 +20,19 @@ func TestMemoryDecisionsLandOnTheSpan(t *testing.T) {
 	team := memoryTeam()
 	team.Limits.MaxRamMb = 2048
 
+	var o *Orchestrator
 	ctx, span := provider.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchestrator").Start(t.Context(), "refused")
-	_, _, apiErr := resolveSandboxMemory(ctx, flags, team, "sbx", "tpl", growableBuild(4096, 1024), new(int32(3072)), true)
+	_, _, apiErr := o.resolveSandboxMemory(ctx, flags, team, "sbx", "tpl", growableBuild(4096, 1024), new(int32(3072)), true)
 	require.NotNil(t, apiErr)
 	span.End()
 
 	ctx, span = provider.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchestrator").Start(t.Context(), "accepted")
-	_, _, apiErr = resolveSandboxMemory(ctx, flags, memoryTeam(), "sbx", "tpl", growableBuild(4096, 1024), new(int32(2048)), true)
+	_, _, apiErr = o.resolveSandboxMemory(ctx, flags, memoryTeam(), "sbx", "tpl", growableBuild(4096, 1024), new(int32(2048)), true)
 	require.Nil(t, apiErr)
 	span.End()
 
 	ctx, span = provider.Tracer("github.com/e2b-dev/infra/packages/api/internal/orchestrator").Start(t.Context(), "preflight")
-	require.NotNil(t, CheckSandboxMemory(ctx, flags, memoryTeam(), growableBuild(4096, 2048), new(int32(1024))))
+	require.NotNil(t, o.CheckSandboxMemory(ctx, flags, memoryTeam(), growableBuild(4096, 2048), new(int32(1024))))
 	span.End()
 
 	spans := map[string]sdktrace.ReadOnlySpan{}

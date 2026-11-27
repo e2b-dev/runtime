@@ -19,12 +19,12 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	proxygrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/proxy"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -42,6 +42,10 @@ func (notFoundResumeBackend) GetSandbox(context.Context, uuid.UUID, string) (san
 func (notFoundResumeBackend) WaitForStateChange(context.Context, uuid.UUID, string) error {
 	return nil
 }
+
+func (notFoundResumeBackend) RecordConnectMemoryIgnored(context.Context) {}
+
+func (notFoundResumeBackend) RecordConnectCPUCountIgnored(context.Context) {}
 
 func (notFoundResumeBackend) KeepAliveFor(context.Context, uuid.UUID, string, time.Duration, bool) (*sandbox.Sandbox, *api.APIError) {
 	return nil, &api.APIError{Code: http.StatusNotFound, ClientMsg: "not found", Err: sandbox.ErrNotFound}

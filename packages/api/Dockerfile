@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.27.3
+ARG GOLANG_VERSION=1.27.4
 ARG ALPINE_VERSION=3.24
 
 FROM --platform=$BUILDPLATFORM golang:${GOLANG_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -13,14 +13,13 @@ RUN apk add --no-cache make
 WORKDIR /build
 COPY ./shared/go.mod ./shared/go.sum ./shared/
 COPY ./clickhouse/go.mod ./clickhouse/go.sum ./clickhouse/
-COPY ./db/go.mod ./db/go.sum ./db/
+COPY ./envd/go.mod ./envd/go.sum ./envd/
 COPY ./auth/go.mod ./auth/go.sum ./auth/
 COPY ./api/go.mod ./api/go.sum ./api/
 
 # Download all module dependencies
 RUN --mount=type=cache,target=/go/pkg/mod cd /build/shared && go mod download && \
     cd /build/clickhouse && go mod download && \
-    cd /build/db && go mod download && \
     cd /build/auth && go mod download && \
     cd /build/api && go mod download
 

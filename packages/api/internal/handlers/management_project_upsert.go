@@ -32,7 +32,7 @@ func (a *APIStore) ManagementUpsertProject(c *gin.Context, projectID uuid.UUID) 
 
 		return
 	}
-	stored, created, err := a.managementService.UpsertProject(ctx, a.riverClient, management.Project{
+	stored, created, err := a.managementService.UpsertProject(ctx, management.Project{
 		ClusterID: body.ClusterId,
 		ID:        projectID,
 		Name:      body.Name,

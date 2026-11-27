@@ -9,7 +9,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 )
 
 // The pre-reservation check gives the same answer as the start path for every
@@ -40,7 +40,7 @@ func TestCheckSandboxCPUCount(t *testing.T) {
 
 			team := testTeam()
 			team.Limits.MaxVcpu = tt.teamMax
-			apiErr := CheckSandboxCPUCount(t.Context(), sandboxCPUFlags(t, tt.flag), team, tt.build, tt.requested)
+			apiErr := (&Orchestrator{}).CheckSandboxCPUCount(t.Context(), sandboxCPUFlags(t, tt.flag), team, tt.build, tt.requested)
 			if tt.wantCode == "" {
 				require.Nil(t, apiErr)
 
@@ -55,25 +55,23 @@ func TestCheckSandboxCPUCount(t *testing.T) {
 }
 
 // A request that passes the pre-reservation check is counted once, by the
-// start path; one it refuses is counted once, here. Not parallel: it swaps
-// the package counter.
-//
-//nolint:paralleltest
+// start path; one it refuses is counted once, here, with its route and code.
 func TestCheckSandboxCPUCount_CountsOnlyRefusals(t *testing.T) {
+	t.Parallel()
+
 	reader := sdkmetric.NewManualReader()
 	counter, err := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("github.com/e2b-dev/infra/packages/api/internal/orchestrator").Int64Counter("api.sandbox.cpu_count_override")
 	require.NoError(t, err)
-	previous := cpuCountOverrideCounter
-	cpuCountOverrideCounter = counter
-	t.Cleanup(func() { cpuCountOverrideCounter = previous })
+	o := &Orchestrator{cpuCountOverrideCounter: counter}
+	ctx := WithMemoryRoute(t.Context(), MemoryRouteResume)
 
 	flags := sandboxCPUFlags(t, true)
 	build := queries.EnvBuild{Vcpu: 2, MaxVcpu: new(int64(4))}
 
-	require.Nil(t, CheckSandboxCPUCount(t.Context(), flags, testTeam(), build, new(int32(3))))
-	_, apiErr := resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, new(int32(3)))
+	require.Nil(t, o.CheckSandboxCPUCount(ctx, flags, testTeam(), build, new(int32(3))))
+	_, apiErr := o.resolveSandboxVcpu(ctx, flags, testTeam(), "sbx", "tpl", build, new(int32(3)))
 	require.Nil(t, apiErr)
-	require.NotNil(t, CheckSandboxCPUCount(t.Context(), flags, testTeam(), build, new(int32(8))))
+	require.NotNil(t, o.CheckSandboxCPUCount(ctx, flags, testTeam(), build, new(int32(8))))
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &rm))
@@ -85,7 +83,9 @@ func TestCheckSandboxCPUCount_CountsOnlyRefusals(t *testing.T) {
 	got := map[string]int64{}
 	for _, p := range sum.DataPoints {
 		outcome, _ := p.Attributes.Value("outcome")
-		got[outcome.AsString()] = p.Value
+		route, _ := p.Attributes.Value("route")
+		code, _ := p.Attributes.Value("error_code")
+		got[outcome.AsString()+"/"+route.AsString()+"/"+code.AsString()] = p.Value
 	}
-	assert.Equal(t, map[string]int64{"accepted": 1, "rejected": 1}, got)
+	assert.Equal(t, map[string]int64{"accepted/resume/": 1, "rejected/resume/" + errCodeSandboxCpuCountOutOfRange: 1}, got)
 }

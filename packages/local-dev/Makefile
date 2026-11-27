@@ -6,10 +6,6 @@ clickhouse-config-generated.xml: ../clickhouse/local/config.tpl.xml
 local-infra: clickhouse-config-generated.xml
 	docker compose --file ./docker-compose.yaml up --abort-on-container-failure
 
-.PHONY: seed-database
-seed-database:
-	go run seed-local-database.go
-
 .PHONY: stop-infra
 stop-infra:
 	docker compose --file ./docker-compose.yaml down

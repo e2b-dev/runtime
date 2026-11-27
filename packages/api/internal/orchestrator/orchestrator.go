@@ -19,12 +19,12 @@ import (
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
 	"github.com/e2b-dev/infra/packages/api/internal/metrics"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/evictor"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/remote"
@@ -73,18 +73,30 @@ type Orchestrator struct {
 	metricsRegistration           metric.Registration
 	sandboxCountGaugeRegistration metric.Registration
 	createdSandboxesCounter       metric.Int64Counter
-	resumeOriginNodeRemapCounter  metric.Int64Counter
-	pauseRefusalRestoreCounter    metric.Int64Counter
-	networkUpdateUnstoredCounter  metric.Int64Counter
-	noCeilingPlacementsCounter    metric.Int64Counter
-	featureUnsupportedCounter     metric.Int64Counter
-	teamMetricsObserver           *metrics.TeamObserver
-	accessTokenGenerator          *sandbox.AccessTokenGenerator
-	createdCounter                metric.Int64Counter
-	listReadsCounter              metric.Int64Counter
-	listAgeHistogram              metric.Int64Histogram
-	teamLists                     teamListSnapshots
-	snapshotCache                 SnapshotCacheInvalidator
+	// memoryOverrideCounter replaces the package api.sandbox.memory_override
+	// counter when set.
+	memoryOverrideCounter metric.Int64Counter
+	// cpuCountOverrideCounter replaces the package
+	// api.sandbox.cpu_count_override counter when set.
+	cpuCountOverrideCounter metric.Int64Counter
+	// joinExtensionFailedCounter replaces the package
+	// api.sandbox.connect_join_extension_failed counter when set.
+	joinExtensionFailedCounter metric.Int64Counter
+	// joinerRestartCounter replaces the package
+	// api.sandbox.start_joiner_restart counter when set.
+	joinerRestartCounter         metric.Int64Counter
+	resumeOriginNodeRemapCounter metric.Int64Counter
+	pauseRefusalRestoreCounter   metric.Int64Counter
+	networkUpdateUnstoredCounter metric.Int64Counter
+	noCeilingPlacementsCounter   metric.Int64Counter
+	featureUnsupportedCounter    metric.Int64Counter
+	teamMetricsObserver          *metrics.TeamObserver
+	accessTokenGenerator         *sandbox.AccessTokenGenerator
+	createdCounter               metric.Int64Counter
+	listReadsCounter             metric.Int64Counter
+	listAgeHistogram             metric.Int64Histogram
+	teamLists                    teamListSnapshots
+	snapshotCache                SnapshotCacheInvalidator
 
 	snapshotUpsertSem *utils.AdjustableSemaphore
 	redisStorage      *redisbackend.Storage

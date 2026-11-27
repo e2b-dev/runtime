@@ -16,7 +16,7 @@
 variable "REGISTRY_PREFIX" {
   default = "us-docker.pkg.dev/e2b-artifacts/embed"
 }
-// The seed builds from a source tree that has shared/, db/ and local-dev/
+// The seed builds from a source tree that has api/ and its sibling modules
 // side by side. In the source monorepo that tree sits three levels above this
 // directory (the OSS tree that is exported as `packages/`); `make images`
 // points these at the public runtime repository instead (context = that repo,
@@ -60,16 +60,19 @@ target "seed" {
   // target, so an arm64 image costs one native Go build rather than an
   // emulated one; the runtime stage is the target platform's Alpine.
   dockerfile-inline = <<-DOCKERFILE
-    FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24 AS builder
+    FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine3.24 AS builder
     ARG SRC=go/oss
     ARG TARGETARCH
     WORKDIR /src
-    COPY $${SRC}/shared ./shared
-    COPY $${SRC}/db ./db
-    COPY $${SRC}/local-dev ./local-dev
-    WORKDIR /src/local-dev
+    COPY $${SRC}/ ./
+    # The pinned runtime checkout may still have the standalone seed module.
     RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=cache,target=/go/pkg/mod \
-        CGO_ENABLED=0 GOARCH=$${TARGETARCH} go build -o /seed ./seed-local-database.go
+        export CGO_ENABLED=0 GOARCH=$${TARGETARCH} GOWORK=off; \
+        if [ -d api/cmd/seed-local ]; then \
+            go -C api build -o /seed ./cmd/seed-local; \
+        else \
+            go -C local-dev build -o /seed ./seed-local-database.go; \
+        fi
     FROM alpine:3.24
     # Bump this date to force a rebuild from here down, so the upgrade below
     # resolves against the current Alpine package index. Nothing reads the value.

@@ -17,10 +17,10 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	dbmodule "github.com/e2b-dev/infra/packages/api/internal/db"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/api/internal/management"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
-	dbmodule "github.com/e2b-dev/infra/packages/db"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 )
 
 // The caller cannot tell a create from a reconcile, so one request serves both

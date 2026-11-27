@@ -89,6 +89,10 @@ func NewClickhouseHostStatsDelivery(
 	opts batcher.BatcherOptions,
 	featureFlags *featureflags.Client,
 ) (*ClickhouseDelivery, error) {
+	if opts.ShouldRetry == nil {
+		opts.ShouldRetry = chconfig.IsRetryableInsertError
+	}
+
 	delivery := &ClickhouseDelivery{conn: conn, ff: featureFlags, batcherName: opts.Name}
 
 	var err error
@@ -133,6 +137,9 @@ func (c *ClickhouseDelivery) insertSettings(ctx context.Context) clickhouse.Sett
 }
 
 func (c *ClickhouseDelivery) batchInserter(ctx context.Context, stats []SandboxHostStat) error {
+	ctx, cancel := context.WithTimeout(ctx, chconfig.InsertTimeout)
+	defer cancel()
+
 	attrs := trace.WithAttributes(attribute.Int("batch.size", len(stats)))
 	ctx, span := tracer.Start(ctx, "Flush host stats batch to Clickhouse", attrs)
 	defer span.End()
@@ -141,7 +148,7 @@ func (c *ClickhouseDelivery) batchInserter(ctx context.Context, stats []SandboxH
 		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(settings))
 	}
 
-	batch, err := c.conn.PrepareBatch(ctx, InsertSandboxHostStatQuery, driver.WithReleaseConnection())
+	batch, err := chconfig.PrepareBatch(ctx, c.conn, InsertSandboxHostStatQuery)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "prepare batch failed")

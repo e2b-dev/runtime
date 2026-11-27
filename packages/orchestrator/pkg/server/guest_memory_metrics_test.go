@@ -20,8 +20,8 @@ type fakePageStates struct {
 	tracked bool
 }
 
-func (f fakePageStates) MemoryPageStates() ([block.NumStates]int64, bool) {
-	return f.states, f.tracked
+func (f fakePageStates) MemoryUsage() (block.MemoryUsage, bool) {
+	return block.MemoryUsage{PageStateBytes: f.states, HeldMiBMillis: 12345}, f.tracked
 }
 
 // The gauge sums the sandboxes into one series per page state, every state

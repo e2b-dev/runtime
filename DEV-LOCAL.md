@@ -86,7 +86,7 @@ Verify: `docker compose -f packages/local-dev/docker-compose.yaml ps` — all se
 
 1. Initialize the Postgres database:
    ```bash
-   make -C packages/db migrate-local
+   make -C packages/api migrate-local
    ```
 
 2. Initialize the ClickHouse database:
@@ -102,7 +102,7 @@ Verify: `docker compose -f packages/local-dev/docker-compose.yaml ps` — all se
 
 4. Seed the database with a local dev user, team, and API tokens:
    ```bash
-   make -C packages/local-dev seed-database
+   make -C packages/api seed-database
    ```
    This creates a local dev user, a team (`local-dev team`), and the API tokens shown in [Client configuration](#client-configuration) below.
 
@@ -207,11 +207,11 @@ Each service reads its configuration from a `.env.local` file in its package dir
 | `packages/orchestrator/.env.local` | Orchestrator config: storage paths, firecracker/kernel dirs, Redis |
 | `packages/client-proxy/.env.local` | Client proxy config: edge URL, service discovery, Redis |
 | `packages/shared/scripts/.env.local` | Build scripts: API keys and URL for template builds |
-| `tests/integration/.env.local` | Integration test config: API URL, test credentials |
+| `packages/api/integration/.env.local` | Integration test config: API URL, test credentials |
 
 # Unit tests that need PostgreSQL
 
-The database tests in `packages/db`, `packages/api` and `packages/local-dev` share one PostgreSQL server, named by `PG_TEST_DATABASE_URL`. Each test gets its own database, copied from a template, and dropped when the test ends. A disposable server tuned for tests keeps them fast:
+The database tests in `packages/api` and `packages/shared/pkg/postgres` share one PostgreSQL server, named by `PG_TEST_DATABASE_URL`. Each test gets its own database, copied from a template, and dropped when the test ends. A disposable server tuned for tests keeps them fast:
 
 ```bash
 docker run -d --rm --name e2b-test-postgres -p 55432:5432 --tmpfs /var/lib/postgresql \
@@ -219,7 +219,7 @@ docker run -d --rm --name e2b-test-postgres -p 55432:5432 --tmpfs /var/lib/postg
   -e POSTGRES_INITDB_ARGS="--no-sync -c max_connections=500 -c fsync=off -c synchronous_commit=off -c full_page_writes=off" \
   postgres:18-alpine
 export PG_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:55432/postgres?sslmode=disable"
-(cd packages/db && go test ./...)
+(cd packages/api && go test ./internal/db/...)
 ```
 
 Without the variable those tests fail; `go test -short` skips them.

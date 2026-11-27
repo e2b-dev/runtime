@@ -37,7 +37,7 @@ inputs:
     default: "false"
   test-shard:
     description: |
-      Test shard to run, resolved by TEST_SHARD in tests/integration/Makefile.
+      Test shard to run, resolved by TEST_SHARD in packages/api/integration/Makefile.
       "all" runs the suite unsharded.
     required: false
     default: "all"
@@ -106,7 +106,7 @@ runs:
     # checks read sources only, so they run before anything is built.
     - name: Check Test Allow-list and Shard Partition
       shell: bash
-      run: make -C tests/integration check-tests-allowlist check-shard-partition
+      run: make -C packages/api/integration check-tests-allowlist check-shard-partition
 
     - name: Build Packages
       uses: ./.github/actions/build-packages

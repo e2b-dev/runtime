@@ -17,13 +17,13 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/builds"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/builds"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
@@ -31,7 +31,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
-	"github.com/e2b-dev/infra/packages/shared/pkg/middleware/otel/joined"
 	sandbox_network "github.com/e2b-dev/infra/packages/shared/pkg/sandbox-network"
 	redisreservations "github.com/e2b-dev/infra/packages/shared/pkg/sandboxstore/reservations/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -273,6 +272,7 @@ type createOptions struct {
 	completeStartedCreate bool
 	cpuCount              *int32
 	memoryMB              *int32
+	connect               bool
 }
 
 func WithCPUCount(cpuCount *int32) CreateOption {
@@ -281,6 +281,18 @@ func WithCPUCount(cpuCount *int32) CreateOption {
 
 func WithMemoryMB(memoryMB *int32) CreateOption {
 	return func(o *createOptions) { o.memoryMB = memoryMB }
+}
+
+// Connect marks a start asked for by connect. Its memoryMB and cpuCount, like
+// memory, apply only when this request starts the sandbox: the connect handler
+// has already refused a size the snapshot or the team cannot take
+// (CheckSandboxMemory, CheckSandboxCPUCount); here they are checked again once
+// the request holds the start, and ignored when the request joins another start
+// of the sandbox, or finds it running. A connect that joins applies its own
+// timeout to the sandbox it gets, as a connect to a running sandbox does.
+// Create and resume keep refusing to join with a size.
+func Connect() CreateOption {
+	return func(o *createOptions) { o.connect = true }
 }
 
 // CompleteStartedCreate lets a resume create under way, and the bookkeeping
@@ -315,15 +327,21 @@ func (o *Orchestrator) CreateSandbox(
 		option(&opts)
 	}
 
-	if opts.cpuCount != nil {
+	// A connect's count, checked by its handler before the start, is checked
+	// again only once it holds the start, as its size is.
+	if opts.cpuCount != nil && !opts.connect {
 		if apiErr := cpuCountDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
+			o.recordCPUCountOverride(ctx, cpuCountOverrideRejected, apiErr.ErrorCode)
+
 			return sandbox.Sandbox{}, apiErr
 		}
 	}
 
-	if opts.memoryMB != nil {
+	// A connect's size, checked by its handler before the start, is checked
+	// again only once it holds the start: joining another start, it is ignored.
+	if opts.memoryMB != nil && !opts.connect {
 		if apiErr := memoryDisabled(ctx, o.featureFlagsClient, team); apiErr != nil {
-			recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
+			o.recordMemoryOverride(ctx, memoryOverrideRejected, apiErr.ErrorCode, memorySourceNamed)
 
 			return sandbox.Sandbox{}, apiErr
 		}
@@ -333,99 +351,28 @@ func (o *Orchestrator) CreateSandbox(
 	totalConcurrentInstances := team.Limits.SandboxConcurrency
 
 	// Check if team has reached max instances
-	reservedAt := time.Now()
-	finishStart, waitForStart, err := o.sandboxStore.Reserve(ctx, team.Team.ID, sandboxID, int(totalConcurrentInstances))
-	if err != nil {
-		var limitErr *sandbox.LimitExceededError
-
-		switch {
-		case errors.As(err, &limitErr):
-			return sandbox.Sandbox{}, &api.APIError{
-				Code: http.StatusTooManyRequests,
-				ClientMsg: fmt.Sprintf(
-					"you have reached the maximum number of concurrent E2B sandboxes (%d). If you need more, "+
-						"please visit 'https://e2b.dev/docs/billing'", totalConcurrentInstances),
-				Err:       fmt.Errorf("team '%s' has reached the maximum number of instances (%d)", team.ID, totalConcurrentInstances),
-				Retryable: apierrors.CanRetry,
-			}
-		case errors.Is(err, sandbox.ErrSandboxKilled):
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusNotFound,
-				ClientMsg: fmt.Sprintf("Sandbox '%s' was deleted", sandboxID),
-				Err:       fmt.Errorf("resume of '%s' refused: %w", sandboxID, err),
-			}
-		default:
-			logger.L().Error(ctx, "failed to reserve sandbox for team", logger.WithSandboxID(sandboxID), zap.Error(err))
-
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusInternalServerError,
-				ClientMsg: fmt.Sprintf("Failed to create sandbox: %s", err),
-				Err:       err,
-				Retryable: apierrors.CanRetry,
-			}
+	var (
+		reservedAt  time.Time
+		finishStart func(sandbox.Sandbox, error)
+	)
+	for attempt := 0; ; attempt++ {
+		reservedAt = time.Now()
+		var waitForStart func(context.Context) (sandbox.Sandbox, error)
+		var reserveErr *api.APIError
+		finishStart, waitForStart, reserveErr = o.reserveStart(ctx, team, sandboxID, int(totalConcurrentInstances))
+		if reserveErr != nil {
+			return sandbox.Sandbox{}, reserveErr
 		}
-	}
-
-	if waitForStart != nil {
-		if opts.memoryMB != nil {
-			// Every branch below refuses a request that named memoryMB.
-			recordMemoryOverride(ctx, memoryOverrideRejected, ErrCodeStartInFlight, memorySourceNamed)
+		if waitForStart == nil {
+			break
 		}
 
-		// A joined request rides whatever start is already in flight — which may
-		// be a memory restore (e.g. a traffic-triggered auto-resume) that an
-		// explicit memory:false must never be silently answered with.
-		if demandFilesystemBoot {
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusConflict,
-				ErrorCode: ErrCodeStartInFlight,
-				ClientMsg: "Sandbox is already starting; memory: false cannot be applied to a start already in flight — retry once it is running or paused",
-				Err:       fmt.Errorf("filesystem-boot resume of '%s' cannot join an in-flight start", sandboxID),
-			}
+		joinedSbx, joinErr, retry := o.joinStart(ctx, team, sandboxID, timeout, demandFilesystemBoot, opts, waitForStart, attempt == 0)
+		if retry {
+			continue
 		}
 
-		if opts.cpuCount != nil {
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusConflict,
-				ErrorCode: ErrCodeStartInFlight,
-				ClientMsg: "Sandbox is already starting; cpuCount cannot be applied to a start already in flight",
-				Err:       fmt.Errorf("CPU override for sandbox %q cannot join an in-flight start", sandboxID),
-				Retryable: apierrors.NoRetry,
-			}
-		}
-
-		if opts.memoryMB != nil {
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusConflict,
-				ErrorCode: ErrCodeStartInFlight,
-				ClientMsg: "Sandbox is already starting; memoryMB cannot be applied to a start already in flight",
-				Err:       fmt.Errorf("memory override for sandbox %q cannot join an in-flight start", sandboxID),
-				Retryable: apierrors.NoRetry,
-			}
-		}
-
-		// Mark as a joined request for telemetry purposes
-		joined.Mark(ctx)
-
-		logger.L().Info(ctx, "sandbox is already being started, waiting for it to be ready", logger.WithSandboxID(sandboxID))
-
-		sbx, err = waitForStart(ctx)
-		if err != nil {
-			logger.L().Warn(ctx, "Error waiting for sandbox to start", zap.Error(err), logger.WithSandboxID(sandboxID))
-
-			if apiErr, ok := errors.AsType[*api.APIError](err); ok {
-				return sandbox.Sandbox{}, apiErr
-			}
-
-			return sandbox.Sandbox{}, &api.APIError{
-				Code:      http.StatusInternalServerError,
-				ClientMsg: "Error waiting for sandbox to start",
-				Err:       err,
-				Retryable: apierrors.NoRetry,
-			}
-		}
-
-		return sbx, nil
+		return joinedSbx, joinErr
 	}
 
 	telemetry.ReportEvent(ctx, "Reserved sandbox for team")
@@ -450,7 +397,7 @@ func (o *Orchestrator) CreateSandbox(
 		// Don't change this handling
 		// https://go.dev/play/p/4oy02s7BDMc
 		if apiErr != nil {
-			finishStart(sbx, apiErr)
+			finishStart(sbx, publishedStartError(apiErr, opts))
 		} else {
 			finishStart(sbx, nil)
 		}
@@ -461,12 +408,12 @@ func (o *Orchestrator) CreateSandbox(
 		return sandbox.Sandbox{}, fetchErr
 	}
 
-	vcpu, cpuErr := resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
+	vcpu, cpuErr := o.resolveSandboxVcpu(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.cpuCount)
 	if cpuErr != nil {
 		return sandbox.Sandbox{}, cpuErr
 	}
 
-	memoryMB, memoryKnown, memoryErr := resolveSandboxMemory(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.memoryMB, !isResume)
+	memoryMB, memoryKnown, memoryErr := o.resolveSandboxMemory(ctx, o.featureFlagsClient, team, sandboxID, sbxData.TemplateID, sbxData.Build, opts.memoryMB, !isResume)
 	if memoryErr != nil {
 		return sandbox.Sandbox{}, memoryErr
 	}
@@ -671,7 +618,7 @@ func (o *Orchestrator) CreateSandbox(
 			if !callersSize && refusalCode != "" {
 				outcome, code = memoryOverrideFailed, apiErr.ErrorCode
 			}
-			recordMemoryOverride(ctx, outcome, code, memorySourceNamed)
+			o.recordMemoryOverride(ctx, outcome, code, memorySourceNamed)
 		}
 		if !callersSize && refusalCode != "" {
 			reportMemoryRecordMismatch(ctx, err, sandboxID, sbxData, refusalCode, sbxRequest.GetSandbox().GetMemoryMb())
@@ -682,7 +629,7 @@ func (o *Orchestrator) CreateSandbox(
 
 	node = placed.Node
 	if opts.memoryMB != nil {
-		recordMemoryOverride(ctx, memoryOverrideAccepted, "", memorySourceNamed)
+		o.recordMemoryOverride(ctx, memoryOverrideAccepted, "", memorySourceNamed)
 	}
 
 	if !bookkeepingUntil.IsZero() {

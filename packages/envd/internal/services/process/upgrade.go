@@ -47,7 +47,7 @@ var HandoverPath = "/run/e2b/envd-handover.pb"
 // effect immediately, because this blob is tmpfs and is written and read seconds apart inside
 // one upgrade. Same trap for an experiment pointed at a branch build: do not aim one that
 // lacks a field at a fleet whose envd has it.
-const handoverSchema = handoverSchemaDefaults
+const handoverSchema = handoverSchemaLocalhostForwarding
 
 // The schema versions themselves. A writer stamps the LOWEST version that can express the blob
 // it actually produced, so a field's mere existence in the layout costs nothing at runtime.
@@ -58,6 +58,8 @@ const (
 	handoverSchemaGuestFrozen = 2
 	// handoverSchemaDefaults adds defaults (the exec context's user/workdir).
 	handoverSchemaDefaults = 3
+	// handoverSchemaLocalhostForwarding adds localhost_forwarding_off.
+	handoverSchemaLocalhostForwarding = 4
 )
 
 // schemaFor is the lowest schema that can carry st without loss.
@@ -70,6 +72,10 @@ const (
 // since most guests freeze nothing of their own, so pinning the stamp at the maximum would trade
 // away nearly every downgrade for a guarantee only the non-empty blob needs.
 func schemaFor(st *upgrade.HandoverState) uint32 {
+	// An older reader would forward localhost services again; on is what it does anyway.
+	if st.GetLocalhostForwardingOff() {
+		return handoverSchemaLocalhostForwarding
+	}
 	// A carried default that differs from the compiled-in fallback is behaviour an
 	// older reader would drop, and dropping it means the new image serves requests as
 	// somebody else. Stamp so such a reader refuses instead. When the default already
@@ -118,24 +124,15 @@ func dupKeep(oldfd, target int) (int, error) {
 	return target, nil
 }
 
-// Upgrade is the outgoing side of a live self-upgrade. It must be
-// called with the workload frozen and envd's own spawners quiesced (caller's
-// responsibility — see main's /upgrade handler). It serializes the process
-// table, carries the I/O fds across execve, and re-execs newBin with the same
-// PID. It does not return on success.
-func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWatcher, mounts []*upgrade.MountEntry, forwards []*upgrade.ForwardedPort, helpers []int32) error {
-	// Only re-exec self (empty) or the fixed delivered-binary path — never an
-	// arbitrary caller-supplied path. Checked first, before any side effects.
-	if newBin != "" && newBin != DefaultUpgradeBinPath {
-		return fmt.Errorf("refusing upgrade to unexpected binary %q", newBin)
-	}
-
+// handoverState builds the blob Upgrade carries, without the process table.
+func (s *Service) handoverState(fromVer string, watchers []*upgrade.HandoverWatcher, mounts []*upgrade.MountEntry, forwards []*upgrade.ForwardedPort, localhostForwardingOff bool, helpers []int32) *upgrade.HandoverState {
 	st := &upgrade.HandoverState{
-		FromVer:    fromVer,
-		Watchers:   watchers,
-		Mounts:     mounts,
-		Forwards:   forwards,
-		HelperPids: helpers,
+		FromVer:                fromVer,
+		Watchers:               watchers,
+		Mounts:                 mounts,
+		Forwards:               forwards,
+		HelperPids:             helpers,
+		LocalhostForwardingOff: localhostForwardingOff,
 		// Which cgroups the GUEST had frozen before the pre-pause sweep. Read from the
 		// freezer here rather than plumbed in by the caller: it is the freezer's own
 		// state, and the new image needs it before its /init thaws anything.
@@ -146,6 +143,23 @@ func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWa
 		Defaults: handoverDefaults(s.defaults),
 	}
 	st.Schema = schemaFor(st)
+
+	return st
+}
+
+// Upgrade is the outgoing side of a live self-upgrade. It must be
+// called with the workload frozen and envd's own spawners quiesced (caller's
+// responsibility — see main's /upgrade handler). It serializes the process
+// table, carries the I/O fds across execve, and re-execs newBin with the same
+// PID. It does not return on success.
+func (s *Service) Upgrade(newBin, fromVer string, watchers []*upgrade.HandoverWatcher, mounts []*upgrade.MountEntry, forwards []*upgrade.ForwardedPort, localhostForwardingOff bool, helpers []int32) error {
+	// Only re-exec self (empty) or the fixed delivered-binary path — never an
+	// arbitrary caller-supplied path. Checked first, before any side effects.
+	if newBin != "" && newBin != DefaultUpgradeBinPath {
+		return fmt.Errorf("refusing upgrade to unexpected binary %q", newBin)
+	}
+
+	st := s.handoverState(fromVer, watchers, mounts, forwards, localhostForwardingOff, helpers)
 
 	// Serialize the process table and relocate each carried fd to its fixed
 	// target, holding syscall.ForkLock so no concurrent Go fd allocation can
@@ -505,9 +519,10 @@ func (s *Service) ResumeFromHandover(reArmWatchers func([]*upgrade.HandoverWatch
 		EnvVars:        envVars,
 		// Handed back to the API service (mount ledger) and port forwarder, which
 		// are constructed after this returns.
-		Mounts:   st.GetMounts(),
-		Forwards: st.GetForwards(),
-		Helpers:  st.GetHelperPids(),
+		Mounts:                 st.GetMounts(),
+		Forwards:               st.GetForwards(),
+		LocalhostForwardingOff: new(st.GetLocalhostForwardingOff()),
+		Helpers:                st.GetHelperPids(),
 	}, nil
 }
 

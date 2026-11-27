@@ -29,10 +29,10 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"

@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	handlersmocks "github.com/e2b-dev/infra/packages/api/internal/handlers/mocks"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 )
 
 func TestResolveFilesystemBoot(t *testing.T) {

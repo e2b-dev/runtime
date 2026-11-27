@@ -1,4 +1,4 @@
-FROM node:22.23.4-alpine3.24
+FROM node:22.23.5-alpine3.24
 # The pinned tag freezes the Alpine packages at whatever the base image was
 # built with; pull the release branch's current ones in. Bump the date to
 # force a rebuild from here down, so that upgrade resolves against the

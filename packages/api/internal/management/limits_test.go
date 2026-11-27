@@ -8,8 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
-	authqueries "github.com/e2b-dev/infra/packages/db/pkg/auth/queries"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	authqueries "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 )
 
 func projectLimits(projectID uuid.UUID, revision int64) ProjectLimitsProjection {

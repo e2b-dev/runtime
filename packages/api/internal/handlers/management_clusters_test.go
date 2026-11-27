@@ -18,9 +18,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
@@ -158,9 +158,8 @@ func TestAClusterDeleteTheServiceRefusesKeepsTheTemplatesAndTheRecordedDeletion(
 
 	response := callManagementDeleteCluster(t, store, clusterID)
 
-	// The API found no live team on the cluster, so the refusal means the
-	// cluster service's copy is behind, and the caller is told to retry.
-	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Empty(t, response.Header().Get(apierrors.ShouldRetryHeader))
 	var deleted bool
 	require.NoError(t, db.SqlcClient.TestsRawSQLQuery(ctx, `SELECT deleted_at IS NOT NULL FROM public.envs WHERE id = $1`,
 		func(rows pgx.Rows) error {

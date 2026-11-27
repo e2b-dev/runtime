@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management/clienttests"

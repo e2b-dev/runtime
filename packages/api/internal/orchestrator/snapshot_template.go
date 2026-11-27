@@ -12,15 +12,15 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/storageopts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )

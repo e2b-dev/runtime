@@ -9,7 +9,7 @@ $(if $(HOSTNAME),,$(error Failed to determine hostname: both 'hostname' and 'hos
 # Read the latest migration from the sibling db package. The path is relative
 # to this package, not to the repository root, so it resolves both here and in
 # the published repository, where this package sits at packages/api.
-expectedMigration := $(shell ls ../db/migrations | sed 's/_.*//' | sort | tail -n 1)
+expectedMigration := $(shell ls internal/db/migrations | sed 's/_.*//' | sort | tail -n 1)
 
 ifeq ($(PROVIDER),aws)
 	REGISTRY_PREFIX := $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(PREFIX)core
@@ -52,6 +52,8 @@ endif
 
 .PHONY: generate
 generate:
+	rm -f internal/db/queries/*.sql.go internal/db/pkg/auth/queries/*.sql.go internal/db/pkg/testutils/queries/*.sql.go
+	go tool sqlc generate -f internal/db/sqlc.yaml
 	go generate ./...
 
 .PHONY: build
@@ -170,3 +172,54 @@ generate-local-key:
 
 	echo "Use the following base64 encoded private key to validate the token's signature:"
 	echo "local-dev:ECDSA:$$(base64 -w0 public.pem)"
+
+goose := GOOSE_DRIVER=postgres GOOSE_DBSTRING=$(POSTGRES_CONNECTION_STRING) go tool goose -table "_migrations" -dir "internal/db/migrations"
+
+# The migrator applies River's migrations after goose's; the goose CLI cannot.
+migrator := go run ./cmd/migrate
+
+
+.PHONY: migrate
+migrate:
+	@echo "Applying Postgres migration *$(notdir $@)* for ${ENV}"
+	@POSTGRES_CONNECTION_STRING=$(POSTGRES_CONNECTION_STRING) $(migrator)
+	@echo "Done"
+
+.PHONY: migrate-local
+migrate-local:
+	@echo "Applying Postgres migration *$(notdir $@)* for ${ENV}"
+	@POSTGRES_CONNECTION_STRING=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable $(migrator)
+	@echo "Done"
+
+.PHONY: migrate/up
+migrate/up: migrate
+
+.PHONY: migrate/down
+migrate/down:
+	@echo "Reverting Postgres migration *$(notdir $@)* for ${ENV}"
+	@$(goose) down
+	@echo "Done"
+
+.PHONY: create-migration
+create-migration:
+ifeq ($(origin NAME), undefined)
+	@echo "The expected syntax is: make create-migration NAME=your-migration-name"
+	@exit 1
+endif
+	@$(goose) create $(NAME) sql
+
+.PHONY: status
+status:
+	@$(goose) status
+
+.PHONY: seed-database
+seed-database:
+	go run ./cmd/seed-local
+
+.PHONY: seed-base-template
+seed-base-template:
+	go run ./cmd/seed-base-template
+
+.PHONY: seed-default-templates
+seed-default-templates:
+	go run ./cmd/seed-default-templates

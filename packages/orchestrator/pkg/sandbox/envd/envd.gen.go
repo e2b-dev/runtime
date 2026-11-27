@@ -380,6 +380,9 @@ type PostInitJSONBody struct {
 	// EnvVars Environment variables to set
 	EnvVars EnvVars `json:"envVars,omitempty"`
 
+	// ExposeLocalhostPorts Whether services listening only on loopback (127.0.0.1, localhost, ::1) are forwarded onto the sandbox's network interface, making them reachable through sandbox URLs. false kills every running forward and forwards nothing new; true forwards again from the next port scan. Absent keeps the current setting. A freshly booted guest forwards nothing until its first /init, then forwards unless told otherwise; an envd that restarts in the same boot keeps the setting.
+	ExposeLocalhostPorts *bool `json:"exposeLocalhostPorts,omitempty"`
+
 	// HyperloopIP IP address of the hyperloop server to connect to
 	HyperloopIP string `json:"hyperloopIP,omitempty"`
 

@@ -11,10 +11,10 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	template_manager "github.com/e2b-dev/infra/packages/api/internal/template-manager"
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 )
 

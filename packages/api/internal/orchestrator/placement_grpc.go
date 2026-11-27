@@ -17,13 +17,13 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	placementpb "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/sandbox/placement"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/mtls"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 )
 
 // holdBudgetSlack covers the caller's clock against the API's when it

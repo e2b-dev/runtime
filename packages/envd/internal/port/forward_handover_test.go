@@ -3,6 +3,7 @@
 package port
 
 import (
+	"net"
 	"os/exec"
 	"syscall"
 	"testing"
@@ -14,13 +15,18 @@ import (
 	"github.com/e2b-dev/infra/packages/envd/internal/services/spec/upgrade"
 )
 
+// testBindIP is a documentation address no real socat binds to: off kills every socat
+// forwarding onto the bind address, which in a sandbox would include envd's own.
+var testBindIP = net.IPv4(192, 0, 2, 1)
+
 func newHandoverTestForwarder() *Forwarder {
 	l := zerolog.Nop()
 
 	return &Forwarder{
 		logger:   &l,
 		ports:    make(map[string]*PortToForward),
-		sourceIP: defaultGatewayIP,
+		sourceIP: testBindIP,
+		procRoot: procRoot,
 	}
 }
 

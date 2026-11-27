@@ -364,6 +364,9 @@ func (a *API) PostInit(w http.ResponseWriter, r *http.Request) {
 		// up — a guest process that can't pass auth can't flip this and drive an
 		// unauthenticated upgrade.
 		a.initialized.Store(true)
+		if a.forwarder != nil {
+			a.forwarder.Release()
+		}
 
 		// Before the response is decided: a bodiless 204 reaches the wire only when the
 		// handler returns, after the thaw, so a client that leaves during a slow thaw must be
@@ -465,6 +468,13 @@ func (a *API) SetData(ctx context.Context, logger zerolog.Logger, data PostInitJ
 	} else if a.accessToken.IsSet() {
 		logger.Debug().Msg("Clearing access token")
 		a.accessToken.Destroy()
+	}
+
+	// Before the steps that can fail, so a failed /init still stops forwarding.
+	if data.ExposeLocalhostPorts != nil && a.forwarder != nil {
+		if err := a.forwarder.SetLocalhostForwarding(*data.ExposeLocalhostPorts); err != nil {
+			logger.Warn().Err(err).Msg("localhost port forwarding off is incomplete; retrying on the next scan")
+		}
 	}
 
 	if data.HyperloopIP != nil {

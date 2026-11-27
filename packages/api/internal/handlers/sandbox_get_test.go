@@ -20,12 +20,12 @@ import (
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
 	"github.com/e2b-dev/infra/packages/api/internal/clusters"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
@@ -97,7 +97,7 @@ func TestGetSandboxesSandboxID_PausedMetadata(t *testing.T) {
 			sandboxID := tt.sandboxID
 			diskSize := int64(1024)
 			envdVersion := "v1.0.0"
-			data, err := json.Marshal(snapshotcache.SnapshotInfo{
+			data, err := json.Marshal(snapshotcache.SnapshotInfo{ //nolint:musttag // Snapshot rows use their Go field names in the shared cache format.
 				Aliases: tt.aliases,
 				Snapshot: queries.Snapshot{
 					SandboxID: sandboxID, TeamID: teamID, BaseEnvID: "template", Config: tt.config, EnvSecure: tt.secure,

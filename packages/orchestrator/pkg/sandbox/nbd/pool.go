@@ -385,8 +385,7 @@ func (d *DevicePool) getFreeDeviceSlot() (*DeviceSlot, error) {
 			// We clear the slot even though it is not free to prevent accidental accumulation of slots.
 			cleanup()
 
-			// We increment the start to avoid infinite loops.
-			start++
+			start = slot + 1
 
 			continue
 		}

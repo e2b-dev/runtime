@@ -11,10 +11,10 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/e2b-dev/infra/packages/api/internal/cfg"
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/api/internal/team"
-	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
 )
 

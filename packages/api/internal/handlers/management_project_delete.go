@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -71,11 +71,9 @@ func (a *APIStore) deleteProject(ctx context.Context, projectID uuid.UUID) ([]st
 	if _, err := a.riverClient.InsertTx(ctx, tx, outbox.TeardownTeamResources{TeamID: projectID}, nil); err != nil {
 		return nil, fmt.Errorf("enqueue team teardown: %w", err)
 	}
-	// The deletion clears the project's cluster. Without a cluster service
-	// no project has one.
-	if a.clusterService != nil {
-		if err := a.enqueueTeamClusterSync(ctx, tx, projectID); err != nil {
-			return nil, err
+	if a.webhookManagement != nil {
+		if _, err := a.riverClient.InsertTx(ctx, tx, outbox.RetireProjectWebhooks{ProjectID: projectID}, nil); err != nil {
+			return nil, fmt.Errorf("enqueue webhook retirement: %w", err)
 		}
 	}
 

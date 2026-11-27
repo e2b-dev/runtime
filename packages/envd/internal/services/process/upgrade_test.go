@@ -81,7 +81,7 @@ func TestUpgrade_RejectsUnexpectedBinary(t *testing.T) {
 
 	s := newHandoverTestService(t, &spyCgroupManager{})
 
-	err := s.Upgrade("/tmp/attacker-controlled", "0.6.11", nil, nil, nil, nil)
+	err := s.Upgrade("/tmp/attacker-controlled", "0.6.11", nil, nil, nil, false, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing upgrade")
 }

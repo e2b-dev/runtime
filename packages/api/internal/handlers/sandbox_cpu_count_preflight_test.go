@@ -18,11 +18,11 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	snapshotcache "github.com/e2b-dev/infra/packages/api/internal/cache/snapshots"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	authtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/id"
 	redis_utils "github.com/e2b-dev/infra/packages/shared/pkg/redis"
@@ -44,7 +44,7 @@ func resizableTemplatesFlags(t *testing.T, enabled bool) *featureflags.Client {
 	return flags
 }
 
-func requireCPUCountRefused(t *testing.T, recorder *httptest.ResponseRecorder, wantCode string) {
+func requireSizeRefused(t *testing.T, recorder *httptest.ResponseRecorder, wantCode string) {
 	t.Helper()
 
 	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
@@ -123,7 +123,7 @@ func TestResume_CPUCountRefusedBeforeTheStartIsReserved(t *testing.T) {
 
 			store.PostSandboxesSandboxIDResume(ginCtx, sandboxID)
 
-			requireCPUCountRefused(t, recorder, tt.wantCode)
+			requireSizeRefused(t, recorder, tt.wantCode)
 		})
 	}
 }
@@ -186,7 +186,7 @@ func TestResume_MemoryRefusedBeforeTheStartIsReserved(t *testing.T) {
 
 			store.PostSandboxesSandboxIDResume(ginCtx, sandboxID)
 
-			requireCPUCountRefused(t, recorder, tt.wantCode)
+			requireSizeRefused(t, recorder, tt.wantCode)
 		})
 	}
 }

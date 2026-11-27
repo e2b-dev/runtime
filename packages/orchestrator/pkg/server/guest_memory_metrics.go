@@ -15,7 +15,7 @@ import (
 
 // guestMemorySource is the part of a sandbox the guest memory gauge reads.
 type guestMemorySource interface {
-	MemoryPageStates() ([block.NumStates]int64, bool)
+	MemoryUsage() (block.MemoryUsage, bool)
 }
 
 var pageStateAttrs = func() (attrs [block.NumStates]metric.MeasurementOption) {
@@ -38,8 +38,8 @@ func registerGuestMemoryGauge[S guestMemorySource](meter metric.Meter, sandboxes
 	_, err = meter.RegisterCallback(func(_ context.Context, obs metric.Observer) error {
 		var guest [block.NumStates]int64
 		for _, sbx := range sandboxes() {
-			if states, ok := sbx.MemoryPageStates(); ok {
-				for state, bytes := range states {
+			if usage, ok := sbx.MemoryUsage(); ok {
+				for state, bytes := range usage.PageStateBytes {
 					guest[state] += bytes
 				}
 			}

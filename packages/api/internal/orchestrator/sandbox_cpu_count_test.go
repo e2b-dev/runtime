@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
-	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
 
@@ -48,7 +48,7 @@ func TestResolveSandboxVcpu(t *testing.T) {
 
 			flags := sandboxCPUFlags(t, tt.flag)
 
-			got, apiErr := resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", tt.build, tt.requested)
+			got, apiErr := (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", tt.build, tt.requested)
 			if tt.wantCode == "" {
 				require.Nil(t, apiErr)
 				assert.Equal(t, tt.want, got)
@@ -80,15 +80,15 @@ func TestResolveSandboxVcpu_CountsEachOverride(t *testing.T) {
 	flags := sandboxCPUFlags(t, true)
 	build := queries.EnvBuild{Vcpu: 2, MaxVcpu: new(int64(4))}
 
-	_, apiErr := resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, nil)
+	_, apiErr := (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, nil)
 	require.Nil(t, apiErr)
-	_, apiErr = resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, new(api.CPUCount(4)))
+	_, apiErr = (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, new(api.CPUCount(4)))
 	require.Nil(t, apiErr)
-	_, apiErr = resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, new(api.CPUCount(8)))
+	_, apiErr = (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, testTeam(), "sbx", "tpl", build, new(api.CPUCount(8)))
 	require.NotNil(t, apiErr)
 	downgraded := testTeam()
 	downgraded.Limits.MaxVcpu = 1
-	_, apiErr = resolveSandboxVcpu(t.Context(), flags, downgraded, "sbx", "tpl", build, nil)
+	_, apiErr = (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, downgraded, "sbx", "tpl", build, nil)
 	require.Nil(t, apiErr)
 
 	var rm metricdata.ResourceMetrics
@@ -137,7 +137,7 @@ func TestResolveSandboxVcpuTeamLimit(t *testing.T) {
 			team := testTeam()
 			team.Limits.MaxVcpu = 3
 			build := queries.EnvBuild{Vcpu: 4, MaxVcpu: new(int64(8))}
-			got, apiErr := resolveSandboxVcpu(t.Context(), sandboxCPUFlags(t, true), team, "sbx", "public", build, tt.requested)
+			got, apiErr := (&Orchestrator{}).resolveSandboxVcpu(t.Context(), sandboxCPUFlags(t, true), team, "sbx", "public", build, tt.requested)
 			if tt.rejected {
 				require.NotNil(t, apiErr)
 				assert.Equal(t, http.StatusBadRequest, apiErr.Code)
@@ -163,11 +163,11 @@ func TestResolveSandboxVcpuTeamTargeting(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, flags.Close(context.WithoutCancel(t.Context()))) })
 	build := queries.EnvBuild{Vcpu: 2, MaxVcpu: new(int64(4))}
 
-	got, apiErr := resolveSandboxVcpu(t.Context(), flags, allowed, "sbx", "tpl", build, new(int32(3)))
+	got, apiErr := (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, allowed, "sbx", "tpl", build, new(int32(3)))
 	require.Nil(t, apiErr)
 	assert.Equal(t, int64(3), got)
 
-	_, apiErr = resolveSandboxVcpu(t.Context(), flags, denied, "sbx", "tpl", build, new(int32(3)))
+	_, apiErr = (&Orchestrator{}).resolveSandboxVcpu(t.Context(), flags, denied, "sbx", "tpl", build, new(int32(3)))
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusBadRequest, apiErr.Code)
 	assert.Equal(t, errCodeSandboxCpuCountDisabled, apiErr.ErrorCode)

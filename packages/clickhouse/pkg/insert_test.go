@@ -3,14 +3,17 @@ package clickhouse_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/launchdarkly/go-sdk-common/v3/ldvalue"
 	"github.com/launchdarkly/go-server-sdk/v7/testhelpers/ldtestdata"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	chconfig "github.com/e2b-dev/infra/packages/clickhouse/pkg"
@@ -19,6 +22,48 @@ import (
 	sharedevents "github.com/e2b-dev/infra/packages/shared/pkg/events"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 )
+
+type refusingConn struct {
+	driver.Conn
+
+	err error
+}
+
+func (c refusingConn) PrepareBatch(context.Context, string, ...driver.PrepareBatchOption) (driver.Batch, error) {
+	return nil, c.err
+}
+
+// Only a refusal before any row was sent may be retried; the same refusal
+// from Send can follow a partial commit, so a retry would duplicate rows.
+func TestIsRetryableInsertError(t *testing.T) {
+	t.Parallel()
+
+	prepare := func(err error) error {
+		_, err = chconfig.PrepareBatch(t.Context(), refusingConn{err: err}, "INSERT INTO t")
+
+		return fmt.Errorf("error preparing batch: %w", err)
+	}
+	tooManyQueries := &proto.Exception{Code: 202, Message: "Too many simultaneous queries"}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "too many simultaneous queries in prepare", err: prepare(tooManyQueries), want: true},
+		{name: "too many parts in prepare", err: prepare(&proto.Exception{Code: 252}), want: true},
+		{name: "other server error in prepare", err: prepare(&proto.Exception{Code: 241}), want: false},
+		{name: "network error in prepare", err: prepare(errors.New("connection reset")), want: false},
+		{name: "too many simultaneous queries in send", err: fmt.Errorf("error sending batch: %w", tooManyQueries), want: false},
+		{name: "deadline in prepare", err: prepare(context.DeadlineExceeded), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, chconfig.IsRetryableInsertError(tt.err))
+		})
+	}
+}
 
 func TestInsertSettingsTargeting(t *testing.T) {
 	t.Parallel()
@@ -68,7 +113,8 @@ type insertCaptureConn struct {
 }
 
 func (c *insertCaptureConn) PrepareBatch(ctx context.Context, _ string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
-	c.contexts <- ctx
+	// The writer cancels its insert context when the attempt returns.
+	c.contexts <- context.WithoutCancel(ctx)
 
 	return nil, errors.New("intentional prepare failure")
 }

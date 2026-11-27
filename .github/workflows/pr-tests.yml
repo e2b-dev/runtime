@@ -106,24 +106,12 @@ jobs:
             test_path: ./...
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
-          - package: packages/db
-            test_path: ./...
-            postgres: true
-            sudo: false
-            runner: blacksmith-4vcpu-ubuntu-2404
           # envd mounts via bindfs (FUSE, no modprobe); this shard doubles as
           # the FUSE-on-Blacksmith canary — if it fails, pin it back to
           # infra-tests.
           - package: packages/envd
             test_path: ./...
             sudo: true
-            runner: blacksmith-4vcpu-ubuntu-2404
-          # The database seed: the key-resolution table and one Postgres-backed
-          # run on the shared server.
-          - package: packages/local-dev
-            test_path: ./...
-            postgres: true
-            sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404
           # The one shard whose code carries cross-goroutine ownership
           # invariants (network slot pool, netns state) — race-checked.
@@ -140,6 +128,7 @@ jobs:
             runner: blacksmith-4vcpu-ubuntu-2404
           - package: packages/shared
             test_path: ./pkg/...
+            postgres: true
             redis: true
             sudo: false
             runner: blacksmith-4vcpu-ubuntu-2404

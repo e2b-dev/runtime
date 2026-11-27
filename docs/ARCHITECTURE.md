@@ -93,9 +93,9 @@ flowchart TB
 | Scheduling API | `packages/scheduling-api` | not deployed yet | gRPC scheduling service; serves the start reservation and sandbox state services on the API's Redis data; the API calls it behind a flag that is off by default |
 
 Supporting packages: `packages/shared` (protos, telemetry, storage clients, feature flags),
-`packages/auth` (authentication library), `packages/db` (Postgres migrations + sqlc queries),
+`packages/auth` (authentication library), `packages/api/internal/db` (Postgres migrations + sqlc queries),
 `packages/clickhouse` (ClickHouse schema + clients), `packages/otel-collector` (collector config),
-`packages/nomad-nodepool-apm` (autoscaler plugin), `packages/local-dev` (local stack).
+`packages/local-dev` (local stack).
 
 ### API (`packages/api`)
 
@@ -121,7 +121,7 @@ image, which E2B Embed runs on port 3001 against the API alone.
   binding a JWT to its intended target. An issuer may omit `audiences` only with no
   `audienceMatchPolicy`; this deliberately disables audience matching while issuer, signature,
   and temporal-claim verification remain required.
-  Backed by an auth DB (Postgres) with a Redis team cache.
+  Backed by an API-owned Postgres store with a Redis team cache. The shared auth library does not query Postgres.
 - **Telemetry names**: `GET /unstable/management/telemetry/names` returns the display names of
   assigned teams, from the regional database, and of clusters not being deleted, from the cluster
   service (none without one). Cluster registration stores the telemetry client ID on the cluster
@@ -264,7 +264,13 @@ image, which E2B Embed runs on port 3001 against the API alone.
   live team row on the primary and hold `FOR SHARE` until the webhook backend answers.
   Project deletion's `FOR UPDATE` waits for that lock. An omitted cluster selects the local one;
   remote webhook writes require the exact project and cluster to match the
-  project's live claim. Without a configured address the routes stay registered and answer 503, so the surface
+  project's live claim. When webhooks are configured, the project deletion transaction enqueues
+  `retire_project_webhooks` alongside sandbox teardown. A `204` confirms that commit. A separate
+  River queue retries retirement over the private webhook connection, so a backend outage does not
+  occupy sandbox teardown workers. Subscriptions can still publish until the backend retires them.
+  Published copies are cleared by repair. The row lock orders acknowledged creates against deletion;
+  if a create loses its connection and commits after cleanup, the idempotent retirement can be replayed.
+  Without a configured address the routes stay registered and answer 503, so the surface
   does not depend on how a deployment is wired. A backend failure the caller cannot act on is
   answered with the endpoint's own message; the outcomes that keep their identity are
   not-found, a rejected request, the webhook-count limit, and a timeout. A create or update
@@ -324,9 +330,8 @@ image, which E2B Embed runs on port 3001 against the API alone.
   the operator view that picks a sandbox to migrate. The migration manager decides whether
   a sandbox can move.
 - **Outbox** (`internal/outbox`): a River client on the shared database's `river` schema
-  works jobs that need the orchestrator connections, and one that carries the API's own
-  writes to the cluster service. Its job arguments live in
-  `packages/db/pkg/outbox`. `teardown_team_resources` stops a deleted
+  runs workload teardown and webhook retirement. Its job arguments live in
+  `packages/api/internal/db/pkg/outbox`. `teardown_team_resources` stops a deleted
   team's workloads; the API's own project deletion enqueues it. A
   guard runs first on every attempt: a team that exists and is not blocked fails the attempt,
   and the job retries rather than kill a live team's sandboxes; a missing team row does not
@@ -351,36 +356,11 @@ image, which E2B Embed runs on port 3001 against the API alone.
   point and sweeps again, so work admitted before that eviction cannot outlive it. It
   is not unique: a job already running may have read the team before a later ban, so each ban
   that turns on enqueues its own. An attempt is bounded at 10 minutes; retries and discarding
-  follow the teardown's. `sync_team_cluster_assignment` copies a team's cluster to the
-  cluster service, which records it as a project assignment. Every write of a team's cluster
-  enqueues it: a project deletion in its transaction when a cluster service is configured, and a
-  project upsert that leaves the project on a remote cluster after its
-  commit, because that row is written through the auth pool. A
-  failed enqueue there fails the upsert, so the caller's retry enqueues it. The job reads the
-  team when it runs, under a per-team advisory lock it holds until the cluster service has
-  answered, so two jobs for one team cannot write out of order. An attempt whose database
-  session was lost fails and retries, because the lock went with the session. A live team's
-  cluster is assigned; a team on none, deleted or gone has the recorded one detached. Until
-  that job has run for a detached or deleted team, deleting its cluster answers 503 and not
-  409: the API found no live team on it, so the cluster service's refusal clears on its own.
-  A cluster the cluster service is deleting, or does not know, takes no new team: the sync
-  completes without recording one, since a retry cannot change the answer, and the write that
-  takes the team off the cluster enqueues its own.
-  The job is not unique, and completes without a call when no cluster service is configured.
-  Retries and discarding follow the teardown's. `sweep_team_cluster_assignments` covers the
-  teams no write enqueued a sync for: those assigned before the syncs existed, and a record
-  the cluster service has lost since. With a cluster service configured, River's leader
-  enqueues it when it starts and every hour after. It pages through the live teams on a
-  remote cluster, asks the cluster service for each page's recorded clusters, and enqueues a
-  sync for every team recorded on none or on another; the syncs do the writing, at a lower
-  priority than the syncs a write enqueues. Those syncs, and the sweep itself, are unique
-  while one is open, so a team whose sync keeps failing does not gather a retrying one per
-  sweep. A record held for a team that is no
-  longer on a cluster is not found this way; the write that took the team off enqueued its
-  sync. An attempt is bounded at 10 minutes. Steps report
+  follow the teardown's. Steps report
   `api.outbox.steps.finished` and `api.outbox.step.duration`; finished jobs report
   `outbox.jobs.finished`, and the backlog reports `outbox.jobs` and `outbox.oldest_*_age`.
-  `OUTBOX_MAX_WORKERS` (default 10) and `OUTBOX_BACKLOG_INTERVAL` (default 30s) configure it;
+  `OUTBOX_MAX_WORKERS` (default 10) controls the default queue. Each replica configured for
+  webhooks also runs one `webhook_retirement` worker. `OUTBOX_BACKLOG_INTERVAL` defaults to 30s;
   shutdown stops it after the sandbox-work drain, before the database and Redis clients close.
 - Reads ClickHouse for sandbox/team metrics endpoints. Sandbox and template-build logs default to
   Loki, with a LaunchDarkly-gated ClickHouse read path (`logs-read-config`) for local-cluster logs
@@ -487,8 +467,8 @@ may be deleted is the caller's decision. `envs`, `snapshots` and `volumes` refer
 - deletes its memberships and API keys;
 - soft-deletes its templates, snapshot templates and paused-sandbox snapshots the way a template
   deletion does, releasing their aliases and build tracking;
-- enqueues `teardown_team_resources` with `InsertTx` on the outbox's own River client, so the
-  teardown runs exactly when the deletion commits.
+- enqueues `teardown_team_resources` and, when webhooks are configured, `retire_project_webhooks`.
+  If either enqueue fails, the deletion rolls back. Once both commit, the jobs can run independently.
 
 After commit it evicts the deleted keys' auth cache entries best-effort; the team's other cached
 entries refresh or expire on their own. Repeating the call answers 204 and runs every step again,
@@ -538,10 +518,12 @@ A caller that deletes a cluster's projects before the cluster first lists them w
 assigned to the cluster however it was assigned, leaving out deleted teams, and records the deletion
 with `PUT /unstable/management/clusters/{clusterID}/deletion` before deleting any of them. That
 request has the cluster service record the deletion, returns a conflict while deletion
-protection is on, and succeeds for an absent cluster and on repeat. If the cluster service
-temporarily refuses deletion, both the deletion request and the cluster delete return HTTP 503
-with `Should-Retry: true`. Once deletion is recorded, protection stays off. A project already
-admitted to this cluster may finish creation during the drain; its claim prevents final
+protection is on, and succeeds for an absent cluster and on repeat. A cluster delete returns
+HTTP 409 while the cluster service holds a live claim or a recorded project assignment, even
+if no live team references the cluster locally. The reference must be cleared before deletion
+can succeed. If the cluster service is unavailable, both the deletion request and the cluster
+delete return HTTP 503 with `Should-Retry: true`. Once deletion is recorded, protection stays off.
+A project already admitted to this cluster may finish creation during the drain; its claim prevents final
 removal. A new remote team checks admission with `CheckProjectCreation` while holding the
 per-cluster advisory lock in the database. The response carries no cluster credentials. The
 deletion request takes that lock after recording the drain. Deleting each project clears its
@@ -758,13 +740,18 @@ The agent inside every VM (started by systemd very early in boot), port 49983, c
   the orchestrator swap envd inside a *running* sandbox at resume. It streams the new binary in the
   request body and envd `syscall.Exec`s into it **with the same PID**, carrying the workload's
   stdio/PTY fds, process table, recently-retained exit codes, filesystem watchers, default
-  user/workdir and user environment variables forward via a tmpfs handover blob. The workload
+  user/workdir, user environment variables and the localhost forwarding setting forward via a
+  tmpfs handover blob. The workload
   cgroups stay frozen until the post-upgrade `/init` restores the access token (so no re-adopted
   process runs unauthenticated), and the handover outcome (procs/watchers re-adopted, environment
   variables restored, plus any failures) rides back on that `/init`'s `X-Envd-Handover` header
   for fleet visibility.
-- Scans guest ports and forwards them so any port a user process opens becomes reachable through
-  sandbox URLs. **`pkg/version.go` carries the released version**, maintained by release-please from
+- Scans guest ports and forwards services listening only on loopback onto the sandbox's network
+  interface, so they become reachable through sandbox URLs. `/init`'s `exposeLocalhostPorts: false`
+  turns that off (services bound to all interfaces stay reachable). envd records the setting on
+  the guest's tmpfs, so an envd that restarts in the same boot keeps it, and a freshly booted
+  guest forwards nothing until the host's first `/init`.
+  **`pkg/version.go` carries the released version**, maintained by release-please from
   the Conventional Commits merged since the last envd release; do not edit it by hand. The API and
   the orchestrator gate features on the envd version recorded in each template build — the
   orchestrator's held `/init`, the CA bundle each `/init` sends and the network-assign hook read
@@ -839,7 +826,7 @@ answers 408.
 
 | Store | Owner packages | What lives there |
 |---|---|---|
-| **PostgreSQL** | `packages/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, max_ram_mb, start_memory_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start; `max_ram_mb` is NULL for a build whose memory cannot grow, else the most memory its sandboxes can grow to, while `ram_mb` is the boot RAM; `start_memory_mb` is the memory a start from the build runs at when it names none, boot RAM for a template build and the paused sandbox's whole size for a snapshot build, NULL when unknown), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
+| **PostgreSQL** | `packages/api/internal/db` (goose migrations, sqlc) | Durable control-plane state: `teams`, `users`, `default_limits` (the one row of quota defaults), `project_limits` (per-team quota overrides pushed in by the owning service; the team lookups read it in preference to `default_limits`), `envs` (templates), `env_builds` (build rows: vcpu, max_vcpu, ram_mb, max_ram_mb, start_memory_mb, status, versions; `max_vcpu` is NULL for a fixed-size build, else the VM capacity, while `vcpu` is the online count at start; `max_ram_mb` is NULL for a build whose memory cannot grow, else the most memory its sandboxes can grow to, while `ram_mb` is the boot RAM; `start_memory_mb` is the memory a start from the build runs at when it names none, boot RAM for a template build and the paused sandbox's whole size for a snapshot build, NULL when unknown), `env_aliases`, `snapshots` (paused sandboxes), `team_api_keys`, `volumes`, `clusters` (remote cluster records, which the API reaches only through the cluster service) |
 | **Redis** | API, client-proxy, orchestrator | Ephemeral runtime state: running-sandbox store (source of truth), sandbox→node routing catalog, team/template/snapshot caches, rate limiting, P2P chunk peer registry |
 | **ClickHouse** | `packages/clickhouse` | Time-series/analytics: `metrics_gauge`/`metrics_sum` (written by the OTel collector), `sandbox_events`, `sandbox_host_stats` (written by orchestrator), team metrics, and optionally `sandbox_logs` during the log migration. Read by the API |
 | **Object storage** (GCS/S3/local, `packages/shared/pkg/storage`) | orchestrator, template-manager | Template & snapshot artifacts, keyed by build ID: `{buildID}/memfile`, `{buildID}/rootfs.ext4`, `{buildID}/snapfile`, `{buildID}/metadata.json` + `.header` index files |
@@ -850,8 +837,12 @@ certificate, key and CA bundle and reloads them every minute. Plaintext is
 limited to gRPC health probes. An isolated local run can explicitly set
 `E2B_TLS_GRPC_MODE=off`.
 
-The API's schema lives in `packages/db/migrations`, tracked in PostgreSQL's
-`_migrations` table, and `packages/db/schema/schema.sql` declares the `public`
+Only the API service opens this database at runtime. The API module also owns the
+`cmd/migrate` and `cmd/seed-*` commands and the integration tests that use it
+during setup and validation.
+
+The API's schema lives in `packages/api/internal/db/migrations`, tracked in PostgreSQL's
+`_migrations` table, and `packages/api/internal/db/schema/schema.sql` declares the `public`
 and `projection` schemas those migrations build. This includes `env_defaults`, which migration `20260915204740`
 creates on fresh databases and adopts where it already exists, preserving its data.
 Any existing `_dashboard_migrations` table is retained as historical bookkeeping and
@@ -1424,21 +1415,34 @@ reports show its VMs, so a burst of builds between reports spreads instead of fo
 A build registered with a max CPU (`maxCpuCount`) is sent only to a template builder at or above
 the release that understands `maxVCpuCount`, and fails if none qualifies. A sandbox from a build
 with a non-null `max_vcpu` is placed only on orchestrators at that release. The pause path copies
-`max_vcpu` from the source build into the snapshot build row. Create and explicit resume
-accept an optional `cpuCount` while the team's `resizable-templates` flag is on. The shared
-start path validates it against the build capacity and the caller's current CPU limit.
+`max_vcpu` from the source build into the snapshot build row. Create, explicit resume and the
+v2 connect accept an optional `cpuCount` while the team's `resizable-templates` flag is on. The
+shared start path validates it against the build capacity and the caller's current CPU limit.
 A resizable build that inherits a count above that limit starts at the limit instead, so
-connect and auto-resume, which cannot name a count, still reach the sandbox. The resume handler
-refuses a `cpuCount` the snapshot or the team cannot honour before the start is reserved,
+auto-resume and a connect without a count still reach the sandbox. The resume and v2 connect
+handlers refuse a `cpuCount` the snapshot or the team cannot honour before the start is reserved,
 so the 400 reaches only the request that named it, never a connect or auto-resume joined
-to the same start. A valid `cpuCount` returns 409 if another start is already in
-flight, since it cannot apply the override to that start. Connect, auto-resume, and fork
-inherit the stored CPU count.
+to the same start. A valid `cpuCount` on create or resume returns 409 if another start is
+already in flight, since it cannot apply the override to that start. On connect, `cpuCount`
+follows `memoryMB` (below): a valid count applies only when that connect resumes the paused
+sandbox, and is ignored when the sandbox is running or the connect joins another start.
+Auto-resume, fork and a connect without `cpuCount` inherit the stored CPU count.
 
 Memory follows the same shape behind the same flag. A build registered with a max memory
 (`maxMemoryMB`, whole 128 MiB slots above `memoryMB`) gets a hotplug region from template
 builders at or above the release that understands it. The build records `max_ram_mb` and, as its
-start size, its boot RAM. Create and explicit resume accept an optional `memoryMB`; memory only
+start size, its boot RAM. Create, explicit resume and the v2 connect accept an optional
+`memoryMB`. On connect it follows `memory`: for a running sandbox the field is ignored and the
+sandbox keeps its size. For a paused one, the connect first refuses a size the snapshot or the
+team cannot take, as resume does, before it reserves the start, so a refused size never
+holds the start; a valid size then applies only when that connect resumes the sandbox. A connect that meets another start of the sandbox joins it, its size
+ignored and its own timeout applied; only a demanded cold boot of a memory snapshot
+(`memory: false`) is refused with 409 `sandbox_start_in_flight` instead, while `memory: false`
+on a filesystem-only snapshot, which cold-boots anyway, joins like any connect. When a start
+that named a size or count fails before any sandbox was created, because a field it named was
+refused or no node could be found for it, the requests that joined it start the sandbox again on
+their own terms; any other failure reaches them unchanged, so none starts a sandbox that may
+still be being removed. Memory only
 grows, a size the sandbox already has survives a lowered team limit, and a new sandbox's growth
 above boot RAM, named or inherited from a snapshot template, is held to the caller's limit. Every
 start from a build with a max memory sends the resolved size as `memory_mb` and is placed only on
@@ -1546,15 +1550,14 @@ packages/
   db/                   Postgres migrations (goose) + queries (sqlc)
   clickhouse/           ClickHouse schema, batching writers, query clients
   otel-collector/       Collector config
-  nomad-nodepool-apm/   Nomad autoscaler metric and deployment-aware target plugins
   local-dev/            docker-compose local stack + DB seeding
 spec/                   OpenAPI specs (public, edge, hyperloop) — codegen sources
-tests/integration/      Integration tests against a live deployment
+packages/api/integration/      Integration tests against a live deployment
 embed/                  E2B Embed: the whole stack on one machine (Compose, Terraform, Kubernetes)
 ```
 
 Cross-service contracts are all generated: OpenAPI specs in `spec/`, gRPC protos in
-`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/db/queries/`.
+`packages/orchestrator/*.proto` and `packages/envd/spec/`, SQL in `packages/api/internal/db/queries/`.
 Run `make generate` after changing any of them.
 Scheduling contracts exist in this checkout only as generated Go code in
 `packages/shared/pkg/grpc/contracts/scheduling/`; their protos are not part of this checkout, so `make generate`

@@ -149,3 +149,10 @@ func (c *Client) CoWState() (CoWStateReply, error) {
 
 	return reply, err
 }
+
+func (c *Client) MemoryUsage() (MemoryUsageReply, error) {
+	var reply MemoryUsageReply
+	err := c.rpc.Call("Paging.MemoryUsage", &Empty{}, &reply)
+
+	return reply, err
+}

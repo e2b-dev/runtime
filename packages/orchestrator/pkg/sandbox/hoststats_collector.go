@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/clickhouse/pkg/hoststats"
+	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/block"
 	"github.com/e2b-dev/infra/packages/orchestrator/pkg/sandbox/cgroup"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sandboxtypes"
@@ -26,6 +27,9 @@ type HostStatsCollector struct {
 	metadata    HostStatsMetadata
 	delivery    hoststats.Delivery
 	cgroupStats CgroupStatsFunc
+	memoryUsage func() (block.MemoryUsage, bool)
+	// memoryAnomalies is the tracker's anomaly count already logged.
+	memoryAnomalies uint64
 
 	prev hoststats.SandboxHostStat // previous sample; seeded with zero counters at construction
 
@@ -49,11 +53,13 @@ func NewHostStatsCollector(
 	metadata HostStatsMetadata,
 	delivery hoststats.Delivery,
 	cgroupStats CgroupStatsFunc,
+	memoryUsage func() (block.MemoryUsage, bool),
 ) *HostStatsCollector {
 	return &HostStatsCollector{
 		metadata:    metadata,
 		delivery:    delivery,
 		cgroupStats: cgroupStats,
+		memoryUsage: memoryUsage,
 		// Zero baseline so the first sample produces real deltas and interval.
 		prev: hoststats.SandboxHostStat{
 			Timestamp: time.Now(),
@@ -77,18 +83,29 @@ func saturatingSub(a, b uint64) uint64 {
 // CollectSample collects a single cgroup statistics sample for the sandbox,
 // computes deltas from the previous sample, and delivers the row.
 func (h *HostStatsCollector) CollectSample(ctx context.Context) error {
+	stat, ok, err := h.sampleCgroup(ctx)
+	if err != nil || !ok {
+		return err
+	}
+
+	return h.pushWithMemory(ctx, stat)
+}
+
+// sampleCgroup reads the cgroup counters and fixes the sample's time and interval.
+// It returns false when the cgroup reports no statistics.
+func (h *HostStatsCollector) sampleCgroup(ctx context.Context) (hoststats.SandboxHostStat, bool, error) {
 	cgroupStats, err := h.cgroupStats(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get cgroup stats: %w", err)
+		return hoststats.SandboxHostStat{}, false, fmt.Errorf("failed to get cgroup stats: %w", err)
 	}
 
 	if cgroupStats == nil {
-		return nil
+		return hoststats.SandboxHostStat{}, false, nil
 	}
 
 	now := time.Now()
 
-	stat := hoststats.SandboxHostStat{
+	return hoststats.SandboxHostStat{
 		Timestamp:                now,
 		SandboxID:                h.metadata.SandboxID,
 		SandboxExecutionID:       h.metadata.ExecutionID,
@@ -107,6 +124,25 @@ func (h *HostStatsCollector) CollectSample(ctx context.Context) error {
 		DeltaCgroupCPUSystemUsec: saturatingSub(cgroupStats.CPUSystemUsec, h.prev.CgroupCPUSystemUsec),
 		IntervalUs:               uint64(now.Sub(h.prev.Timestamp).Microseconds()),
 		SandboxType:              h.metadata.SandboxType.String(),
+	}, true, nil
+}
+
+// pushWithMemory adds the guest memory fields to a cgroup sample and delivers the row.
+func (h *HostStatsCollector) pushWithMemory(ctx context.Context, stat hoststats.SandboxHostStat) error {
+	memory, measured := h.memoryUsage()
+	stat.GuestMemoryMeasured = measured
+	if measured {
+		stat.GuestMemoryHeldBytes = memory.HeldBytes()
+		stat.GuestMemoryHeldMiBMillis = memory.HeldMiBMillis
+		stat.DeltaGuestMemoryHeldMiBMillis = saturatingSub(memory.HeldMiBMillis, h.prev.GuestMemoryHeldMiBMillis)
+		// The anomaly counter has no sandbox; this line names it.
+		if memory.Anomalies > h.memoryAnomalies {
+			logger.L().Warn(ctx, "held-memory accounting anomaly",
+				logger.WithSandboxID(h.metadata.SandboxID),
+				logger.WithExecutionID(h.metadata.ExecutionID),
+				zap.Uint64("anomalies", memory.Anomalies))
+			h.memoryAnomalies = memory.Anomalies
+		}
 	}
 
 	if err := h.delivery.Push(stat); err != nil {
@@ -164,12 +200,24 @@ func (h *HostStatsCollector) Start(ctx context.Context) {
 
 // Stop halts periodic collection and takes a final sample
 func (h *HostStatsCollector) Stop(ctx context.Context) {
+	h.StopAfter(ctx, func() {})
+}
+
+// StopAfter halts periodic collection and reads the cgroup counters at once, then
+// delivers the final sample after settle returns. Waiting for the memory total
+// adds no samples and does not lengthen the final sample's interval.
+func (h *HostStatsCollector) StopAfter(ctx context.Context, settle func()) {
 	h.stopOnce.Do(func() {
 		close(h.stopCh)
 		<-h.stoppedCh
 
 		// Take final sample before process terminates
-		if err := h.CollectSample(ctx); err != nil {
+		stat, ok, err := h.sampleCgroup(ctx)
+		settle()
+		if err == nil && ok {
+			err = h.pushWithMemory(ctx, stat)
+		}
+		if err != nil {
 			// Log but don't fail the shutdown
 			logger.L().Error(ctx, "failed to collect final host stats sample",
 				logger.WithSandboxID(h.metadata.SandboxID),

@@ -22,7 +22,7 @@ jobs:
           # a duplicate is a duplicate regardless of which commit introduced it. On a
           # `merge_group` event the checkout contains every queued PR, so this catches
           # collisions between commits that would each pass against main on their own.
-          DUPES=$(ls packages/db/migrations/ | grep -oE '^[0-9]{14}' | sort | uniq -d)
+          DUPES=$(ls packages/api/internal/db/migrations/ | grep -oE '^[0-9]{14}' | sort | uniq -d)
           if [ -n "$DUPES" ]; then
             echo "❌ Duplicate migration version(s):"
             echo "$DUPES"
@@ -32,12 +32,12 @@ jobs:
 
           # Find the highest migration version on main. "Out of order" is inherently
           # relative to what's already applied, so this check still needs main.
-          HIGHEST_MAIN=$(git ls-tree -r origin/main --name-only | grep '^packages/db/migrations/' | grep -oE '[0-9]{14}' | sort -n | tail -n1)
+          HIGHEST_MAIN=$(git ls-tree -r origin/main --name-only | grep -E '^packages/(api/internal/)?db/migrations/' | grep -oE '[0-9]{14}' | sort -n | tail -n1)
           echo "Highest main migration version: $HIGHEST_MAIN"
 
           # Newly added migrations must be newer than everything on main and must not
           # use placeholder timestamps.
-          NEW_FILES=$(git diff --name-status origin/main -- packages/db/migrations/ | grep '^A' | awk '{print $2}')
+          NEW_FILES=$(git diff --find-renames --name-status origin/main -- packages/db/migrations/ packages/api/internal/db/migrations/ | awk '$1 == "A" {print $2}')
           for file in $NEW_FILES; do
             version=$(basename "$file" | grep -oE '^[0-9]{14}')
             echo "Checking new migration version: $version"

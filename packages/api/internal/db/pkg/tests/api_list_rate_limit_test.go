@@ -1,0 +1,50 @@
+package tests
+
+import (
+	"database/sql"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
+)
+
+func TestAPIListRateResolvesDefaultsUntilPushed(t *testing.T) {
+	t.Parallel()
+
+	db := testutils.SetupDatabase(t)
+	sqlDB, err := sql.Open("pgx", db.ConnStr())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	teamID := seedTeam(t, sqlDB, "rate-limit")
+	otherTeamID := seedTeam(t, sqlDB, "other-rate-limit")
+
+	resolved := func(id uuid.UUID) int64 {
+		t.Helper()
+
+		row, err := db.AuthDB.GetTeamByTeamID(t.Context(), id)
+		require.NoError(t, err)
+
+		return row.ApiTeamRpsList
+	}
+	const largeRPS int64 = 1 << 32
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.default_limits SET api_team_rps_list = $1`, largeRPS)
+	require.NoError(t, err)
+	assert.Equal(t, largeRPS, resolved(teamID))
+
+	_, err = sqlDB.ExecContext(t.Context(), `
+		INSERT INTO public.project_limits (
+			team_id, max_length_hours, concurrent_sandboxes, concurrent_template_builds,
+			max_vcpu, max_ram_mb, disk_mb, events_ttl_days, default_free_disk_size_mb, max_disk_size_mb,
+			api_team_rps_list, api_team_rps_delete, max_secrets
+		) VALUES ($1, 1, 200, 20, 8, 8192, 10240, 7, 10240, 25600, 40, 0, 10)
+	`, teamID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(40), resolved(teamID), "a pushed rate replaces the default")
+	assert.Equal(t, largeRPS, resolved(otherTeamID), "another team's push does not reach this one")
+
+	_, err = sqlDB.ExecContext(t.Context(), `UPDATE public.default_limits SET api_team_rps_list = -1`)
+	require.Error(t, err)
+}

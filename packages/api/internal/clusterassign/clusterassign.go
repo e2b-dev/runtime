@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	sqlcdb "github.com/e2b-dev/infra/packages/db/client"
+	sqlcdb "github.com/e2b-dev/infra/packages/api/internal/db/client"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	clustersgrpc "github.com/e2b-dev/infra/packages/shared/pkg/grpc/contracts/clusters/management"
 )

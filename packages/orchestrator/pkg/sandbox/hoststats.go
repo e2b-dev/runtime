@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -41,9 +42,26 @@ func initializeHostStatsCollector(
 		},
 		hostStatsDelivery,
 		sbx.cgroupHandle.GetStats,
+		sbx.MemoryUsage,
 	)
 
 	sbx.hostStatsCollector = collector
 
 	go collector.Start(ctx)
+}
+
+const hostStatsMemoryExitTimeout = 3 * time.Second
+
+// Give the final sample a bounded chance to observe the handler's frozen total.
+// Sampling stops first, so the wait is not recorded as sandbox run time.
+func stopHostStatsAfterMemory(ctx context.Context, collector *HostStatsCollector, wait func(context.Context) error) {
+	collector.StopAfter(ctx, func() {
+		waitCtx, cancel := context.WithTimeout(ctx, hostStatsMemoryExitTimeout)
+		defer cancel()
+		_ = wait(waitCtx)
+		if err := waitCtx.Err(); err != nil {
+			logger.L().Warn(ctx, "memory handler wait ended before final host stats sample",
+				logger.WithSandboxID(collector.metadata.SandboxID), zap.Error(err))
+		}
+	})
 }

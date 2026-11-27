@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 
+	authdb "github.com/e2b-dev/infra/packages/api/internal/db/pkg/auth"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/outbox"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
-	authdb "github.com/e2b-dev/infra/packages/db/pkg/auth"
-	"github.com/e2b-dev/infra/packages/db/pkg/dberrors"
-	"github.com/e2b-dev/infra/packages/db/pkg/outbox"
+	"github.com/e2b-dev/infra/packages/shared/pkg/postgres/dberrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/sharedriver"
 )
 

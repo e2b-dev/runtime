@@ -5,7 +5,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version-file: go.work
         # Caching is handled explicitly below. setup-go keys its cache purely
@@ -117,7 +117,7 @@ runs:
         # key would leave whichever variant loses the first save recompiling
         # on every run. Runners without GOCACHEPROG only; Blacksmith jobs take
         # the sticky disk above.
-        key: integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-${{ hashFiles('go.work', 'packages/*/go.mod', 'packages/*/go.sum', 'tests/integration/go.mod', 'tests/integration/go.sum') }}
+        key: integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-${{ hashFiles('go.work', 'packages/*/go.mod', 'packages/*/go.sum', 'packages/api/integration/go.mod', 'packages/api/integration/go.sum') }}
         restore-keys: |
           integration-go-opt-v1-${{ runner.os }}-${{ env.RACE_FLAG != '' && 'race' || 'norace' }}-
 
@@ -126,7 +126,7 @@ runs:
     # the box idle. Output is buffered per package so logs stay readable.
     - name: Build Packages
       run: |
-        packages=(tests/integration packages/db packages/clickhouse packages/orchestrator packages/api packages/envd packages/client-proxy)
+        packages=(packages/api/integration packages/clickhouse packages/orchestrator packages/api packages/envd packages/client-proxy)
 
         pids=()
         for package in "${packages[@]}"; do

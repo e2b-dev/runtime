@@ -11,7 +11,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 )
 
 func TestApplyProjectLimitsMeasuresHowLongTheDecisionTookToApply(t *testing.T) {

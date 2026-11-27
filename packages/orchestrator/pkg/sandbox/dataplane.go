@@ -69,10 +69,10 @@ type SandboxDataPlaneRequest struct {
 // The orchestrator discovers a memory backend's optional capabilities by
 // type assertion on the backend it keeps for the sandbox: uffd.CoWExporter
 // (the copy-on-write export window; the synchronous copy is the fallback),
-// uffd.PageStateReporter (page-state metrics) and uffd.BalloonModeLabeler
-// (balloon labels on the serve metrics). A handler or a MemoryBinder result
-// that does not implement them loses them silently, so a wrapper around the
-// in-process handler must forward the ones it wants kept.
+// uffd.MemoryUsageReporter (page-state and held-memory metrics) and
+// uffd.BalloonModeLabeler (balloon labels on the serve metrics). A handler or
+// a MemoryBinder result that does not implement them loses them silently, so
+// a wrapper around the in-process handler must forward the ones it wants kept.
 type SandboxDataPlane interface {
 	// Memory returns the handler that will serve memfile on the sandbox's
 	// UFFD socket. It must not return a nil handler without an error.

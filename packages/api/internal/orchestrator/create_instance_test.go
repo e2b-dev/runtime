@@ -29,12 +29,12 @@ import (
 
 	"github.com/e2b-dev/infra/packages/api/internal/api"
 	apiclusters "github.com/e2b-dev/infra/packages/api/internal/clusters"
+	dbtypes "github.com/e2b-dev/infra/packages/api/internal/db/pkg/types"
+	"github.com/e2b-dev/infra/packages/api/internal/db/queries"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/nodemanager"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator/placement"
 	"github.com/e2b-dev/infra/packages/api/internal/sandbox"
 	teamtypes "github.com/e2b-dev/infra/packages/auth/pkg/types"
-	dbtypes "github.com/e2b-dev/infra/packages/db/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/queries"
 	"github.com/e2b-dev/infra/packages/shared/pkg/consts"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -85,14 +85,26 @@ func newCreateSandboxTestOrchestratorWithFlags(t *testing.T, flagSource *ldtestd
 func newCreateSandboxTestOrchestratorOnRedis(t *testing.T, client redis.UniversalClient, flagSource *ldtestdata.TestDataSource, nodeOpts ...nodemanager.TestOptions) *Orchestrator {
 	t.Helper()
 
+	return newCreateSandboxTestOrchestratorWrapping(t, client, flagSource, nil, nodeOpts...)
+}
+
+// newCreateSandboxTestOrchestratorWrapping is newCreateSandboxTestOrchestratorOnRedis
+// with the reservation storage passed through wrap, when set.
+func newCreateSandboxTestOrchestratorWrapping(t *testing.T, client redis.UniversalClient, flagSource *ldtestdata.TestDataSource, wrap func(sandbox.ReservationStorage) sandbox.ReservationStorage, nodeOpts ...nodemanager.TestOptions) *Orchestrator {
+	t.Helper()
+
 	storage, err := sandboxredis.NewStorage(client, noop.NewMeterProvider())
 	require.NoError(t, err)
 	go storage.Start(t.Context())
 	t.Cleanup(func() { storage.Close(context.WithoutCancel(t.Context())) })
 
+	var reservations sandbox.ReservationStorage = redisreservations.NewReservationStorage(client, storage.Notifier())
+	if wrap != nil {
+		reservations = wrap(reservations)
+	}
 	store := sandbox.NewStore(
 		storage,
-		redisreservations.NewReservationStorage(client, storage.Notifier()),
+		reservations,
 		sandbox.Callbacks{
 			AsyncNewlyCreatedSandbox: func(context.Context, sandbox.Sandbox, sandbox.CreationMetadata) {},
 		},

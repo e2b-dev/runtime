@@ -24,12 +24,13 @@ import (
 
 	analyticscollector "github.com/e2b-dev/infra/packages/api/internal/analytics_collector"
 	"github.com/e2b-dev/infra/packages/api/internal/api"
+	"github.com/e2b-dev/infra/packages/api/internal/authservice"
 	templatecache "github.com/e2b-dev/infra/packages/api/internal/cache/templates"
+	"github.com/e2b-dev/infra/packages/api/internal/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/api/internal/middleware/idempotency"
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/auth/pkg/types"
-	"github.com/e2b-dev/infra/packages/db/pkg/testutils"
 	"github.com/e2b-dev/infra/packages/shared/pkg/apierrors"
 	"github.com/e2b-dev/infra/packages/shared/pkg/featureflags"
 	sharedmiddleware "github.com/e2b-dev/infra/packages/shared/pkg/middleware"
@@ -70,7 +71,7 @@ func newV3TemplatesIdempotency(t *testing.T, opts v3TemplatesIdempotencyOptions)
 	require.NoError(t, err)
 	posthog, err := analyticscollector.NewPosthogClient(t.Context(), "")
 	require.NoError(t, err)
-	authService, err := auth.NewAuthService(t.Context(), redisutils.SetupInstance(t), db.AuthDB, auth.ProviderConfig{}, http.DefaultClient)
+	authService, err := authservice.NewAuthService(t.Context(), redisutils.SetupInstance(t), db.AuthDB, auth.ProviderConfig{}, http.DefaultClient)
 	require.NoError(t, err)
 	cache := templatecache.NewTemplateCache(db.SqlcClient, cacheRedis)
 	store := &APIStore{

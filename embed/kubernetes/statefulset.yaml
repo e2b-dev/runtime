@@ -76,7 +76,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 20
         - name: redis
-          image: redis:7.4.6
+          image: redis:7.4.11
           restartPolicy: Always
           # The official image compiles protected mode off; bind loopback explicitly.
           args: ["--bind", "127.0.0.1"]
@@ -104,7 +104,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 30
         - name: vector
-          image: timberio/vector:0.51.1-alpine
+          image: timberio/vector:0.62.0-alpine
           restartPolicy: Always
           env:
             - { name: VECTOR_CONFIG, value: /etc/vector/vector.toml }
