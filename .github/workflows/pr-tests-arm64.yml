@@ -179,7 +179,7 @@ jobs:
 
       - name: Setup envd tests
         run: |
-          sudo apt-get update && sudo apt-get install -y bindfs
+          sudo apt-get update && sudo apt-get install -y bindfs socat
         if: matrix.package == 'packages/envd'
 
       - name: Setup orchestrator tests
