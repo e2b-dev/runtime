@@ -767,6 +767,15 @@ func writeInitError(w http.ResponseWriter, logger zerolog.Logger, err error) {
 	w.Write([]byte(err.Error()))
 }
 
+// nfsConnections is the nconnect value: how many TCP connections the guest kernel
+// may open to the NFS proxy per mount. The proxy handles one connection's requests
+// in turn, so a slow operation (a READDIR of a big directory, a sync write) blocks
+// every other request queued behind it on that connection; spreading the mount's
+// requests over several connections keeps unrelated work moving. The proxy serves
+// every connection in its own goroutine, so a handful of connections costs it
+// little; more would mostly add guest-side sockets. The kernel accepts 1-16.
+const nfsConnections = 8
+
 var nfsOptions = strings.Join([]string{
 	// wait for data to be sent to proxy server before returning.
 	// async might cause issues if the sandbox is shut down suddenly.
@@ -780,6 +789,14 @@ var nfsOptions = strings.Join([]string{
 	"port=2049",      // nfs proxy only supports mounting on port 2049
 	"nfsvers=3",      // nfs proxy is nfs version 3
 	"noacl",          // no reason for acl in the sandbox
+
+	// Without this the kernel client multiplexes every request of a mount over one
+	// TCP connection, and the proxy's turn-by-turn handling per connection turns a
+	// single slow operation into head-of-line blocking for the whole volume. The
+	// extra connections are established lazily, only while requests are
+	// outstanding. The proxy resolves NFSv3 file handles per mount, not per
+	// connection, so they need no extra MOUNT.
+	"nconnect=" + strconv.Itoa(nfsConnections),
 
 	// disable caching so that pause/resume works correctly
 	"noac",
